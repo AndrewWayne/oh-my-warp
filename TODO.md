@@ -11,16 +11,16 @@ Brand: **omw** (product) · Repo codename: **oh-my-warp**.
 Phase 0 is *only* about getting decisions and specs written down. No application code starts until Phase 0 closes.
 
 - [x] Brand decision (omw + oh-my-warp codename)
-- [ ] Initiate legal review (AGPL/MIT boundary, trademark posture, Homebrew distribution)
-- [ ] Write `specs/threat-model.md` — actors, surfaces, invariants
-- [ ] Write `specs/byorc-protocol.md` — auth, signing, replay, capability scopes (used in v0.4)
-- [ ] Write `specs/fork-strategy.md` — branching, patch series, nightly upstream-tracking CI
+- [x] Initiate legal review (AGPL/MIT boundary, trademark posture, Homebrew distribution)
+- [x] Write `specs/threat-model.md` — actors, surfaces, invariants
+- [x] Write `specs/byorc-protocol.md` — auth, signing, replay, capability scopes (used in v0.4)
+- [x] Write `specs/fork-strategy.md` — branching, patch series, nightly upstream-tracking CI
 - [x] Write `specs/test-plan.md` — trust tiers, property/fuzz catalog, cassette strategy
-- [ ] Component ownership map (already in PRD §8.3 — confirm with engineering leads)
-- [ ] Repo skeleton: Cargo workspace with empty `omw-*` crates
-- [ ] Add `LICENSE-AGPL` file referencing combined-distribution terms
-- [ ] CI: build, fmt, clippy, test
-- [ ] CI: nightly `upstream-rebase.yml` workflow rebasing `omw/main` onto `warpdotdev/master`
+- [x] Component ownership map (already in PRD §8.3 — confirm with engineering leads)
+- [x] Repo skeleton: Cargo workspace with empty `omw-*` crates
+- [x] Add `LICENSE-AGPL` file referencing combined-distribution terms
+- [x] CI: build, fmt, clippy, test
+- [x] CI: nightly `upstream-rebase.yml` workflow rebasing `omw/main` onto `warpdotdev/master` (scaffold; activates when `oh-my-warp/warp-fork` is created in v0.3)
 
 **Exit criteria:** all listed specs merged; CI green; license boundaries documented; legal review at least initiated.
 

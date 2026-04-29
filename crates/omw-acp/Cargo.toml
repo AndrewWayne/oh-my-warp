@@ -1,0 +1,9 @@
+[package]
+name = "omw-acp"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Agent Client Protocol bindings for omw. Phase 0 placeholder."

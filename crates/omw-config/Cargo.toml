@@ -1,0 +1,9 @@
+[package]
+name = "omw-config"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "TOML config loading, schema validation, and watcher for omw. Phase 0 placeholder."

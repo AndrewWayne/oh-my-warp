@@ -1,0 +1,9 @@
+[package]
+name = "omw-server"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Local backend shim for the forked client; sole audit writer. Phase 0 placeholder."

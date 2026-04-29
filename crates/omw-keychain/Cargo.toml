@@ -1,0 +1,9 @@
+[package]
+name = "omw-keychain"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "OS keychain wrapper for omw (macOS first; Linux/Windows Beyond v1). Phase 0 placeholder."

@@ -1,0 +1,142 @@
+name: Upstream rebase
+
+# Nightly tracking of warpdotdev/warp into oh-my-warp/warp-fork.
+# Spec: specs/fork-strategy.md §4. Test signal: specs/test-plan.md §B.5.
+#
+# Phase 0 status: the workflow is scaffolded but the warp-fork sibling
+# repository does not exist yet. The first job exits early with a clean
+# "fork not yet created" status until v0.3 activates the fork (see
+# specs/fork-strategy.md §9 entry criteria). Until then this workflow
+# documents the contract and is a no-op nightly.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # 03:00 UTC, off-peak for US + EU maintainers
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Skip the push step and only attempt the rebase locally.'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  FORK_REPO: oh-my-warp/warp-fork
+  UPSTREAM_REPO: warpdotdev/warp
+
+jobs:
+  guard:
+    name: Check fork repo availability
+    runs-on: ubuntu-latest
+    outputs:
+      activate: ${{ steps.check.outputs.activate }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh repo view "$FORK_REPO" >/dev/null 2>&1; then
+            echo "activate=true" >> "$GITHUB_OUTPUT"
+            echo "Fork repo $FORK_REPO is reachable; running full rebase."
+          else
+            echo "activate=false" >> "$GITHUB_OUTPUT"
+            echo "::notice ::Fork repo $FORK_REPO not yet created. Skipping nightly rebase. See specs/fork-strategy.md §9."
+          fi
+
+  rebase:
+    name: Rebase omw branches onto upstream/master
+    needs: guard
+    if: needs.guard.outputs.activate == 'true'
+    runs-on: macos-latest  # mirror the maintainer environment for upstream test parity
+    timeout-minutes: 30
+    steps:
+      - name: Check out warp-fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.FORK_REPO }}
+          ref: omw/main
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ secrets.WARP_FORK_PUSH_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name 'omw-rebase-bot'
+          git config user.email 'rebase-bot@oh-my-warp.dev'
+
+      - name: Add upstream remote and fetch
+        run: |
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch upstream master:upstream/master --tags
+
+      - name: Enable rerere
+        run: git config --global rerere.enabled true
+
+      - name: Rebase patch series
+        id: rebase
+        run: |
+          set -e
+          FAILED=()
+          for branch in $(git branch -r --list 'origin/omw/*' --format='%(refname:short)' | grep -v 'origin/omw/main'); do
+            local_name="${branch#origin/}"
+            git checkout -B "$local_name" "$branch"
+            if ! git rebase upstream/master; then
+              FAILED+=("$local_name")
+              git rebase --abort || true
+            fi
+          done
+          if [ ${#FAILED[@]} -gt 0 ]; then
+            printf 'failed=%s\n' "${FAILED[*]}" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Synthesize omw/main
+        if: steps.rebase.outcome == 'success'
+        run: |
+          set -e
+          git checkout -B omw/main upstream/master
+          for branch in $(git branch --list 'omw/*' --format='%(refname:short)' | grep -v 'omw/main'); do
+            git merge --ff-only "$branch" || git merge --no-ff -m "rebase: integrate $branch" "$branch"
+          done
+
+      - name: Run upstream Warp test suite
+        if: steps.rebase.outcome == 'success'
+        run: cargo test --workspace
+
+      - name: Push omw/main and rebased series
+        if: |
+          steps.rebase.outcome == 'success' &&
+          github.event.inputs.dry_run != 'true'
+        run: |
+          set -e
+          git push --force-with-lease origin omw/main
+          for branch in $(git branch --list 'omw/*' --format='%(refname:short)' | grep -v 'omw/main'); do
+            git push --force-with-lease origin "$branch"
+          done
+
+      - name: File upstream-conflict issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          UPSTREAM_SHA=$(git rev-parse upstream/master 2>/dev/null || echo unknown)
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "Upstream conflict — $(date -u +%Y-%m-%d)" \
+            --label upstream-conflict \
+            --body "$(cat <<EOF
+          ## Upstream conflict — $(date -u +%Y-%m-%d)
+
+          The nightly rebase failed.
+
+          - **Upstream commit at top of master:** \`$UPSTREAM_SHA\`
+          - **Failing series:** ${{ steps.rebase.outputs.failed }}
+          - **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          Triage per [\`specs/fork-strategy.md\` §5](../blob/main/specs/fork-strategy.md#5-conflict-triage).
+          You can also invoke the \`/triage-rebase\` Claude skill on this issue.
+          EOF
+          )"

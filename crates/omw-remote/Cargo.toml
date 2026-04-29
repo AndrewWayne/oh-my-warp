@@ -1,0 +1,9 @@
+[package]
+name = "omw-remote"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "GUI-anchored PTY bridge + remote API + pairing daemon. Phase 0 placeholder."

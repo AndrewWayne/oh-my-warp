@@ -1,0 +1,9 @@
+[package]
+name = "omw-policy"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Approval mode + allowlist configuration; wired into pi-agent's beforeToolCall hook. Phase 0 placeholder."

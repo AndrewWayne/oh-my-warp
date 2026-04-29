@@ -16,7 +16,7 @@
 //! 2. The handler resolves the agent binary in this order:
 //!    - `OMW_AGENT_BIN` env var (used by these tests),
 //!    - some sensible default for production (e.g. `omw-agent` on PATH).
-//!    The default is NOT exercised here.
+//!      The default is NOT exercised here.
 //! 3. The handler spawns the resolved binary with `ask` as the first
 //!    argv, followed by the prompt, then any provided flags. It must
 //!    propagate the relevant env vars (at least `OMW_CONFIG`,
@@ -90,11 +90,7 @@ fn write_agent_wrapper(dir: &Path) -> PathBuf {
         let wrapper = dir.join("fake-agent.cmd");
         // `@echo off` to keep stdout clean. Quote both paths defensively
         // for spaces (e.g. "C:\Program Files\nodejs\node.exe").
-        let body = format!(
-            "@echo off\r\n\"{}\" \"{}\" %*\r\n",
-            node,
-            script.display()
-        );
+        let body = format!("@echo off\r\n\"{}\" \"{}\" %*\r\n", node, script.display());
         std::fs::write(&wrapper, body).expect("write windows wrapper");
         wrapper
     } else {

@@ -478,6 +478,7 @@ oh-my-warp/                  # repo / codename
     byorc-protocol.md        # auth, signing, replay, capability scopes (Phase 0)
     fork-strategy.md         # branching, patch series, upstream tracking (Phase 0)
     threat-model.md          # actors, surfaces, invariants (Phase 0)
+    test-plan.md             # trust-tiered test strategy (Phase 0)
     audit.md
   packaging/
     homebrew/
@@ -689,7 +690,8 @@ Phase 0 closes when these are written down, reviewed, and committed:
 - **Threat model + invariants.** Codified in §11 + `specs/threat-model.md`.
 - **Component ownership map.** Codified in §8.3.
 - **Fork-rebase strategy.** `specs/fork-strategy.md` — branching, patch series, nightly upstream-tracking CI.
-- **Repo skeleton.** Cargo workspace, CI, license boundaries. No application code yet.
+- **Test plan.** `specs/test-plan.md` — trust tiers, property/fuzz catalog, cassette strategy, per-phase commitments.
+- **Repo skeleton.** Cargo workspace, CI scaffold (Tier A skeleton), license boundaries. No application code yet.
 
 **Exit:** all listed specs merged; CI green; license boundaries documented; legal review at least initiated.
 
@@ -790,11 +792,14 @@ We won't ship outbound telemetry, so all metrics are inferred or self-reported.
 
 ### v1.0 launch criteria
 
+Test gates and per-phase commitments live in [`specs/test-plan.md`](./specs/test-plan.md).
+
 - Journey A and Journey B (single-host) demonstrably work on a fresh Mac in a public screencast.
 - External implementation security review completed; all sev-1 issues resolved.
 - Homebrew install <60 seconds on a fresh machine.
 - All Tier-1 providers (OpenAI, Anthropic, OpenAI-compatible, Ollama) pass round-trip tests.
 - Audit hash chain validates end-to-end for a sample run.
+- Pre-release checklist (`specs/test-plan.md` §7) signed off.
 
 ### Post-launch (90 days)
 

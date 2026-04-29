@@ -15,6 +15,7 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 - [ ] Write `specs/threat-model.md` — actors, surfaces, invariants
 - [ ] Write `specs/byorc-protocol.md` — auth, signing, replay, capability scopes (used in v0.4)
 - [ ] Write `specs/fork-strategy.md` — branching, patch series, nightly upstream-tracking CI
+- [x] Write `specs/test-plan.md` — trust tiers, property/fuzz catalog, cassette strategy
 - [ ] Component ownership map (already in PRD §8.3 — confirm with engineering leads)
 - [ ] Repo skeleton: Cargo workspace with empty `omw-*` crates
 - [ ] Add `LICENSE-AGPL` file referencing combined-distribution terms

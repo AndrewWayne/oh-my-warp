@@ -94,4 +94,40 @@ layout."
 19. `config_show_empty_config`
 20. `config_show_with_providers_no_secret_leak` (in-process)
 
-20 tests total. ≥ 18 satisfied.
+`cli_ask.rs`:
+
+21. `ask_requires_prompt_arg`
+22. `ask_passes_prompt_to_omw_agent_bin`
+23. `ask_passes_provider_and_model_flags`
+24. `ask_passes_through_environment`
+
+24 tests total. ≥ 18 satisfied.
+
+### `omw ask` contract for the Executor
+
+`cli_ask.rs` exercises the SPAWN SURFACE of `omw ask <prompt>`. The Rust
+half (this crate) is responsible for:
+
+- accepting `<prompt>` (required positional) and the optional flags
+  `--provider <id>`, `--model <m>`, `--max-tokens <n>`, `--temperature <f>`,
+- locating an `omw-agent` executable via the `OMW_AGENT_BIN` env var
+  (with some sensible default for production — `omw-agent` on PATH — that
+  tests do NOT exercise),
+- spawning that executable with `ask` as the first arg followed by the
+  prompt and any forwarded flags, and forwarding the parent's
+  `OMW_CONFIG`, `OMW_KEYCHAIN_HELPER`, and `OMW_KEYCHAIN_BACKEND` env
+  vars to the child,
+- streaming the child's stdout to the parent's stdout, the child's
+  stderr to the parent's stderr, and exiting with the child's exit
+  code (or non-zero on spawn failure).
+
+The actual provider streaming, keychain resolution, and usage telemetry
+all live in the TS half (`apps/omw-agent/src/cli.ts`) and are tested by
+`apps/omw-agent/test/cli.test.ts`.
+
+The fake agent at `tests/fixtures/fake-agent.cjs` is a plain Node script
+that JSON-prints its argv + a whitelist of inherited env vars to stdout
+and exits 0 — the Rust tests use it to verify the spawn payload. A small
+`.cmd` (Windows) or `.sh` (Unix) wrapper is generated at test runtime so
+`OMW_AGENT_BIN` can be a single executable path regardless of the host
+shell.

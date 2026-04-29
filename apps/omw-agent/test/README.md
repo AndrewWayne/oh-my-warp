@@ -28,6 +28,26 @@ The Overseer owns these tests; the Executor MUST NOT modify them.
   - `getKeychainSecret(keyRef, opts?) → Promise<string | undefined>`.
   - `makeGetApiKey(opts?) → (provider: string) => Promise<string | undefined>`.
 
+- `apps/omw-agent/src/cli.ts` — the agent CLI behind `omw ask`. Must export:
+  ```ts
+  export interface RunCliOptions {
+    stdout: NodeJS.WritableStream;
+    stderr: NodeJS.WritableStream;
+    fetchImpl?: typeof fetch;
+    getKeychainSecretImpl?: (keyRef: string) => Promise<string | undefined>;
+  }
+  export async function runCli(
+    argv: string[],            // argv WITHOUT node and script (e.g. ["ask", "hi"])
+    env: Record<string, string>,
+    opts: RunCliOptions,
+  ): Promise<number>;          // exit code
+  ```
+  The bin entry (a `#!/usr/bin/env node` script) is what the Executor wires up
+  to invoke `runCli(process.argv.slice(2), process.env, { stdout: process.stdout, stderr: process.stderr })`.
+
+  Tests inject `fetchImpl` and `getKeychainSecretImpl` so no global
+  monkey-patching is required and tests stay parallel-safe.
+
 ## Behavioral contract the tests assert
 
 1. **Async spawn only.** `getKeychainSecret` MUST use `child_process.spawn`

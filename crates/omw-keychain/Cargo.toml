@@ -7,3 +7,16 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 description = "OS keychain wrapper for omw (macOS first; Linux/Windows Beyond v1). Phase 0 placeholder."
+
+[dependencies]
+omw-config = { path = "../omw-config" }
+zeroize = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { workspace = true, features = ["apple-native"] }
+security-framework = { workspace = true }
+
+[dev-dependencies]
+omw-config = { path = "../omw-config" }
+proptest.workspace = true
+static_assertions.workspace = true

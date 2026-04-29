@@ -28,7 +28,7 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 
 ## v0.1 — CLI agent (Tier-1 BYOK)
 
-- [ ] `omw-config` crate (TOML loading, schema validation, watcher)
+- [x] `omw-config` crate (TOML loading, schema validation, watcher)
 - [ ] `omw-keychain` crate (macOS Keychain first; Linux/Windows Beyond v1)
 - [ ] Wire pi-agent (`vendor/pi-mono`) as `apps/omw-agent` TypeScript package
 - [ ] Plumb `omw-keychain` into pi-agent's `getApiKey` hook for Tier-1 providers (OpenAI, Anthropic, OpenAI-compatible, Ollama)

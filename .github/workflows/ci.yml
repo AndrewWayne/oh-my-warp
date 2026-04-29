@@ -29,6 +29,14 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
+  secret-scan:
+    name: I-1 secret-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/workflows/scripts/grep-secrets.sh
+
   clippy-and-test:
     name: ${{ matrix.os }} / clippy + test
     runs-on: ${{ matrix.os }}

@@ -14,6 +14,9 @@ node_modules/
 dist/
 build/
 
+# TRD coordination state (per-run, not committed)
+.tmp/
+
 # Local secrets / env (keys belong in OS keychain, not in env files)
 .env
 .env.local

@@ -3,14 +3,20 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "bin": {
+    "omw-agent": "./bin/omw-agent.mjs"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "dev": "tsc --watch -p tsconfig.json"
+  },
+  "dependencies": {
+    "@iarna/toml": "^2.2.5"
   },
   "devDependencies": {
     "@types/node": "^22",

@@ -46,6 +46,12 @@ pub fn run(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) -> i
             ConfigCommand::Path => commands::config::path(stdout, stderr),
             ConfigCommand::Show => commands::config::show(stdout, stderr),
         },
+        Command::Ask(args) => {
+            // The ask handler owns its own exit code (it's a thin shell
+            // around an `omw-agent` subprocess and must propagate the
+            // child's exit code verbatim, including non-1 codes like 42).
+            return commands::ask::run(args, stdout, stderr);
+        }
     };
 
     match result {
@@ -74,6 +80,8 @@ enum Command {
     Provider(ProviderArgs),
     /// Inspect omw configuration
     Config(ConfigArgs),
+    /// Send a one-shot prompt to the configured provider
+    Ask(commands::ask::AskArgs),
 }
 
 #[derive(clap::Args, Debug)]

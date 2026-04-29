@@ -626,6 +626,8 @@ dependencies = [
  "clap",
  "omw-config",
  "omw-keychain",
+ "serde",
+ "serde_json",
  "tempfile",
  "toml_edit",
 ]

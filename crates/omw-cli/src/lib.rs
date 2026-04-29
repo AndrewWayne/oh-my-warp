@@ -53,6 +53,12 @@ pub fn run(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) -> i
             // child's exit code verbatim, including non-1 codes like 42).
             return commands::ask::run(args, stdout, stderr);
         }
+        Command::Agent(args) => {
+            // The agent REPL owns its own exit code (always 0 in the
+            // documented happy paths: EOF, `/exit`, `/quit`). Per-turn
+            // child exit codes are not propagated.
+            return commands::agent::run(args, stdout, stderr);
+        }
         Command::Costs(args) => commands::costs::run(args, stdout, stderr),
     };
 
@@ -84,6 +90,8 @@ enum Command {
     Config(ConfigArgs),
     /// Send a one-shot prompt to the configured provider
     Ask(commands::ask::AskArgs),
+    /// Start a line-oriented REPL that spawns one agent turn per line
+    Agent(commands::agent::AgentArgs),
     /// Show a cost rollup from recorded usage
     Costs(commands::costs::CostsArgs),
 }

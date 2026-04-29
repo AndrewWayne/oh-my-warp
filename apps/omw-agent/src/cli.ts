@@ -244,7 +244,7 @@ function loadConfig(path: string | undefined): ParsedConfig {
 		if (typeof kindUnknown !== "string") {
 			continue;
 		}
-		providers[id] = {
+		const providerCfg: ProviderConfigCommon = {
 			kind: kindUnknown,
 			key_ref:
 				typeof block.key_ref === "string" ? block.key_ref : undefined,
@@ -255,6 +255,8 @@ function loadConfig(path: string | undefined): ParsedConfig {
 					? block.default_model
 					: undefined,
 		};
+		validateProviderShape(id, providerCfg);
+		providers[id] = providerCfg;
 	}
 	const defaultProvider =
 		typeof parsed.default_provider === "string"
@@ -264,6 +266,50 @@ function loadConfig(path: string | undefined): ParsedConfig {
 		default_provider: defaultProvider,
 		providers,
 	};
+}
+
+// Enforce per-kind required fields per omw-config schema. Errors must surface
+// before any HTTP call so a misconfigured provider exits non-zero immediately.
+function validateProviderShape(
+	id: string,
+	cfg: ProviderConfigCommon,
+): void {
+	switch (cfg.kind) {
+		case "openai":
+			if (!cfg.key_ref) {
+				throw new Error(
+					`provider \`${id}\` (kind=openai) requires \`key_ref\``,
+				);
+			}
+			break;
+		case "anthropic":
+			if (!cfg.key_ref) {
+				throw new Error(
+					`provider \`${id}\` (kind=anthropic) requires \`key_ref\``,
+				);
+			}
+			break;
+		case "openai-compatible":
+			if (!cfg.key_ref) {
+				throw new Error(
+					`provider \`${id}\` (kind=openai-compatible) requires \`key_ref\``,
+				);
+			}
+			if (!cfg.base_url) {
+				throw new Error(
+					`provider \`${id}\` (kind=openai-compatible) requires \`base_url\``,
+				);
+			}
+			break;
+		case "ollama":
+			// Both `key_ref` and `base_url` are optional.
+			break;
+		default:
+			// Unknown kinds are deferred to dispatchAndStream so the existing
+			// "unsupported provider kind" error message remains the source of
+			// truth.
+			break;
+	}
 }
 
 async function dispatchAndStream(
@@ -534,10 +580,35 @@ async function ensureOk(resp: Response): Promise<void> {
 	} catch {
 		// best-effort
 	}
-	const excerpt = body.length > 500 ? `${body.slice(0, 500)}…` : body;
+	const excerpt = scrubSecrets(
+		body.length > 200 ? `${body.slice(0, 200)}…` : body,
+	);
 	throw new Error(
 		`provider returned HTTP ${resp.status}${excerpt ? `: ${excerpt}` : ""}`,
 	);
+}
+
+// I-1: scrub Bearer tokens and authorization/x-api-key header values that
+// some misbehaving proxies echo back in error bodies, so they never reach
+// stderr.
+//
+// Ordering: Bearer first so dotted JWTs (e.g. `Bearer eyJ.foo.bar`) are
+// fully consumed before the header rules see the value. The JSON-form rule
+// matches `"authorization":"<value>"` shapes (some providers echo the
+// request body as JSON in errors). The plain-form rule matches
+// `authorization: <value>` / `=` separator. All three rules together cover
+// both request-header echoes and JSON body echoes.
+function scrubSecrets(s: string): string {
+	return s
+		.replace(/Bearer\s+[^\s,";]+/gi, "Bearer <redacted>")
+		.replace(
+			/("(?:authorization|x-api-key)"\s*:\s*")[^"]*(")/gi,
+			"$1<redacted>$2",
+		)
+		.replace(
+			/(\b(?:authorization|x-api-key)\s*[:=]\s*)[^\s,;]+/gi,
+			"$1<redacted>",
+		);
 }
 
 interface SseEvent {

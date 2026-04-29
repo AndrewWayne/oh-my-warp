@@ -34,7 +34,7 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 - [x] Plumb `omw-keychain` into pi-agent's `getApiKey` hook for Tier-1 providers (OpenAI, Anthropic, OpenAI-compatible, Ollama)
 - [ ] Adapt pi-agent SQLite session storage path to `~/.local/share/omw/`
 - [x] `omw-cli`: `omw provider {add,list,remove}` (test deferred; needs HTTP cassette infra)
-- [ ] `omw-cli`: `omw ask "<prompt>"` (one-shot, streams to stdout)
+- [x] `omw-cli`: `omw ask "<prompt>"` (one-shot, streams to stdout)
 - [ ] `omw-cli`: `omw agent --cwd .` (interactive REPL)
 - [ ] `provider_pricing` snapshots wired into `usage_records` for cost reconciliation
 - [ ] `usage_records` (estimate + reported sources) wired through pi-agent usage events

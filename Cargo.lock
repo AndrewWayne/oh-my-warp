@@ -524,6 +524,12 @@ version = "0.0.0"
 [[package]]
 name = "omw-cli"
 version = "0.0.0"
+dependencies = [
+ "assert_cmd",
+ "omw-config",
+ "omw-keychain",
+ "tempfile",
+]
 
 [[package]]
 name = "omw-config"

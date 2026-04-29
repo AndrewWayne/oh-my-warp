@@ -33,3 +33,4 @@ static_assertions = "1"
 keyring = { version = "3", default-features = false }
 security-framework = "3"
 zeroize = { version = "1", features = ["zeroize_derive"] }
+assert_cmd = "2"

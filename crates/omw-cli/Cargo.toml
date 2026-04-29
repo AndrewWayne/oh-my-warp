@@ -7,3 +7,9 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 description = "Umbrella `omw` CLI wrapping subcommands. Phase 0 placeholder."
+
+[dev-dependencies]
+assert_cmd.workspace = true
+tempfile.workspace = true
+omw-config = { path = "../omw-config" }
+omw-keychain = { path = "../omw-keychain" }

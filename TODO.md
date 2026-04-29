@@ -32,10 +32,10 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 - [x] `omw-keychain` crate (macOS Keychain first; Linux/Windows Beyond v1)
 - [x] Wire pi-agent (`vendor/pi-mono`) as `apps/omw-agent` TypeScript package
 - [x] Plumb `omw-keychain` into pi-agent's `getApiKey` hook for Tier-1 providers (OpenAI, Anthropic, OpenAI-compatible, Ollama)
-- [ ] Adapt pi-agent SQLite session storage path to `~/.local/share/omw/`
+- [x] Adapt pi-agent SQLite session storage path to `~/.local/share/omw/` (resolved via `omw-cli/src/db.rs::data_dir`; pi-agent kernel itself deferred to v0.2)
 - [x] `omw-cli`: `omw provider {add,list,remove}` (test deferred; needs HTTP cassette infra)
 - [x] `omw-cli`: `omw ask "<prompt>"` (one-shot, streams to stdout)
-- [ ] `omw-cli`: `omw agent --cwd .` (interactive REPL)
+- [x] `omw-cli`: `omw agent --cwd .` (interactive REPL — line-buffered stdin)
 - [x] `provider_pricing` snapshots wired into `usage_records` for cost reconciliation
 - [x] `usage_records` (reported sources only — estimate variant deferred)
 - [x] Cost reporting per response, per session, per day

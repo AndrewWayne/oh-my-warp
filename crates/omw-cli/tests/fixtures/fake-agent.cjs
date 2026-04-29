@@ -22,7 +22,10 @@
 // depend on the rest of the parent env block (PATH, HOME, etc.).
 //
 // Modes:
-//   - default: write JSON payload to stdout, exit 0.
+//   - default: write JSON payload to stdout. Also write a usage-record
+//              JSON line as the LAST line of stderr (the cost-telemetry
+//              tests require this; the agent contract is that the final
+//              stderr line is parseable usage JSON). Exit 0.
 //   - fail:    write a fixed line to stderr, exit 42. Used by the Rust
 //              gate that asserts the SUT propagates child stderr to parent
 //              stderr AND propagates the child's nonzero exit code.
@@ -30,6 +33,12 @@
 //              have to forward it) or env var `FAKE_AGENT_MODE=fail`. We
 //              prefer the env trigger because the Rust SUT controls the
 //              parent env directly without needing to inject argv.
+//
+// Usage line shape (default mode, on stderr):
+//   {"prompt_tokens":N,"completion_tokens":N,"total_tokens":N,
+//    "provider":"...","model":"...","duration_ms":N}
+// The provider and model strings can be overridden via FAKE_AGENT_PROVIDER
+// and FAKE_AGENT_MODEL env vars; tests that don't care let them default.
 
 "use strict";
 
@@ -63,4 +72,19 @@ const payload = {
 };
 
 process.stdout.write(JSON.stringify(payload) + "\n");
+
+// Emit a usage-record JSON object as the LAST line on stderr. The omw-cli
+// `ask` handler captures the final stderr line and parses it as the
+// telemetry payload. Older callers that didn't read stderr keep working
+// (they only inspected stdout). Tests can override provider/model via env.
+const usage = {
+	prompt_tokens: 10,
+	completion_tokens: 20,
+	total_tokens: 30,
+	provider: process.env.FAKE_AGENT_PROVIDER || "test",
+	model: process.env.FAKE_AGENT_MODEL || "test-model",
+	duration_ms: 100,
+};
+process.stderr.write(JSON.stringify(usage) + "\n");
+
 process.exit(0);

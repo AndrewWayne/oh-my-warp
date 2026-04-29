@@ -68,8 +68,8 @@
 //!      - `[dev-dependencies]`: `assert_cmd = "2"`,
 //!        `omw-config = { path = "../omw-config" }`,
 //!        `omw-keychain = { path = "../omw-keychain" }`
-//!    (If `assert_cmd` is added to `[workspace.dependencies]`, dev-deps may
-//!    use `.workspace = true` instead of pinning the version here.)
+//!        (If `assert_cmd` is added to `[workspace.dependencies]`, dev-deps may
+//!        use `.workspace = true` instead of pinning the version here.)
 //! 3. Expose in `src/lib.rs`:
 //!    `pub fn run(args: &[String], envs: &HashMap<String, String>,
 //!     stdout: &mut dyn Write, stderr: &mut dyn Write) -> i32`
@@ -125,7 +125,12 @@ fn t10_get_existing_key_succeeds_with_exit_0_and_trailing_newline() {
     let args: Vec<String> = vec!["get".into(), "keychain:omw/lib-test-1".into()];
     let code = run(&args, &envs, &mut stdout, &mut stderr);
 
-    assert_eq!(code, 0, "expected exit 0, stderr={:?}", String::from_utf8_lossy(stderr.get_ref()));
+    assert_eq!(
+        code,
+        0,
+        "expected exit 0, stderr={:?}",
+        String::from_utf8_lossy(stderr.get_ref())
+    );
     let stdout_bytes = stdout.into_inner();
     let stdout_str = String::from_utf8(stdout_bytes).expect("stdout should be valid UTF-8");
     assert_eq!(
@@ -168,7 +173,10 @@ fn t12_get_missing_key_returns_exit_1_with_empty_stdout() {
     let code = run(&args, &envs, &mut stdout, &mut stderr);
 
     assert_eq!(code, 1);
-    assert!(stdout.into_inner().is_empty(), "stdout must be empty on NotFound");
+    assert!(
+        stdout.into_inner().is_empty(),
+        "stdout must be empty on NotFound"
+    );
     let stderr_str = String::from_utf8(stderr.into_inner()).expect("UTF-8");
     assert!(
         stderr_str.to_lowercase().contains("not found"),

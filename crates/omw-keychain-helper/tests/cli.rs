@@ -18,8 +18,8 @@
 //!      - `[dev-dependencies]`: `assert_cmd = "2"`,
 //!        `omw-config = { path = "../omw-config" }`,
 //!        `omw-keychain = { path = "../omw-keychain" }`
-//!    (If `assert_cmd` is added to `[workspace.dependencies]`, dev-deps may
-//!    use `.workspace = true` instead of pinning the version here.)
+//!        (If `assert_cmd` is added to `[workspace.dependencies]`, dev-deps may
+//!        use `.workspace = true` instead of pinning the version here.)
 //! 3. The binary in `src/main.rs` is a thin wrapper: collect
 //!    `std::env::args()` (skipping argv[0]) and `std::env::vars()`, call
 //!    `omw_keychain_helper::run()`, then `std::process::exit` with the code.
@@ -82,9 +82,18 @@ fn t1_get_on_never_set_returns_not_found() {
         .args(["get", "keychain:omw/never-set"])
         .assert();
     let output = assert.get_output();
-    assert_eq!(output.status.code(), Some(1), "expected exit 1, got {:?}", output);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected exit 1, got {:?}",
+        output
+    );
     // No stdout on NotFound (asserted more strictly in t9).
-    assert!(output.stdout.is_empty(), "stdout should be empty on NotFound, got {:?}", output.stdout);
+    assert!(
+        output.stdout.is_empty(),
+        "stdout should be empty on NotFound, got {:?}",
+        output.stdout
+    );
     // Stderr must explain the failure — defense against silent failures.
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.is_empty(), "stderr should be non-empty on NotFound");
@@ -102,10 +111,21 @@ fn t2_bad_input_malformed_keyref() {
         .args(["get", "sk-not-a-keyref"])
         .assert();
     let output = assert.get_output();
-    assert_eq!(output.status.code(), Some(2), "expected exit 2, got {:?}", output);
-    assert!(output.stdout.is_empty(), "stdout should be empty on bad input");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "expected exit 2, got {:?}",
+        output
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "stdout should be empty on bad input"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.is_empty(), "stderr should be non-empty on bad input");
+    assert!(
+        !stderr.is_empty(),
+        "stderr should be non-empty on bad input"
+    );
     let lower = stderr.to_lowercase();
     assert!(
         lower.contains("invalid") || lower.contains("usage"),
@@ -123,7 +143,10 @@ fn t3_bad_input_missing_argv() {
     let output = assert.get_output();
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.is_empty(), "stderr should be non-empty on missing argv");
+    assert!(
+        !stderr.is_empty(),
+        "stderr should be non-empty on missing argv"
+    );
     let lower = stderr.to_lowercase();
     assert!(
         lower.contains("invalid") || lower.contains("usage"),
@@ -141,7 +164,10 @@ fn t4_bad_input_unknown_subcommand() {
     let output = assert.get_output();
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.is_empty(), "stderr should be non-empty on unknown subcommand");
+    assert!(
+        !stderr.is_empty(),
+        "stderr should be non-empty on unknown subcommand"
+    );
     let lower = stderr.to_lowercase();
     assert!(
         lower.contains("invalid") || lower.contains("usage"),
@@ -152,13 +178,14 @@ fn t4_bad_input_unknown_subcommand() {
 
 #[test]
 fn t5_no_subcommand() {
-    let assert = helper()
-        .env("OMW_KEYCHAIN_BACKEND", "memory")
-        .assert();
+    let assert = helper().env("OMW_KEYCHAIN_BACKEND", "memory").assert();
     let output = assert.get_output();
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.is_empty(), "stderr should be non-empty when no subcommand given");
+    assert!(
+        !stderr.is_empty(),
+        "stderr should be non-empty when no subcommand given"
+    );
     let lower = stderr.to_lowercase();
     assert!(
         lower.contains("invalid") || lower.contains("usage"),
@@ -177,10 +204,18 @@ fn t6_backend_unavailable_on_linux_windows() {
         .args(["get", "keychain:omw/x"])
         .assert();
     let output = assert.get_output();
-    assert_eq!(output.status.code(), Some(3), "expected exit 3, got {:?}", output);
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "expected exit 3, got {:?}",
+        output
+    );
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.is_empty(), "stderr should be non-empty on backend unavailable");
+    assert!(
+        !stderr.is_empty(),
+        "stderr should be non-empty on backend unavailable"
+    );
     assert!(
         stderr.to_lowercase().contains("unavailable"),
         "expected 'unavailable' (case-insensitive) in stderr on exit 3, got {:?}",
@@ -214,8 +249,7 @@ fn t8_help_flag_produces_usage() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let combined = format!("{}{}", stdout, String::from_utf8_lossy(&output.stderr));
     assert!(
-        combined.to_lowercase().contains("usage")
-            || combined.to_lowercase().contains("help"),
+        combined.to_lowercase().contains("usage") || combined.to_lowercase().contains("help"),
         "expected usage info in --help output, got stdout={:?} stderr={:?}",
         stdout,
         String::from_utf8_lossy(&output.stderr),

@@ -67,7 +67,7 @@ Doesn't block merge but a 7-day red streak halts release. Runs on macOS-latest u
 #### B.2 End-to-end Journey B (protocol only)
 - Synthetic Web Controller client (Rust async) connects to `omw-remote` over loopback.
 - Tailscale Serve is **not** invoked; we test the BYORC protocol independently of Tailscale's transport.
-- Walk: pair → start tmux session → send keystroke → receive output → request agent run → approve → verify audit entry.
+- Walk: pair → attach to GUI terminal session → send keystroke → receive output → request agent run → approve → verify audit entry.
 
 #### B.3 Property tests
 See §2 catalog. Run with 1000 cases per property nightly.
@@ -327,13 +327,13 @@ Each crate owns its own tests. Cross-cutting test infrastructure lives in dedica
 |-------------|------|
 | `omw-config` | Unit |
 | `omw-keychain` | Unit |
-| `omw-agent` | Unit, cost reproducibility property, provider cassette tests |
+| `omw-agent` (pi-agent) | Unit, cost reproducibility property, provider cassette tests, WarpSessionBashOperations integration |
 | `omw-policy` | Unit, approval policy property |
 | `omw-audit` | Unit, audit chain property, redaction property, JSONL fuzz |
 | `omw-acp` | Unit |
 | `omw-server` | Unit, contract |
 | `omw-remote` | Unit, contract, BYORC validator fuzz, pairing property (v0.4) |
-| `omw-pty` | Unit, tmux smoke |
+| `omw-pty` | Unit |
 | `omw-cli` | Unit, E2E Journey A |
 | `omw-test-cassette` | Cassette runner library + recording mode |
 | `apps/web-controller` | Vitest unit, E2E Journey B (protocol-only) |

@@ -30,14 +30,14 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 
 - [ ] `omw-config` crate (TOML loading, schema validation, watcher)
 - [ ] `omw-keychain` crate (macOS Keychain first; Linux/Windows Beyond v1)
-- [ ] `omw-agent`: provider trait, streaming chat, model listing, capability hints
-- [ ] Provider crates: `omw-provider-openai`, `omw-provider-anthropic`, `omw-provider-openai-compat`, `omw-provider-ollama`
-- [ ] `omw-cli`: `omw provider {add,list,test,remove}`
+- [ ] Wire pi-agent (`vendor/pi-mono`) as `apps/omw-agent` TypeScript package
+- [ ] Plumb `omw-keychain` into pi-agent's `getApiKey` hook for Tier-1 providers (OpenAI, Anthropic, OpenAI-compatible, Ollama)
+- [ ] Adapt pi-agent SQLite session storage path to `~/.local/share/omw/`
+- [ ] `omw-cli`: `omw provider {add,list,test,remove}` (backed by pi-agent provider layer)
 - [ ] `omw-cli`: `omw ask "<prompt>"` (one-shot, streams to stdout)
 - [ ] `omw-cli`: `omw agent --cwd .` (interactive REPL)
-- [ ] SQLite transcript persistence (`messages`, `agent_sessions`, `tool_calls` tables)
-- [ ] `provider_pricing` snapshots wired in
-- [ ] `usage_records` (estimate + reported sources) wired in
+- [ ] `provider_pricing` snapshots wired into `usage_records` for cost reconciliation
+- [ ] `usage_records` (estimate + reported sources) wired through pi-agent usage events
 - [ ] Cost reporting per response, per session, per day
 - [ ] `omw costs --since <date>`
 
@@ -81,7 +81,9 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 **Gate:** `specs/byorc-protocol.md` reviewed externally and merged before any code below starts.
 
 - [ ] `omw-pty`: PTY abstraction over `portable-pty`
-- [ ] `omw-remote`: tmux control mode integration
+- [ ] `omw-server`: internal session registry API (`GET /internal/v1/sessions`, `WS /internal/v1/sessions/:id/pty`, `POST /internal/v1/sessions/:id/input`)
+- [ ] `omw-remote`: GUI-anchored PTY bridge — subscribe to omw-server session events, pipe to Web Controller WS
+- [ ] `WarpSessionBashOperations` adapter in `apps/omw-agent` — route pi-agent bash tool calls to Warp terminal session PTY via omw-server internal API
 - [ ] HTTP API per spec: sessions, agent tasks, pairing, audit
 - [ ] WebSocket streams per spec: `/ws/v1/pty/:id`, `/ws/v1/agent/:id`, `/ws/v1/events`
 - [ ] Pairing flow per spec: QR, one-time hashed token, Ed25519 keypair, signed requests, replay window
@@ -103,7 +105,7 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 - [ ] Audit "Activity" view in the forked client
 - [ ] **External protocol/design review sign-off in repo**
 
-**Exit criteria:** pair a single host (phone or laptop) via QR, attach to a tmux session over Tailscale Serve, ask agent something, approve a write, see the audit entry. Protocol review sign-off in repo.
+**Exit criteria:** pair a single host (phone or laptop) via QR, attach to a GUI terminal session over Tailscale Serve, ask agent something (bash tool executes in the Warp terminal pane), approve a write, see the audit entry. Protocol review sign-off in repo.
 
 ---
 
@@ -127,6 +129,7 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 Listed for direction; not in v1.0 scope. Each becomes its own RFC + planned phase post-v1.
 
 - [ ] Multi-machine fleet UX (auto-discovery, fleet picker, unified audit)
+- [ ] Headless BYORC (tmux-backed sessions that survive GUI process exit, for server/no-display hosts)
 - [ ] Tier-2 providers: Google Gemini, LM Studio
 - [ ] Privacy Mode runtime (hard-block of cloud providers)
 - [ ] Per-task routing rules executed at runtime

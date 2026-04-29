@@ -588,8 +588,7 @@ default_model = "gpt-3.5"
     // failed-without-force run. An impl that writes config/keychain before
     // erroring would slip past assertions made only after the --force retry
     // (since --force is allowed to overwrite).
-    let pre_config_bytes =
-        std::fs::read(&env.config_path).expect("seeded config must be readable");
+    let pre_config_bytes = std::fs::read(&env.config_path).expect("seeded config must be readable");
     let pre_kr: KeyRef = "keychain:omw/dup".parse().unwrap();
     match omw_keychain::get(&pre_kr) {
         Err(omw_keychain::KeychainError::NotFound) => {}
@@ -627,9 +626,9 @@ default_model = "gpt-3.5"
     );
     match omw_keychain::get(&pre_kr) {
         Err(omw_keychain::KeychainError::NotFound) => {}
-        Ok(_) => panic!(
-            "failed-without-force must not write to keychain, but omw/dup is now present"
-        ),
+        Ok(_) => {
+            panic!("failed-without-force must not write to keychain, but omw/dup is now present")
+        }
         Err(other) => panic!("unexpected keychain error after failed add: {other:?}"),
     }
 
@@ -682,8 +681,8 @@ default_model = "gpt-3.5"
     // that creates the config row but skips the keychain write would yield
     // NotFound here.
     let kr: KeyRef = "keychain:omw/dup".parse().unwrap();
-    let stored = omw_keychain::get(&kr)
-        .expect("--force must (re)write the keychain entry, got NotFound");
+    let stored =
+        omw_keychain::get(&kr).expect("--force must (re)write the keychain entry, got NotFound");
     assert_eq!(
         stored.expose(),
         "new-secret",
@@ -736,9 +735,7 @@ fn provider_add_creates_missing_config_with_version_1() {
     // Final sanity: the file parses with the canonical loader.
     let cfg = Config::load_from(&path).expect("created config must parse");
     assert!(
-        cfg.providers
-            .keys()
-            .any(|id| id.as_str() == "first"),
+        cfg.providers.keys().any(|id| id.as_str() == "first"),
         "loaded config must include `first` provider"
     );
 }

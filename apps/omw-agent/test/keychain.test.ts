@@ -32,6 +32,19 @@ interface SpawnScript {
 	stderr?: string;
 	exitCode?: number;
 	errorEvent?: NodeJS.ErrnoException;
+	// Signal-termination support. When `signal` is set, the mock emits
+	// `close(null, signal)` instead of `close(code, null)` — this is what
+	// Node does when the child was killed by a signal (exitCode is null,
+	// and the second arg names the signal). The impl must NOT treat this
+	// as a successful exit and return partial stdout — it must throw.
+	signal?: string;
+	// Concurrency-control hook. When provided, the mock does NOT auto-emit
+	// `close` from queueMicrotask; instead, it hands a resolver to the
+	// caller via `deferClose`, and the test fires `close` manually. This
+	// lets a test issue two concurrent `getKeychainSecret` calls and assert
+	// that `spawn` was called only once before either resolves (cache
+	// coalescing on the in-flight Promise).
+	deferClose?: (resolver: (result: { code: number | null; signal?: string }) => void) => void;
 }
 
 interface SpawnCall {
@@ -51,11 +64,31 @@ function makeChildProcess(script: SpawnScript): EventEmitter {
 	child.stdout = Readable.from(script.stdout !== undefined ? [script.stdout] : []);
 	child.stderr = Readable.from(script.stderr !== undefined ? [script.stderr] : []);
 
-	// Emit either an 'error' event, or ONLY 'close' on next tick. We do NOT
-	// emit 'exit' — see header comment for rationale (impl must use 'close').
+	// Emit either an 'error' event, or 'close' on next tick (or deferred).
+	// We do NOT emit 'exit' — see header comment for rationale (impl must
+	// use 'close').
+	if (script.deferClose) {
+		// Hand a manual resolver to the test. The test decides when (and
+		// with what code/signal) to emit 'close'. Errors and the
+		// auto-microtask path are bypassed.
+		script.deferClose((result) => {
+			if (result.signal !== undefined) {
+				child.emit("close", null, result.signal);
+				return;
+			}
+			child.emit("close", result.code, null);
+		});
+		return child;
+	}
+
 	queueMicrotask(() => {
 		if (script.errorEvent) {
 			child.emit("error", script.errorEvent);
+			return;
+		}
+		if (script.signal !== undefined) {
+			// code === null, signal name set — process killed by signal.
+			child.emit("close", null, script.signal);
 			return;
 		}
 		const code = script.exitCode ?? 0;
@@ -178,6 +211,51 @@ describe("getKeychainSecret — spawn integration via mock", () => {
 		expect(out).toBe("secret\n");
 	});
 
+	it("25. signal_termination_throws_keychain_helper_error", async () => {
+		// Regression guard: when the helper is killed by a signal, Node
+		// fires `close(null, 'SIGTERM')` (code === null, signal name set).
+		// The impl MUST NOT treat partial stdout as a valid secret — it
+		// must throw `KeychainHelperError` with a sentinel exitCode (-1).
+		// The error message MUST NOT contain any of the partial stdout
+		// (a misbehaving helper could have started to write a real secret
+		// before being killed).
+		const PARTIAL = "partial-secret";
+		pushScript({ stdout: PARTIAL + "\n", signal: "SIGTERM" });
+
+		// Mirror tests 15/24: also confirm no console.* leak on this path.
+		const consoleSpies = [
+			vi.spyOn(console, "log").mockImplementation(() => {}),
+			vi.spyOn(console, "warn").mockImplementation(() => {}),
+			vi.spyOn(console, "error").mockImplementation(() => {}),
+			vi.spyOn(console, "info").mockImplementation(() => {}),
+			vi.spyOn(console, "debug").mockImplementation(() => {}),
+		];
+
+		const { getKeychainSecret, KeychainHelperError } = await loadModule();
+		try {
+			await getKeychainSecret("keychain:omw/signaled");
+			throw new Error("expected throw");
+		} catch (err) {
+			expect(err).toBeInstanceOf(KeychainHelperError);
+			expect((err as { exitCode: number }).exitCode).toBe(-1);
+			const rendered = renderError(err);
+			assertNoSecretLeak(rendered, PARTIAL, 4);
+		}
+
+		for (const spy of consoleSpies) {
+			for (const call of spy.mock.calls) {
+				const stringified = call.map((arg) => {
+					try {
+						return typeof arg === "string" ? arg : JSON.stringify(arg);
+					} catch {
+						return String(arg);
+					}
+				}).join(" ");
+				assertNoSecretLeak(stringified, PARTIAL, 4);
+			}
+		}
+	});
+
 	it("18. argv shape is exactly ['get', keyRef]", async () => {
 		// Tighter than tests 9/10 — we assert the LITERAL subcommand 'get' at
 		// position 0 and the keyRef at position 1. An impl that omits 'get'
@@ -260,6 +338,44 @@ describe("getKeychainSecret — caching", () => {
 		const second = await getKeychainSecret("keychain:omw/never-set");
 		expect(first).toBeUndefined();
 		expect(second).toBeUndefined();
+		expect(spawnCalls.length).toBe(1);
+	});
+
+	it("26. concurrent_calls_with_same_key_share_one_spawn", async () => {
+		// Test 8 covers SEQUENTIAL caching (await; await): the second call
+		// reads the resolved value from the cache. This test covers
+		// CONCURRENT coalescing (no await between calls): the second call
+		// must subscribe to the in-flight Promise from the first call,
+		// NOT spawn a second helper. The impl achieves this by caching
+		// the *Promise*, not the resolved value.
+		//
+		// We use the `deferClose` hook to keep the helper "pending" until
+		// both callers have registered, then resolve once and observe both
+		// promises settling to the same value with exactly one spawn.
+		let resolveClose: ((result: { code: number | null; signal?: string }) => void) | undefined;
+		pushScript({
+			stdout: "sk-coalesced\n",
+			deferClose: (resolver) => {
+				resolveClose = resolver;
+			},
+		});
+
+		const { getKeychainSecret } = await loadModule();
+		const promise1 = getKeychainSecret("keychain:omw/concurrent");
+		const promise2 = getKeychainSecret("keychain:omw/concurrent");
+
+		// Both calls registered before the helper finished — only ONE
+		// spawn should have happened.
+		expect(spawnCalls.length).toBe(1);
+		expect(resolveClose).toBeDefined();
+
+		// Now let the (single) helper finish.
+		resolveClose?.({ code: 0 });
+		const [v1, v2] = await Promise.all([promise1, promise2]);
+		expect(v1).toBe("sk-coalesced");
+		expect(v2).toBe("sk-coalesced");
+		expect(v1).toBe(v2);
+		// Final invariant: still exactly one spawn after resolution.
 		expect(spawnCalls.length).toBe(1);
 	});
 

@@ -55,3 +55,14 @@ For multi-step tasks, state a brief plan:
 ```
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+## 5. Project-specific rules
+
+`omw` is the product brand; `oh-my-warp` is the repo codename (see [PRD §12.1](./PRD.md#121-brand-vs-codename)).
+
+- **Brand.** Never write `Warp` (capitalized) in product-surface code or docs. Allowed in: file paths, `LICENSE-AGPL`, source-attribution comments (e.g. `// upstream:` blocks), and the literal `oh-my-warp` codename.
+- **Vendor.** `vendor/warp-fork/` is a submodule pointing at the `oh-my-warp/warp-fork` sibling repo. Never edit it from this repo. Patches go upstream; rebase strategy lives in `specs/fork-strategy.md`.
+- **Spec coupling.** Any change to PRD.md §3.1 (v1.0 Committed Scope) MUST include a TODO.md update in the same PR.
+- **Test gate.** Any new endpoint in `crates/omw-remote/` requires a contract test (see `specs/test-plan.md` §1.2) AND a fuzz target (`specs/test-plan.md` §3.1) before merge.
+
+If you're unsure whether a change crosses the brand or vendor lines, run `/spec-consistency` and `/check-scope` from the project's slash commands before opening a PR.

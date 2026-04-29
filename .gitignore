@@ -1,0 +1,22 @@
+# Claude Code per-user overrides (do not commit)
+.claude/settings.local.json
+
+# OS / editor noise
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Build artifacts (placeholders for when crates land)
+target/
+node_modules/
+dist/
+build/
+
+# Local secrets / env (keys belong in OS keychain, not in env files)
+.env
+.env.local
+
+# Logs
+*.log

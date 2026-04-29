@@ -36,10 +36,10 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 - [x] `omw-cli`: `omw provider {add,list,remove}` (test deferred; needs HTTP cassette infra)
 - [x] `omw-cli`: `omw ask "<prompt>"` (one-shot, streams to stdout)
 - [ ] `omw-cli`: `omw agent --cwd .` (interactive REPL)
-- [ ] `provider_pricing` snapshots wired into `usage_records` for cost reconciliation
-- [ ] `usage_records` (estimate + reported sources) wired through pi-agent usage events
-- [ ] Cost reporting per response, per session, per day
-- [ ] `omw costs --since <date>`
+- [x] `provider_pricing` snapshots wired into `usage_records` for cost reconciliation
+- [x] `usage_records` (reported sources only — estimate variant deferred)
+- [x] Cost reporting per response, per session, per day
+- [x] `omw costs --since <date>`
 
 **Exit criteria:** `omw ask` works against all four Tier-1 providers with streaming + reconciled cost.
 

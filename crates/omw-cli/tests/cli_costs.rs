@@ -179,6 +179,7 @@ fn fresh_db(prefix: &str) -> (tempfile::TempDir, Connection) {
 /// `record_usage` API stamps "now"; tests that need historical rows
 /// (date filtering, day grouping) write directly via SQL after seeding.
 /// This bypass is intentional and limited to date-shape tests.
+#[allow(clippy::too_many_arguments)]
 fn insert_dated_usage(
     conn: &Connection,
     provider_id: &str,
@@ -229,9 +230,9 @@ struct PricingRow {
 // =============================================================================
 
 /// 1. Empty-db case. With no `usage_records` rows, `omw costs` must
-/// exit 0 and indicate that there is nothing to report. We accept any
-/// of a few canonical phrasings to give the Executor wiggle room on
-/// exact wording.
+///    exit 0 and indicate that there is nothing to report. We accept any
+///    of a few canonical phrasings to give the Executor wiggle room on
+///    exact wording.
 #[test]
 fn costs_on_empty_db_outputs_no_records() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -264,7 +265,7 @@ fn costs_on_empty_db_outputs_no_records() {
 }
 
 /// 2. Group-by-provider with three providers. Seeded directly via
-/// rusqlite into the same db file the subprocess will read.
+///    rusqlite into the same db file the subprocess will read.
 #[test]
 fn costs_with_seed_data_groups_by_provider() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -412,7 +413,7 @@ fn costs_filters_by_since() {
 }
 
 /// 4. `--by day` groups by date. Seed two rows on the same day and one
-/// on a different day; expect two distinct day rows in output.
+///    on a different day; expect two distinct day rows in output.
 #[test]
 fn costs_groups_by_day() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -581,7 +582,7 @@ fn costs_groups_by_model() {
 }
 
 /// 6. The trailing `Total` row sums the per-group columns. We seed with
-/// known integer cents per row so we can pin the expected total.
+///    known integer cents per row so we can pin the expected total.
 #[test]
 fn costs_total_row_sums_correctly() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -676,7 +677,7 @@ fn costs_total_row_sums_correctly() {
 // =============================================================================
 
 /// 7. `record_usage` inserts a row and computes `cost_cents` from the
-/// matching pricing snapshot.
+///    matching pricing snapshot.
 #[test]
 fn record_usage_inserts_row_with_cost_cents() {
     let (_dir, conn) = fresh_db("rec_usage_cost_");
@@ -695,7 +696,10 @@ fn record_usage_inserts_row_with_cost_cents() {
         duration_ms: 1234,
     };
     let id = omw_cli::db::record_usage(&conn, &rec).expect("record_usage");
-    assert!(id > 0, "record_usage must return a positive rowid, got {id}");
+    assert!(
+        id > 0,
+        "record_usage must return a positive rowid, got {id}"
+    );
 
     let (cost_cents, model, kind): (Option<i64>, String, String) = conn
         .query_row(
@@ -714,7 +718,7 @@ fn record_usage_inserts_row_with_cost_cents() {
 }
 
 /// 8. Newer pricing rows take precedence over older ones for the same
-/// provider_kind+model.
+///    provider_kind+model.
 #[test]
 fn record_usage_uses_latest_pricing_snapshot() {
     let (_dir, conn) = fresh_db("rec_usage_latest_");
@@ -811,7 +815,7 @@ fn record_usage_with_unknown_pricing_stores_null_cost() {
 }
 
 /// 10. `seed_pricing` is idempotent: calling twice does not duplicate
-/// rows or error.
+///     rows or error.
 #[test]
 fn seed_pricing_idempotent() {
     let (_dir, conn) = fresh_db("seed_idempotent_");
@@ -850,7 +854,10 @@ fn seed_pricing_idempotent() {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .expect("query openai/gpt-4o pricing");
-    assert_eq!(prompt, 250, "openai/gpt-4o prompt price must be 250 cents/M");
+    assert_eq!(
+        prompt, 250,
+        "openai/gpt-4o prompt price must be 250 cents/M"
+    );
     assert_eq!(
         completion, 1000,
         "openai/gpt-4o completion price must be 1000 cents/M"
@@ -881,9 +888,9 @@ fn data_dir_honors_omw_data_dir() {
 }
 
 /// 12. `data_dir()` without override falls back to a sensible XDG-style
-/// path. We don't pin the OS-default — that depends on the platform —
-/// but we DO assert the path ends with the `omw` segment so a buggy
-/// impl that returned, say, the parent directory would be caught.
+///     path. We don't pin the OS-default — that depends on the platform —
+///     but we DO assert the path ends with the `omw` segment so a buggy
+///     impl that returned, say, the parent directory would be caught.
 #[test]
 fn data_dir_default_xdg_layout() {
     let _g = env_lock();
@@ -920,11 +927,11 @@ fn data_dir_default_xdg_layout() {
 // =============================================================================
 
 /// 13. After a successful `omw ask`, the usage row must be persisted.
-/// We use `lib_mode_run` so we can read back the SQLite file the same
-/// in-process invocation wrote to (subprocess-based tests would also
-/// work for SQLite, but the spec calls out `lib_mode_run` because the
-/// fake-agent path through clap runs identically and we want to keep
-/// state inspection simple).
+///     We use `lib_mode_run` so we can read back the SQLite file the same
+///     in-process invocation wrote to (subprocess-based tests would also
+///     work for SQLite, but the spec calls out `lib_mode_run` because the
+///     fake-agent path through clap runs identically and we want to keep
+///     state inspection simple).
 #[test]
 fn ask_writes_usage_record_after_successful_call() {
     let _g = env_lock();
@@ -1014,11 +1021,11 @@ kind = "ollama"
 }
 
 /// 14. If the db write fails, `omw ask` must STILL exit with the
-/// agent's exit code (0 here). The instrumentation is best-effort.
+///     agent's exit code (0 here). The instrumentation is best-effort.
 ///
-/// We force the failure by pointing `OMW_DATA_DIR` at a path that is
-/// itself a regular file: `create_dir_all` and `Connection::open` will
-/// both fail in that scenario on every platform.
+///     We force the failure by pointing `OMW_DATA_DIR` at a path that is
+///     itself a regular file: `create_dir_all` and `Connection::open` will
+///     both fail in that scenario on every platform.
 #[test]
 fn ask_does_not_fail_if_db_write_fails() {
     let _g = env_lock();

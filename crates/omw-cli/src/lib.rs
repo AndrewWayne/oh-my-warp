@@ -8,6 +8,7 @@ use std::io::Write;
 use clap::{Parser, Subcommand, ValueEnum};
 
 mod commands;
+pub mod db;
 
 /// Library entry point. `args` does NOT include argv[0]. Returns the exit
 /// code the binary wrapper would `exit()` with. Never touches process stdio
@@ -52,6 +53,7 @@ pub fn run(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) -> i
             // child's exit code verbatim, including non-1 codes like 42).
             return commands::ask::run(args, stdout, stderr);
         }
+        Command::Costs(args) => commands::costs::run(args, stdout, stderr),
     };
 
     match result {
@@ -82,6 +84,8 @@ enum Command {
     Config(ConfigArgs),
     /// Send a one-shot prompt to the configured provider
     Ask(commands::ask::AskArgs),
+    /// Show a cost rollup from recorded usage
+    Costs(commands::costs::CostsArgs),
 }
 
 #[derive(clap::Args, Debug)]

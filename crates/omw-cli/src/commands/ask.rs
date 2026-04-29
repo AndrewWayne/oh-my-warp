@@ -12,11 +12,14 @@
 
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
 use anyhow::{anyhow, Context};
 use clap::Args;
+use serde::Deserialize;
+
+use crate::db;
 
 #[derive(Args, Debug)]
 pub struct AskArgs {
@@ -122,6 +125,12 @@ fn run_inner(args: AskArgs, stdout: &mut dyn Write, stderr: &mut dyn Write) -> a
     let mut child_stdout = child.stdout.take();
     let mut child_stderr = child.stderr.take();
 
+    // Tee child stderr into a shared buffer so we can extract the LAST
+    // line as a candidate usage-JSON payload after the child exits. We
+    // still forward every byte to the caller's stderr in real time.
+    let stderr_capture: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let stderr_capture_worker = Arc::clone(&stderr_capture);
+
     let stdout_thread = thread::spawn(move || -> std::io::Result<()> {
         if let Some(s) = child_stdout.as_mut() {
             pump(s, &stdout_tx)?;
@@ -130,7 +139,7 @@ fn run_inner(args: AskArgs, stdout: &mut dyn Write, stderr: &mut dyn Write) -> a
     });
     let stderr_thread = thread::spawn(move || -> std::io::Result<()> {
         if let Some(s) = child_stderr.as_mut() {
-            pump(s, &stderr_tx)?;
+            pump_with_capture(s, &stderr_tx, &stderr_capture_worker)?;
         }
         Ok(())
     });
@@ -183,7 +192,94 @@ fn run_inner(args: AskArgs, stdout: &mut dyn Write, stderr: &mut dyn Write) -> a
     let code = status
         .code()
         .ok_or_else(|| anyhow!("agent terminated by signal without an exit code"))?;
+
+    // Best-effort usage capture: only on a clean exit, parse the LAST
+    // non-empty stderr line as JSON and record it. Any failure (parse,
+    // config lookup, db open, db write) is swallowed — telemetry must
+    // never alter the user-visible exit code or stream.
+    if code == 0 {
+        let buf = stderr_capture.lock().map(|g| g.clone()).unwrap_or_default();
+        if let Some(line) = last_nonempty_line(&buf) {
+            try_record_usage(line, &args, stderr);
+        }
+    }
+
     Ok(code)
+}
+
+fn last_nonempty_line(buf: &[u8]) -> Option<&str> {
+    let s = std::str::from_utf8(buf).ok()?;
+    s.lines().rev().find(|l| !l.trim().is_empty())
+}
+
+#[derive(Debug, Deserialize)]
+struct UsageJson {
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+    provider: String,
+    model: String,
+    duration_ms: u64,
+}
+
+fn try_record_usage(line: &str, args: &AskArgs, stderr: &mut dyn Write) {
+    let usage: UsageJson = match serde_json::from_str(line) {
+        Ok(u) => u,
+        Err(_) => return, // last stderr line wasn't usage JSON; ignore.
+    };
+
+    // The agent emits `provider` as the provider id. Cross-check with the
+    // CLI flag if present (the flag wins for kind lookup since the user
+    // controls it explicitly).
+    let provider_id = args
+        .provider
+        .clone()
+        .unwrap_or_else(|| usage.provider.clone());
+
+    let provider_kind = match resolve_provider_kind(&provider_id) {
+        Some(k) => k,
+        None => {
+            // Unknown provider id: emit a quiet warning but don't fail.
+            let _ = writeln!(
+                stderr,
+                "warning: usage recorded for provider id `{provider_id}` whose kind could not be resolved"
+            );
+            return;
+        }
+    };
+
+    let conn = match db::open() {
+        Ok(c) => c,
+        Err(_) => return, // db unavailable; instrumentation is best-effort.
+    };
+
+    let rec = db::UsageRecord {
+        provider_id,
+        provider_kind,
+        model: usage.model,
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        total_tokens: usage.total_tokens,
+        duration_ms: usage.duration_ms,
+    };
+    let _ = db::record_usage(&conn, &rec);
+}
+
+fn resolve_provider_kind(provider_id: &str) -> Option<String> {
+    let path = omw_config::config_path().ok()?;
+    let cfg = omw_config::Config::load_from(&path).ok()?;
+    let pid: omw_config::ProviderId = provider_id.parse().ok()?;
+    let prov = cfg.providers.get(&pid)?;
+    Some(provider_kind_str(prov).to_string())
+}
+
+fn provider_kind_str(p: &omw_config::ProviderConfig) -> &'static str {
+    match p {
+        omw_config::ProviderConfig::OpenAi { .. } => "openai",
+        omw_config::ProviderConfig::Anthropic { .. } => "anthropic",
+        omw_config::ProviderConfig::OpenAiCompatible { .. } => "openai-compatible",
+        omw_config::ProviderConfig::Ollama { .. } => "ollama",
+    }
 }
 
 fn pump(stream: &mut impl Read, tx: &mpsc::Sender<Vec<u8>>) -> std::io::Result<()> {
@@ -192,6 +288,32 @@ fn pump(stream: &mut impl Read, tx: &mpsc::Sender<Vec<u8>>) -> std::io::Result<(
         match stream.read(&mut buf) {
             Ok(0) => return Ok(()),
             Ok(n) => {
+                if tx.send(buf[..n].to_vec()).is_err() {
+                    return Ok(());
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Like `pump`, but additionally appends the bytes to `capture` so the
+/// caller can inspect the full stream (e.g. extract the last line as a
+/// candidate usage payload) after the child exits.
+fn pump_with_capture(
+    stream: &mut impl Read,
+    tx: &mpsc::Sender<Vec<u8>>,
+    capture: &Arc<Mutex<Vec<u8>>>,
+) -> std::io::Result<()> {
+    let mut buf = [0u8; 4096];
+    loop {
+        match stream.read(&mut buf) {
+            Ok(0) => return Ok(()),
+            Ok(n) => {
+                if let Ok(mut g) = capture.lock() {
+                    g.extend_from_slice(&buf[..n]);
+                }
                 if tx.send(buf[..n].to_vec()).is_err() {
                     return Ok(());
                 }

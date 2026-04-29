@@ -34,3 +34,6 @@ keyring = { version = "3", default-features = false }
 security-framework = "3"
 zeroize = { version = "1", features = ["zeroize_derive"] }
 assert_cmd = "2"
+clap = { version = "4", features = ["derive"] }
+toml_edit = "0.22"
+anyhow = "1"

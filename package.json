@@ -1,0 +1,8 @@
+{
+  "name": "oh-my-warp-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*"
+  ]
+}

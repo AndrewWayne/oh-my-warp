@@ -6,6 +6,7 @@ members = [
     "crates/omw-cli",
     "crates/omw-config",
     "crates/omw-keychain",
+    "crates/omw-keychain-helper",
     "crates/omw-policy",
     "crates/omw-pty",
     "crates/omw-remote",

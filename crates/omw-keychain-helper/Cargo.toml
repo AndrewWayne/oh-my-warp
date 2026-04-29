@@ -1,0 +1,25 @@
+[package]
+name = "omw-keychain-helper"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Subprocess bridge from TypeScript getApiKey hooks to omw-keychain. Will be replaced by stdio-to-omw-server in v0.3."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "omw-keychain-helper"
+path = "src/main.rs"
+
+[dependencies]
+omw-config = { path = "../omw-config" }
+omw-keychain = { path = "../omw-keychain" }
+
+[dev-dependencies]
+assert_cmd = "2"
+omw-config = { path = "../omw-config" }
+omw-keychain = { path = "../omw-keychain" }

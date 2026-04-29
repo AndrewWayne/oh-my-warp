@@ -71,3 +71,33 @@ jobs:
         run: cargo test --workspace --all-targets
       - name: doc-tests
         run: cargo test --workspace --doc
+
+  ts-omw-agent:
+    name: ${{ matrix.os }} / omw-agent (TS)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build helper binary
+        run: cargo build --release -p omw-keychain-helper
+      - name: npm install
+        run: npm install
+      - name: typecheck
+        working-directory: apps/omw-agent
+        run: npm run typecheck
+      - name: test
+        working-directory: apps/omw-agent
+        env:
+          OMW_KEYCHAIN_HELPER: ${{ github.workspace }}/target/release/omw-keychain-helper
+        run: npm test

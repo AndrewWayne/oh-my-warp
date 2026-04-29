@@ -1,5 +1,7 @@
 # Claude Code per-user overrides (do not commit)
 .claude/settings.local.json
+.claude/scheduled_tasks.json
+.claude/scheduled_tasks.lock
 
 # OS / editor noise
 .DS_Store

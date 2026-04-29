@@ -4,7 +4,7 @@
 //! only into local bindings that we never write to stdout/stderr. The on-disk
 //! representation is always a `keychain:` ref produced from the provider id.
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -179,14 +179,14 @@ pub(crate) fn add(
     }
 
     // Step 6: collect the secret. Bind tightly; never written to stdio.
-    let key_value: Option<String> = if args.from_stdin {
-        let mut buf = String::new();
-        std::io::stdin().read_to_string(&mut buf)?;
-        let line = buf.trim_end_matches(['\n', '\r']).to_string();
-        Some(line)
-    } else {
-        args.key.clone()
-    };
+    // `--from-stdin` is preprocessed in `main.rs` (the binary entry point) into
+    // `--key <line>` before `run()` is called, so the library half never reads
+    // process stdin. If the flag still reaches us here, refuse rather than
+    // silently consuming the caller's stdin.
+    if args.from_stdin {
+        bail!("--from-stdin is only supported in the binary entry point");
+    }
+    let key_value: Option<String> = args.key.clone();
 
     let key_required = !matches!(kind, ProviderKindArg::Ollama);
     if key_required && key_value.is_none() {

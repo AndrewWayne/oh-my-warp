@@ -371,7 +371,9 @@ fn agent_passes_provider_flag_through_to_each_turn() {
         );
         // Belt-and-braces: the `--provider` flag itself or a `--provider=foo`
         // single-token form must be present alongside the value.
-        let has_flag = argv.iter().any(|a| a == "--provider" || a == "--provider=foo");
+        let has_flag = argv
+            .iter()
+            .any(|a| a == "--provider" || a == "--provider=foo");
         assert!(
             has_flag,
             "turn #{i} child argv must include the --provider flag; got {argv:?}"

@@ -16,23 +16,20 @@ pub struct RevocationList {
 impl RevocationList {
     /// Create an empty revocation list.
     pub fn new() -> Arc<Self> {
-        unimplemented!("Phase E executor: construct an empty RevocationList")
+        Arc::new(Self {
+            revoked: Mutex::new(HashSet::new()),
+        })
     }
 
     /// Mark `device_id` as revoked. Idempotent.
-    pub fn revoke(&self, _device_id: &str) {
-        unimplemented!("Phase E executor: insert device_id into revoked set")
+    pub fn revoke(&self, device_id: &str) {
+        let mut g = self.revoked.lock().expect("revocations poisoned");
+        g.insert(device_id.to_string());
     }
 
     /// True iff `device_id` has been revoked.
-    pub fn is_revoked(&self, _device_id: &str) -> bool {
-        unimplemented!("Phase E executor: lookup device_id in revoked set")
+    pub fn is_revoked(&self, device_id: &str) -> bool {
+        let g = self.revoked.lock().expect("revocations poisoned");
+        g.contains(device_id)
     }
-}
-
-// Held to keep the mutex field referenced even before Phase E impl lands —
-// avoids a "field never read" warning during the scaffolding window.
-#[allow(dead_code)]
-fn _force_field_use(list: &RevocationList) -> usize {
-    list.revoked.lock().expect("revocations poisoned").len()
 }

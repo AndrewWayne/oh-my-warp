@@ -1,7 +1,10 @@
 //! WS frame envelope + per-frame signing/verification. See spec §7.2 + §7.3.
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
+use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier as _, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -47,41 +50,126 @@ pub enum FrameKind {
     Pong,
 }
 
+impl FrameKind {
+    fn as_wire(&self) -> &'static str {
+        match self {
+            FrameKind::Input => "input",
+            FrameKind::Output => "output",
+            FrameKind::Control => "control",
+            FrameKind::Ping => "ping",
+            FrameKind::Pong => "pong",
+        }
+    }
+
+    fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "input" => Some(FrameKind::Input),
+            "output" => Some(FrameKind::Output),
+            "control" => Some(FrameKind::Control),
+            "ping" => Some(FrameKind::Ping),
+            "pong" => Some(FrameKind::Pong),
+            _ => None,
+        }
+    }
+}
+
+/// Wire JSON envelope including `sig`. Used by `to_json` / `from_json`.
+#[derive(Serialize, Deserialize)]
+struct WireFrame {
+    kind: String,
+    payload: String,
+    seq: u64,
+    sig: String,
+    ts: String,
+    v: u8,
+}
+
 impl Frame {
     /// Render the deterministic canonical form (sig omitted, sorted keys, no
     /// whitespace) the signer signs and the verifier re-derives.
     ///
     /// Sorted lex order: kind, payload, seq, ts, v.
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        unimplemented!("Phase E executor: emit canonical JSON with sig omitted, sorted keys, no whitespace")
+        let kind_json = serde_json::to_string(self.kind.as_wire()).expect("string");
+        let payload_b64 = URL_SAFE_NO_PAD.encode(&self.payload);
+        let payload_json = serde_json::to_string(&payload_b64).expect("string");
+        let ts_json = serde_json::to_string(&self.ts.to_rfc3339()).expect("string");
+        let s = format!(
+            "{{\"kind\":{kind_json},\"payload\":{payload_json},\"seq\":{seq},\"ts\":{ts_json},\"v\":{v}}}",
+            seq = self.seq,
+            v = self.v,
+        );
+        s.into_bytes()
     }
 
     /// Sign this frame with the device key (client→server) by computing
     /// `sig = Ed25519(signer, self.canonical_bytes())`.
-    pub fn sign(&mut self, _signer: &Signer) {
-        unimplemented!("Phase E executor: sign canonical_bytes() and store into self.sig")
+    pub fn sign(&mut self, signer: &Signer) {
+        let signing = SigningKey::from_bytes(signer.device_priv);
+        let bytes = self.canonical_bytes();
+        let sig = signing.sign(&bytes);
+        self.sig = sig.to_bytes();
     }
 
     /// Sign this frame with the host pairing key (server→client output frames).
-    pub fn sign_with_host(&mut self, _host: &HostKey) {
-        unimplemented!("Phase E executor: sign canonical_bytes() with host key")
+    pub fn sign_with_host(&mut self, host: &HostKey) {
+        let bytes = self.canonical_bytes();
+        self.sig = host.sign(&bytes);
     }
 
     /// Verify `self.sig` against `pubkey` (32-byte Ed25519 verifying key).
     /// Used both for inbound device-signed frames (device pubkey) and
     /// outbound server-signed frames (host pubkey).
-    pub fn verify(&self, _pubkey: &[u8; 32]) -> Result<(), FrameAuthError> {
-        unimplemented!("Phase E executor: Ed25519 verify of canonical_bytes against pubkey")
+    pub fn verify(&self, pubkey: &[u8; 32]) -> Result<(), FrameAuthError> {
+        let vk = VerifyingKey::from_bytes(pubkey).map_err(|_| FrameAuthError::SignatureInvalid)?;
+        let sig = Signature::from_bytes(&self.sig);
+        let bytes = self.canonical_bytes();
+        vk.verify(&bytes, &sig)
+            .map_err(|_| FrameAuthError::SignatureInvalid)
     }
 
     /// Encode as JSON for the wire (sig included, base64url).
     pub fn to_json(&self) -> String {
-        unimplemented!("Phase E executor: serialize full envelope including base64url(sig)")
+        let wire = WireFrame {
+            kind: self.kind.as_wire().to_string(),
+            payload: URL_SAFE_NO_PAD.encode(&self.payload),
+            seq: self.seq,
+            sig: URL_SAFE_NO_PAD.encode(self.sig),
+            ts: self.ts.to_rfc3339(),
+            v: self.v,
+        };
+        serde_json::to_string(&wire).expect("wire frame serializes")
     }
 
     /// Parse a JSON frame off the wire. Decodes base64url payload + sig.
-    pub fn from_json(_s: &str) -> Result<Self, FrameError> {
-        unimplemented!("Phase E executor: parse JSON envelope, decode payload + sig")
+    pub fn from_json(s: &str) -> Result<Self, FrameError> {
+        let wire: WireFrame = serde_json::from_str(s).map_err(|_| FrameError::InvalidJson)?;
+        if wire.v != 1 {
+            return Err(FrameError::UnsupportedVersion);
+        }
+        let kind = FrameKind::from_wire(&wire.kind).ok_or(FrameError::Malformed)?;
+        let payload_bytes = URL_SAFE_NO_PAD
+            .decode(&wire.payload)
+            .map_err(|_| FrameError::Malformed)?;
+        let sig_bytes = URL_SAFE_NO_PAD
+            .decode(&wire.sig)
+            .map_err(|_| FrameError::Malformed)?;
+        if sig_bytes.len() != 64 {
+            return Err(FrameError::Malformed);
+        }
+        let mut sig = [0u8; 64];
+        sig.copy_from_slice(&sig_bytes);
+        let ts = DateTime::parse_from_rfc3339(&wire.ts)
+            .map_err(|_| FrameError::Malformed)?
+            .with_timezone(&Utc);
+        Ok(Self {
+            v: wire.v,
+            seq: wire.seq,
+            ts,
+            kind,
+            payload: Bytes::from(payload_bytes),
+            sig,
+        })
     }
 }
 

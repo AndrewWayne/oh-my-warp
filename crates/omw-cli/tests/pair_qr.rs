@@ -75,10 +75,7 @@ fn pair_qr_prints_url_and_token() {
     // characters of base32; we only assert "looks like base32 and is at
     // least 26 chars" so an impl change to the encoder padding doesn't
     // break the test.
-    let after = stdout
-        .split("/pair?t=")
-        .nth(1)
-        .expect("split off /pair?t=");
+    let after = stdout.split("/pair?t=").nth(1).expect("split off /pair?t=");
     // The token runs to whitespace or end-of-string.
     let token: String = after
         .chars()

@@ -38,7 +38,7 @@
 //! These tests are intentionally minimal: the start path is hard to
 //! exercise portably. Both tests are gated `#[cfg(unix)]` because spawn
 //! + signal semantics on Windows require a different shutdown mechanism
-//! (named events, not signals) — that variant is Beyond-v1 work.
+//!   (named events, not signals) — that variant is Beyond-v1 work.
 
 mod common;
 
@@ -80,10 +80,7 @@ mod unix_only {
         }
     }
 
-    fn spawn_remote(
-        data_dir: &std::path::Path,
-        signal_var: &str,
-    ) -> std::io::Result<Child> {
+    fn spawn_remote(data_dir: &std::path::Path, signal_var: &str) -> std::io::Result<Child> {
         let mut cmd = Command::new(omw_bin());
         // Mirror omw_cmd's env scrubbing so the child sees the same world
         // every other test does.

@@ -60,6 +60,16 @@ pub fn run(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) -> i
             return commands::agent::run(args, stdout, stderr);
         }
         Command::Costs(args) => commands::costs::run(args, stdout, stderr),
+        Command::Pair(p) => match p.command {
+            PairCommand::Qr(args) => commands::pair::qr(args, stdout, stderr),
+            PairCommand::List => commands::pair::list(stdout, stderr),
+            PairCommand::Revoke(args) => commands::pair::revoke(args, stdout, stderr),
+        },
+        Command::Remote(r) => match r.command {
+            RemoteCommand::Start(args) => commands::remote::start(args, stdout, stderr),
+            RemoteCommand::Status => commands::remote::status(stdout, stderr),
+            RemoteCommand::Stop(args) => commands::remote::stop(args, stdout, stderr),
+        },
     };
 
     match result {
@@ -94,6 +104,42 @@ enum Command {
     Agent(commands::agent::AgentArgs),
     /// Show a cost rollup from recorded usage
     Costs(commands::costs::CostsArgs),
+    /// Manage pairings with controller devices
+    Pair(PairArgs),
+    /// Manage the omw-remote daemon process
+    Remote(RemoteArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct PairArgs {
+    #[command(subcommand)]
+    command: PairCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum PairCommand {
+    /// Issue a new pair token and render its QR code
+    Qr(commands::pair::QrArgs),
+    /// List paired devices
+    List,
+    /// Revoke a paired device by id
+    Revoke(commands::pair::RevokeArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct RemoteArgs {
+    #[command(subcommand)]
+    command: RemoteCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum RemoteCommand {
+    /// Start the omw-remote daemon (foreground)
+    Start(commands::remote::StartArgs),
+    /// Print the daemon's running status
+    Status,
+    /// Stop a running daemon
+    Stop(commands::remote::StopArgs),
 }
 
 #[derive(clap::Args, Debug)]

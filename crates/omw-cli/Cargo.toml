@@ -23,8 +23,11 @@ rusqlite.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json = "1"
+qrcode = { version = "0.14", default-features = false }
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
 omw-config = { path = "../omw-config" }
 omw-keychain = { path = "../omw-keychain" }
+omw-remote = { path = "../omw-remote" }
 
 [dev-dependencies]
 assert_cmd.workspace = true
@@ -35,3 +38,4 @@ rusqlite.workspace = true
 chrono.workspace = true
 omw-config = { path = "../omw-config" }
 omw-keychain = { path = "../omw-keychain" }
+omw-remote = { path = "../omw-remote" }

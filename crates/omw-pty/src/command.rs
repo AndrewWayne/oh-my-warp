@@ -118,23 +118,14 @@ mod tests {
     #[test]
     fn env_inserts_pairs() {
         let c = PtyCommand::new("sh").env("FOO", "1").env("BAR", "two");
-        assert_eq!(
-            c.envs.get(OsStr::new("FOO")),
-            Some(&OsString::from("1"))
-        );
-        assert_eq!(
-            c.envs.get(OsStr::new("BAR")),
-            Some(&OsString::from("two"))
-        );
+        assert_eq!(c.envs.get(OsStr::new("FOO")), Some(&OsString::from("1")));
+        assert_eq!(c.envs.get(OsStr::new("BAR")), Some(&OsString::from("two")));
     }
 
     #[test]
     fn env_last_write_wins() {
         let c = PtyCommand::new("sh").env("FOO", "1").env("FOO", "2");
-        assert_eq!(
-            c.envs.get(OsStr::new("FOO")),
-            Some(&OsString::from("2"))
-        );
+        assert_eq!(c.envs.get(OsStr::new("FOO")), Some(&OsString::from("2")));
         assert_eq!(c.envs.len(), 1);
     }
 
@@ -147,7 +138,13 @@ mod tests {
     #[test]
     fn size_overrides_default() {
         let c = PtyCommand::new("sh").size(132, 50);
-        assert_eq!(c.size, PtySize { cols: 132, rows: 50 });
+        assert_eq!(
+            c.size,
+            PtySize {
+                cols: 132,
+                rows: 50
+            }
+        );
     }
 
     #[test]
@@ -162,6 +159,12 @@ mod tests {
         assert_eq!(c.args.len(), 2);
         assert_eq!(c.envs.len(), 1);
         assert!(c.cwd.is_some());
-        assert_eq!(c.size, PtySize { cols: 100, rows: 30 });
+        assert_eq!(
+            c.size,
+            PtySize {
+                cols: 100,
+                rows: 30
+            }
+        );
     }
 }

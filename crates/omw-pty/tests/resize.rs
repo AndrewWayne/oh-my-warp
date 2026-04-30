@@ -31,7 +31,9 @@ use tokio::time::{timeout, Duration};
 fn long_running_cmd() -> PtyCommand {
     if cfg!(windows) {
         // `timeout` is built-in on modern Windows and waits N seconds.
-        PtyCommand::new("cmd").arg("/c").arg("timeout /t 60 /nobreak")
+        PtyCommand::new("cmd")
+            .arg("/c")
+            .arg("timeout /t 60 /nobreak")
     } else {
         PtyCommand::new("/bin/sh").arg("-c").arg("sleep 60")
     }
@@ -46,8 +48,7 @@ async fn resize_returns_ok_for_normal_dimensions() {
     pty.resize(120, 40)
         .expect("resize to 120x40 should succeed");
 
-    pty.resize(200, 60)
-        .expect("a second resize should succeed");
+    pty.resize(200, 60).expect("a second resize should succeed");
 
     // Clean up: kill and reap so the test exits promptly.
     pty.kill().expect("kill should succeed");
@@ -209,6 +210,49 @@ async fn resize_changes_observed_terminal_size() {
 /// If [Console]::WindowWidth turns out to NOT track ConPTY resize on the
 /// CI host, switch this test to `#[ignore = "..."]` and add an entry to
 /// `specs/fork-strategy.md` §9 describing the gap.
+/// Strip ANSI CSI escape sequences (e.g. `\x1b[K`, `\x1b[?25l`, `\x1b[8;40;120t`)
+/// from a string. ConPTY emits these during post-resize screen repaints, and
+/// they break naive `parse::<u16>()` on otherwise-clean digit lines like
+/// `120x40\x1b[K`. Test-file private; only the Windows parser uses it.
+#[cfg(windows)]
+fn strip_ansi(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+            // CSI: ESC [ ... final-byte-in-range-0x40..=0x7e
+            let mut j = i + 2;
+            while j < bytes.len() {
+                let b = bytes[j];
+                if (0x40..=0x7e).contains(&b) {
+                    j += 1;
+                    break;
+                }
+                j += 1;
+            }
+            i = j;
+        } else if bytes[i] == 0x1b {
+            // Bare ESC or other escape (e.g. ESC ] OSC ... BEL). Skip the ESC
+            // plus the next byte if it looks like the start of an OSC, then
+            // walk to BEL or ST. Conservative: just drop the ESC and continue.
+            i += 1;
+        } else {
+            // Safe because we only land here on a non-ESC byte; UTF-8 multi-
+            // byte continuation bytes are >= 0x80, which is fine to push as
+            // part of a char sequence — but we're walking by byte, so we need
+            // to be careful. Use the original char iterator for non-ESC runs.
+            // Find next ESC and copy the slice as-is via from_utf8_lossy.
+            let start = i;
+            while i < bytes.len() && bytes[i] != 0x1b {
+                i += 1;
+            }
+            out.push_str(&String::from_utf8_lossy(&bytes[start..i]));
+        }
+    }
+    out
+}
+
 #[cfg(windows)]
 #[tokio::test]
 async fn resize_changes_observed_terminal_size_windows() {
@@ -222,10 +266,29 @@ async fn resize_changes_observed_terminal_size_windows() {
         .arg("-Command")
         .arg(script);
 
-    let mut pty = Pty::spawn(cmd).await.expect("spawn powershell should succeed");
+    let mut pty = Pty::spawn(cmd)
+        .await
+        .expect("spawn powershell should succeed");
 
     let mut reader = pty.reader().expect("reader once");
     let mut writer = pty.writer().expect("writer once");
+
+    // Helper: parse all `<digits>x<digits>` pairs from the accumulated output,
+    // stripping ANSI escapes first (ConPTY emits `\x1b[K`, cursor-hide, etc.
+    // during the post-resize repaint). Returns the full list in arrival order.
+    fn parse_pairs(accumulator: &[u8]) -> Vec<(u16, u16)> {
+        let text = String::from_utf8_lossy(accumulator);
+        text.lines()
+            .filter_map(|line| {
+                let stripped = strip_ansi(line);
+                let trimmed = stripped.trim();
+                let (w, h) = trimmed.split_once('x')?;
+                let w: u16 = w.parse().ok()?;
+                let h: u16 = h.parse().ok()?;
+                Some((w, h))
+            })
+            .collect()
+    }
 
     // Helper: send "\r\n" to trigger one probe, then read until we see one
     // new "WIDTHxHEIGHT" pair we have not yet consumed.
@@ -249,22 +312,7 @@ async fn resize_changes_observed_terminal_size_windows() {
                 }
                 accumulator.extend_from_slice(&buf[..n]);
 
-                let text = String::from_utf8_lossy(accumulator);
-                let pairs: Vec<(u16, u16)> = text
-                    .lines()
-                    .filter_map(|line| {
-                        let trimmed = line.trim();
-                        // Match "<digits>x<digits>" exactly (ignoring any
-                        // ANSI/echo noise around it would be more robust,
-                        // but ConPTY echo of our CRLF should not produce
-                        // a digit-x-digit sequence).
-                        let (w, h) = trimmed.split_once('x')?;
-                        let w: u16 = w.parse().ok()?;
-                        let h: u16 = h.parse().ok()?;
-                        Some((w, h))
-                    })
-                    .collect();
-
+                let pairs = parse_pairs(accumulator);
                 if pairs.len() > already_seen {
                     let (w, h) = *pairs.last().unwrap();
                     return (w, h, pairs.len());
@@ -287,42 +335,56 @@ async fn resize_changes_observed_terminal_size_windows() {
     // Resize to 120x40 and probe.
     pty.resize(120, 40).expect("resize 120x40 should succeed");
     let (w2, h2, count2) = probe(&mut writer, &mut reader, count1, &mut acc).await;
-    assert!(
-        (119..=121).contains(&w2),
-        "after resize(120, 40) expected ~120 cols, got width={w2} (baseline was {w1}). \
-         A stub resize() that only returns Ok(()) would leave width at the spawn default."
-    );
-    assert!(
-        (39..=41).contains(&h2),
-        "after resize(120, 40) expected ~40 rows, got height={h2} (baseline was {h1})."
-    );
 
     // Resize to 200x60 and probe again — proves it isn't a one-shot fluke.
     pty.resize(200, 60).expect("resize 200x60 should succeed");
     let (w3, h3, _count3) = probe(&mut writer, &mut reader, count2, &mut acc).await;
-    assert!(
-        (199..=201).contains(&w3),
-        "after resize(200, 60) expected ~200 cols, got width={w3} (previous was {w2})."
-    );
-    assert!(
-        (59..=61).contains(&h3),
-        "after resize(200, 60) expected ~60 rows, got height={h3} (previous was {h2})."
-    );
-
-    // Sequence assertion: width must have strictly grown across the two
-    // resizes — a stub impl would leave w1 == w2 == w3.
-    assert!(
-        w2 > w1 && w3 > w2,
-        "observed width sequence {w1} -> {w2} -> {w3} did not strictly grow; \
-         resize() is not being forwarded to the underlying ConPTY."
-    );
 
     // Drop the writer so PowerShell sees EOF on its ReadLine and exits.
     drop(writer);
-    pty.kill().expect("kill should succeed (or be a no-op if already exited)");
+    pty.kill()
+        .expect("kill should succeed (or be a no-op if already exited)");
     let _ = timeout(Duration::from_secs(5), pty.wait())
         .await
         .expect("wait did not return within 5s after kill");
+
+    // Now do the assertions on the deduplicated full-sequence view of the
+    // accumulator. ConPTY's post-resize repaint emits the same `WxH` line
+    // multiple times (once per cleared row), so we collapse consecutive
+    // duplicates. The contract is "the sequence of distinct sizes contains
+    // ~80x24, then ~120x40, then ~200x60, in that order, with ±1 tolerance."
+    let all_pairs = parse_pairs(&acc);
+    let mut deduped: Vec<(u16, u16)> = Vec::new();
+    for p in &all_pairs {
+        if deduped.last() != Some(p) {
+            deduped.push(*p);
+        }
+    }
+
+    fn near(a: u16, b: u16) -> bool {
+        a.abs_diff(b) <= 1
+    }
+
+    // Find the three expected sizes in order in the deduped sequence.
+    let expected: [(u16, u16); 3] = [(80, 24), (120, 40), (200, 60)];
+    let mut idx = 0usize;
+    for &(w, h) in &deduped {
+        if idx < expected.len() {
+            let (ew, eh) = expected[idx];
+            if near(w, ew) && near(h, eh) {
+                idx += 1;
+            }
+        }
+    }
+
+    assert_eq!(
+        idx,
+        expected.len(),
+        "expected the deduped size sequence to contain ~80x24, then ~120x40, \
+         then ~200x60 (±1 each), in order. \
+         baseline=({w1},{h1}) after-120x40=({w2},{h2}) after-200x60=({w3},{h3}). \
+         all_pairs={all_pairs:?} deduped={deduped:?}"
+    );
 }
 
 /// Finding 3 — drop must actually kill the child, not just return quickly.

@@ -33,10 +33,7 @@ async fn spawn_prints_hello_and_exits_successfully() {
                 Ok(0) => break, // EOF
                 Ok(n) => {
                     acc.extend_from_slice(&buf[..n]);
-                    if acc
-                        .windows(b"hello".len())
-                        .any(|w| w == b"hello")
-                    {
+                    if acc.windows(b"hello".len()).any(|w| w == b"hello") {
                         // Got it — but keep draining briefly so the child can
                         // finish writing and we get a clean EOF.
                         // Continue reading until EOF.

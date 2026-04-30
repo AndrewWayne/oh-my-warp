@@ -6,7 +6,9 @@ use tokio::time::{timeout, Duration};
 
 fn long_running_cmd() -> PtyCommand {
     if cfg!(windows) {
-        PtyCommand::new("cmd").arg("/c").arg("timeout /t 60 /nobreak")
+        PtyCommand::new("cmd")
+            .arg("/c")
+            .arg("timeout /t 60 /nobreak")
     } else {
         PtyCommand::new("/bin/sh").arg("-c").arg("sleep 60")
     }
@@ -53,6 +55,7 @@ async fn kill_is_idempotent_after_exit() {
 
     // Per lib.rs:111 docs: kill is idempotent if the child has already
     // exited. Pin the contract: the second kill MUST return Ok, not Err.
-    pty.kill()
-        .expect("second kill on an already-reaped child must return Ok per lib.rs:111 idempotency contract");
+    pty.kill().expect(
+        "second kill on an already-reaped child must return Ok per lib.rs:111 idempotency contract",
+    );
 }

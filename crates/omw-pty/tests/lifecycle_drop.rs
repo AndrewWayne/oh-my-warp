@@ -16,7 +16,9 @@ use tokio::time::{timeout, Duration};
 
 fn long_running_cmd() -> PtyCommand {
     if cfg!(windows) {
-        PtyCommand::new("cmd").arg("/c").arg("timeout /t 60 /nobreak")
+        PtyCommand::new("cmd")
+            .arg("/c")
+            .arg("timeout /t 60 /nobreak")
     } else {
         PtyCommand::new("/bin/sh").arg("-c").arg("sleep 60")
     }

@@ -12,11 +12,11 @@
 //! bridges through. Mere PTY echo cannot synthesize "ACK:".
 //!
 //! - Unix:    `sh -c "stty -echo; while IFS= read -r line; do printf 'ACK:%s\n' \"$line\"; done"`
-//!            — `stty -echo` disables PTY echo, removing the alternate path
-//!            entirely. Body is POSIX so `sh` works on busybox/Alpine too.
+//!   — `stty -echo` disables PTY echo, removing the alternate path
+//!   entirely. Body is POSIX so `sh` works on busybox/Alpine too.
 //! - Windows: same idea via PowerShell `Read-Host`. ConPTY does not give us a
-//!            clean `stty -echo` analogue, so we rely on the "ACK:" prefix
-//!            being unforgeable by PTY echo to disambiguate.
+//!   clean `stty -echo` analogue, so we rely on the "ACK:" prefix
+//!   being unforgeable by PTY echo to disambiguate.
 
 use omw_pty::{Pty, PtyCommand};
 use tokio::time::{timeout, Duration};
@@ -36,9 +36,9 @@ fn ack_loop_cmd() -> PtyCommand {
         // see "ACK:<marker>" on the master is via the child's printf.
         // Use `sh` (not `bash`) — the script body is POSIX, and `sh` widens
         // compatibility to busybox/Alpine systems that lack bash.
-        PtyCommand::new("sh").arg("-c").arg(
-            "stty -echo; while IFS= read -r line; do printf 'ACK:%s\\n' \"$line\"; done",
-        )
+        PtyCommand::new("sh")
+            .arg("-c")
+            .arg("stty -echo; while IFS= read -r line; do printf 'ACK:%s\\n' \"$line\"; done")
     }
 }
 
@@ -98,7 +98,8 @@ async fn write_round_trips_through_child_stdout() {
     // Drop the writer so the child sees EOF on Unix; on Windows we kill below.
     drop(writer);
 
-    pty.kill().expect("kill should succeed (or be a no-op if exited)");
+    pty.kill()
+        .expect("kill should succeed (or be a no-op if exited)");
 
     let _status = timeout(Duration::from_secs(5), pty.wait())
         .await

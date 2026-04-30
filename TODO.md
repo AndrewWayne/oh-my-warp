@@ -14,7 +14,7 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 - [x] Initiate legal review (AGPL/MIT boundary, trademark posture, Homebrew distribution)
 - [x] Write `specs/threat-model.md` — actors, surfaces, invariants
 - [x] Write `specs/byorc-protocol.md` — auth, signing, replay, capability scopes (used in v0.4)
-- [x] Write `specs/fork-strategy.md` — branching, patch series, nightly upstream-tracking CI
+- [x] Write `specs/fork-strategy.md` — tracked-snapshot model, restrip procedure, omw-edits provenance (rewritten v0.2 on 2026-05-01 to replace the original branching/patch-series design)
 - [x] Write `specs/test-plan.md` — trust tiers, property/fuzz catalog, cassette strategy
 - [x] Component ownership map (already in PRD §8.3 — confirm with engineering leads)
 - [x] Repo skeleton: Cargo workspace with empty `omw-*` crates

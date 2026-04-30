@@ -519,7 +519,7 @@ Surface the *minimum* of Warp's local-server contract to boot the client + nativ
 
 ### 9.2 `omw-remote` (tailnet-exposed via Tailscale Serve)
 
-The HTTP/WS surface listed below is a **rough sketch**. The authoritative protocol — including request signing, capability scopes, replay window, WS frame auth, origin pinning, and pairing handshake — lives in **`specs/byorc-protocol.md`** and must be reviewed before v0.4 implementation begins (§13).
+The HTTP/WS surface listed below is a **rough sketch**. The authoritative protocol — including request signing, capability scopes, replay window, WS frame auth, origin pinning, and pairing handshake — lives in **`specs/byorc-protocol.md`**. v0.4-thin proceeds in parallel with the external review (accepting modest rework risk on conventional primitives); v0.4-cleanup gates on review sign-off or merged reconciliation. See §13 for the gate stance.
 
 ```
 GET    /api/v1/status
@@ -638,7 +638,7 @@ Full actor/surface mapping in `specs/threat-model.md` (Phase 0 deliverable).
 
 ### 11.3 BYORC protocol (deferred to spec)
 
-The full request-signing scheme, capability tokens, replay window, WS frame authentication, origin/CORS posture, and pairing handshake live in **`specs/byorc-protocol.md`** (Phase 0 deliverable; **required before v0.4 implementation begins**).
+The full request-signing scheme, capability tokens, replay window, WS frame authentication, origin/CORS posture, and pairing handshake live in **`specs/byorc-protocol.md`** (Phase 0 deliverable). Per §13, v0.4-thin parallel-codes with external review; v0.4-cleanup gates on sign-off or reconciliation.
 
 PRD-level summary: per-device Ed25519 keypairs; every HTTP request and WS handshake is signed; per-frame token auth on WS; capability tokens scope per-route access; nonce + 30s replay window; origin pinning at handshake; pairing tokens are single-use and stored hashed.
 
@@ -651,7 +651,7 @@ PRD-level summary: per-device Ed25519 keypairs; every HTTP request and WS handsh
 
 ### 11.5 External review (tiered)
 
-- **Protocol/design review** before v0.4 implementation lands. Catches design flaws before code is in users' hands.
+- **Protocol/design review** runs in parallel with v0.4-thin and gates v0.4-cleanup. Catches design flaws before agent integration and audit attribution land in users' hands. See §13 v0.4-thin gate stance for the rework-risk tradeoff.
 - **Implementation review** before v1.0 ship. Catches code-level bugs.
 
 For an indie project, "review" means a paid-but-scoped engagement (e.g., one-week retainer with a security-aware contractor) rather than a full pentest. Budget honestly; downgrade language to "review" until funded for an "audit."
@@ -703,7 +703,7 @@ Phase 0 closes when these are written down, reviewed, and committed:
 - **Legal review.** AGPL/MIT boundary, trademark posture, distribution channels. (External dependency; non-blocking for code work in parallel.)
 - **Threat model + invariants.** Codified in §11 + `specs/threat-model.md`.
 - **Component ownership map.** Codified in §8.3.
-- **Fork-rebase strategy.** `specs/fork-strategy.md` — branching, patch series, nightly upstream-tracking CI.
+- **Fork strategy.** `specs/fork-strategy.md` — tracked-snapshot model, restrip procedure, omw-edits provenance, Route A/B escape hatch.
 - **Test plan.** `specs/test-plan.md` — trust tiers, property/fuzz catalog, cassette strategy, per-phase commitments.
 - **Repo skeleton.** Cargo workspace, CI scaffold (Tier A skeleton), license boundaries. No application code yet.
 

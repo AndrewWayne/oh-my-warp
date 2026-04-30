@@ -75,11 +75,14 @@ See §2 catalog. Run with 1000 cases per property nightly.
 #### B.4 Fuzz tests *(introduced v0.4)*
 See §3 catalog. Run for 5 min per target nightly under `cargo-fuzz`. Linux runner.
 
-#### B.5 Fork-rebase smoke
-- Nightly rebase `omw/main` onto `warpdotdev/master`.
-- Run upstream Warp's own test suite against the rebased branch (smoke signal that we haven't broken upstream's invariants).
-- Run our crate tests too.
-- File `upstream-conflict` issue on failure, with the conflicting commit pinned.
+#### B.5 Snapshot-rebuild smoke *(per-restrip, not nightly)*
+
+Replaces the v0.1-spec "fork-rebase smoke" now that upstream tracking moved to the tracked-snapshot model (`specs/fork-strategy.md` v0.2). This check runs **only when `vendor/warp-stripped/` is restripped** — the snapshot model has no nightly CI.
+
+- After a restrip PR is opened, CI builds `vendor/warp-stripped/` (`cargo build -p warp --bin warp-oss --features omw_local`) on macOS and Linux.
+- CI runs upstream Warp's own `cargo test --workspace` inside `vendor/warp-stripped/` against the new snapshot — smoke signal that omw's strip didn't break upstream invariants.
+- CI runs the outer workspace's tests (`cargo test --workspace` from repo root) to catch path-dep wiring breakage (e.g., `omw-server` embedded into the stripped tree).
+- A failed restrip PR is iterated on by the maintainer until both checks pass; no `upstream-conflict` issues filed (restrip is not a background process — it's the active PR's responsibility).
 
 ### Tier C — pre-release manual
 
@@ -260,9 +263,9 @@ User decision: **adopt upstream Warp's existing test suite as-is; no new GUI-spe
 
 ### 5.3 Failure handling
 
-- Upstream test red after rebase → open `upstream-conflict` issue. Triage:
-  - If their test is testing a behavior we accidentally broke → fix our patch.
-  - If their test is testing a behavior we *intentionally* changed → skip with `#[ignore = "omw-fork: <reason>"]` and note in the relevant patch series.
+- Upstream test red on a restrip PR → triage in the PR itself (no separate `upstream-conflict` issue, since restrip is not a background process):
+  - If their test is testing a behavior we accidentally broke → fix the strip in this restrip PR.
+  - If their test is testing a behavior we *intentionally* changed → skip with `#[ignore = "omw-strip: <reason>"]` inside the new snapshot tree, with a commit-message trailer `Series-tag: omw/local-mode` per `specs/fork-strategy.md` §4.
 
 ### 5.4 Visual rendering
 
@@ -280,7 +283,7 @@ Tier C manual eyeball on macOS at each pre-release. No automation in v1.
 | Tier B E2E A+B | nightly | macOS | 1×/day | 15 min |
 | Tier B property | nightly | macOS | 1×/day | 10 min |
 | Tier B fuzz (per target) | nightly | Linux | 1×/day | 5 min × N |
-| Tier B fork-rebase smoke | nightly | macOS | 1×/day | 30 min |
+| Tier C snapshot-rebuild smoke | restrip PR | macOS, Linux | per-restrip | 30 min |
 | Tier C manual | pre-release | manual | per-release | varies |
 | Tier D external | gate | external | once per phase gate | vendor |
 
@@ -297,7 +300,7 @@ Each release commit must check:
 - [ ] Manual `omw provider test` against each Tier-1 provider with maintainer's real keys.
 - [ ] Manual Homebrew clean-install on a fresh macOS VM (v1.0+).
 - [ ] Real-Tailscale + real-phone Web Controller smoke (v0.4+).
-- [ ] Upstream rebase smoke green for the past 7 nights.
+- [ ] Snapshot-rebuild smoke green on the most recent restrip (or no restrip since the last release).
 - [ ] No open sev-1 tracking issues.
 - [ ] CHANGELOG.md updated.
 - [ ] External review sign-off (v0.4: protocol; v1.0: implementation).
@@ -314,7 +317,8 @@ Aligned with [PRD §13](../PRD.md#13-phased-roadmap). Each phase exits only when
 | v0.1 | Unit + contract for `omw-config`, `omw-keychain`, `omw-agent`, providers. Cassette runner library. Initial cassettes for all Tier-1 providers (`simple-response`, `streaming-with-thinking`, `tool-call-shell`, `usage-reconciliation`). Cost-reproducibility property test. |
 | v0.2 | Audit chain property tests. Redaction property tests. Approval policy property tests. MCP message fuzzer. Audit JSONL fuzzer. |
 | v0.3 | `omw-server` contract tests. Upstream Warp test suite green on patched fork. |
-| v0.4 | `omw-remote` contract tests against `specs/byorc-protocol.md`. BYORC validator fuzzer. Pairing token property tests. E2E Journey B (protocol only). External protocol review sign-off. |
+| v0.4-thin | `omw-remote` contract tests against `specs/byorc-protocol.md` (signed requests, replay defense, capability scopes). BYORC validator fuzzer. Pairing token property tests. `omw-pty` unit + integration. Web Controller (Vitest) for pairing + terminal pages. E2E pairing-then-shell smoke (pseudo-Journey B). |
+| v0.4-cleanup | `omw-server` internal session registry contract tests. WarpSessionBashOperations integration test. Web Controller agent + approvals + diff Vitest. Full E2E Journey B (pairing → terminal → agent → approval → audit). External protocol review sign-off (or merged review reconciliation if v0.4-thin proceeded in parallel). |
 | v1.0 | Full pre-release checklist green. External implementation review sign-off. |
 
 ---
@@ -347,7 +351,7 @@ Each crate owns its own tests. Cross-cutting test infrastructure lives in dedica
 |--------|----------|----------|
 | Tier A red on a PR | blocking | Fix before merge. |
 | Tier B nightly red | high | File with `nightly-broken` label. Fix within 48h. Block release if ≥7 days red. |
-| Fork rebase red | high | File `upstream-conflict` with the conflicting commit pinned. Address within 1 week or skip the upstream commit (with rationale). |
+| Snapshot-rebuild red on restrip PR | high | Address in the restrip PR before merging. No separate tracking issue; the PR is itself the work. If a single upstream change is genuinely incompatible, skip with rationale per `specs/fork-strategy.md` §3.2 step 6. |
 | Cassette mismatch with real API | medium | Refresh cassette PR. Reviewer confirms semantic equivalence. |
 | Fuzz target finds new crash | high | Reproducer added to corpus; root-cause and fix; re-fuzz to confirm. |
 | External reviewer finds sev-1 | blocking | Block release. Fix + re-review. |

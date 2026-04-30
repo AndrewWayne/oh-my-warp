@@ -42,11 +42,7 @@ fn quick_spec_json() -> Value {
 }
 
 async fn body_to_json(body: Body) -> Value {
-    let bytes = body
-        .collect()
-        .await
-        .expect("collect body")
-        .to_bytes();
+    let bytes = body.collect().await.expect("collect body").to_bytes();
     serde_json::from_slice(&bytes).expect("valid JSON body")
 }
 
@@ -150,10 +146,7 @@ async fn register_lists_gets_and_deletes() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_to_json(resp.into_body()).await;
     assert_eq!(body.get("id").and_then(Value::as_str), Some(id));
-    assert_eq!(
-        body.get("name").and_then(Value::as_str),
-        Some("http-quick")
-    );
+    assert_eq!(body.get("name").and_then(Value::as_str), Some("http-quick"));
 
     // --- GET /internal/v1/sessions/<bogus> ---
     let bogus = "00000000-0000-0000-0000-000000000000";

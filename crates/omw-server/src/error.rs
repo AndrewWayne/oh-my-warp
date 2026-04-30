@@ -1,5 +1,10 @@
 //! Error types for `omw-server`.
 
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::Json;
+use serde_json::json;
+
 /// Errors surfaced from the session registry surface.
 ///
 /// These are mapped to HTTP status codes by the handlers:
@@ -34,5 +39,16 @@ impl From<omw_pty::PtyError> for Error {
             omw_pty::PtyError::Spawn(s) => Error::Spawn(s),
             other => Error::Io(other.to_string()),
         }
+    }
+}
+
+impl IntoResponse for Error {
+    fn into_response(self) -> Response {
+        let (status, message) = match &self {
+            Error::NotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
+            Error::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
+            Error::Spawn(_) | Error::Io(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
+        };
+        (status, Json(json!({ "error": message }))).into_response()
     }
 }

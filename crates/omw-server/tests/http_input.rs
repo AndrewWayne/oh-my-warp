@@ -142,9 +142,7 @@ async fn post_input_round_trips_through_pty() {
     let app = router(registry.clone());
     let (app, id_str) = register_session(app).await;
 
-    let id: omw_server::SessionId = id_str
-        .parse()
-        .expect("registered id must be a valid uuid");
+    let id: omw_server::SessionId = id_str.parse().expect("registered id must be a valid uuid");
 
     // Subscribe BEFORE posting input so the broadcast receiver is in place
     // when the child writes its ACK back. `tokio::sync::broadcast` only
@@ -157,8 +155,11 @@ async fn post_input_round_trips_through_pty() {
     // so the assertion can reliably distinguish ACK output from input echo.
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let payload = "omw\n";
-    let b64 = base64::engine::general_purpose::STANDARD.encode(payload.as_bytes());
+    // On Windows, PowerShell `Read-Host` running on ConPTY only treats CRLF
+    // as a line terminator — bare LF leaves the line buffered and the child
+    // never echoes back. Unix `read -r` is happy with LF alone.
+    const INPUT_LINE: &[u8] = if cfg!(windows) { b"omw\r\n" } else { b"omw\n" };
+    let b64 = base64::engine::general_purpose::STANDARD.encode(INPUT_LINE);
     let body = serde_json::to_vec(&json!({ "bytes": b64 })).unwrap();
 
     let req = Request::builder()

@@ -20,6 +20,9 @@ pub use registry::{Session, SessionId, SessionMeta, SessionRegistry, SessionSpec
 
 use std::sync::Arc;
 
+use axum::routing::{get, post};
+use axum::Router;
+
 /// Build the axum [`Router`] for the internal session registry surface.
 ///
 /// Routes (all under `/internal/v1`):
@@ -29,7 +32,23 @@ use std::sync::Arc;
 /// - `POST   /sessions/:id/input`  — write base64-encoded input bytes.
 /// - `GET    /sessions/:id/pty`    — WebSocket bidirectional PTY frames.
 /// - `DELETE /sessions/:id`        — kill a session.
-pub fn router(registry: Arc<SessionRegistry>) -> axum::Router {
-    let _ = registry;
-    unimplemented!("router(): wire SessionRegistry into axum Router (Executor)")
+pub fn router(registry: Arc<SessionRegistry>) -> Router {
+    Router::new()
+        .route(
+            "/internal/v1/sessions",
+            post(handlers::sessions::create).get(handlers::sessions::list),
+        )
+        .route(
+            "/internal/v1/sessions/:id",
+            get(handlers::sessions::get).delete(handlers::sessions::delete),
+        )
+        .route(
+            "/internal/v1/sessions/:id/input",
+            post(handlers::input::write),
+        )
+        .route(
+            "/internal/v1/sessions/:id/pty",
+            get(handlers::ws_pty::ws_handler),
+        )
+        .with_state(registry)
 }

@@ -72,9 +72,10 @@ async fn register_via_http(addr: std::net::SocketAddr) -> String {
     // POST. The test is a thin contract check; we don't need a full HTTP
     // client surface.
     let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
-    let (mut sender, conn) = hyper::client::conn::http1::handshake::<_, http_body_util::Full<bytes::Bytes>>(
-        hyper_util::rt::TokioIo::new(stream),
-    )
+    let (mut sender, conn) = hyper::client::conn::http1::handshake::<
+        _,
+        http_body_util::Full<bytes::Bytes>,
+    >(hyper_util::rt::TokioIo::new(stream))
     .await
     .expect("hyper handshake");
     tokio::spawn(async move {
@@ -119,16 +120,22 @@ async fn ws_round_trips_pty_bytes() {
     let id = register_via_http(addr).await;
 
     let ws_url = format!("ws://{addr}/internal/v1/sessions/{id}/pty");
-    let (mut ws, _resp) = timeout(Duration::from_secs(5), tokio_tungstenite::connect_async(&ws_url))
-        .await
-        .expect("WS connect timeout")
-        .expect("WS connect failed");
+    let (mut ws, _resp) = timeout(
+        Duration::from_secs(5),
+        tokio_tungstenite::connect_async(&ws_url),
+    )
+    .await
+    .expect("WS connect timeout")
+    .expect("WS connect failed");
 
     // Give the child a moment to apply `stty -echo` (Unix) before we send.
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // Send `omw\n` as a binary frame.
-    ws.send(Message::Binary(b"omw\n".to_vec()))
+    // On Windows, PowerShell `Read-Host` running on ConPTY only treats CRLF
+    // as a line terminator — bare LF leaves the line buffered and the child
+    // never echoes back. Unix `read -r` is happy with LF alone.
+    const INPUT_LINE: &[u8] = if cfg!(windows) { b"omw\r\n" } else { b"omw\n" };
+    ws.send(Message::Binary(INPUT_LINE.to_vec()))
         .await
         .expect("send binary frame");
 

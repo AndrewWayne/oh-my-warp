@@ -50,9 +50,10 @@ async fn spawn_server() -> std::net::SocketAddr {
 
 async fn register(addr: std::net::SocketAddr) -> String {
     let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
-    let (mut sender, conn) = hyper::client::conn::http1::handshake::<_, http_body_util::Full<bytes::Bytes>>(
-        hyper_util::rt::TokioIo::new(stream),
-    )
+    let (mut sender, conn) = hyper::client::conn::http1::handshake::<
+        _,
+        http_body_util::Full<bytes::Bytes>,
+    >(hyper_util::rt::TokioIo::new(stream))
     .await
     .expect("handshake");
     tokio::spawn(async move {
@@ -73,10 +74,7 @@ async fn register(addr: std::net::SocketAddr) -> String {
         .expect("collect")
         .to_bytes();
     let v: Value = serde_json::from_slice(&body).expect("json");
-    v.get("id")
-        .and_then(Value::as_str)
-        .expect("id")
-        .to_string()
+    v.get("id").and_then(Value::as_str).expect("id").to_string()
 }
 
 #[tokio::test]
@@ -101,12 +99,18 @@ async fn two_ws_clients_see_same_output() {
         .await
         .expect("send");
 
-    let saw_a = timeout(Duration::from_secs(5), drain_until(&mut ws_a, b"ACK:shared"))
-        .await
-        .expect("client A timed out");
-    let saw_b = timeout(Duration::from_secs(5), drain_until(&mut ws_b, b"ACK:shared"))
-        .await
-        .expect("client B timed out");
+    let saw_a = timeout(
+        Duration::from_secs(5),
+        drain_until(&mut ws_a, b"ACK:shared"),
+    )
+    .await
+    .expect("client A timed out");
+    let saw_b = timeout(
+        Duration::from_secs(5),
+        drain_until(&mut ws_b, b"ACK:shared"),
+    )
+    .await
+    .expect("client B timed out");
 
     assert!(saw_a, "client A must observe ACK:shared");
     assert!(saw_b, "client B must observe ACK:shared");

@@ -440,15 +440,15 @@ This keeps us shipping fast without committing to indefinite shimming.
 
 ### 8.5 Fork strategy & upstream tracking
 
-- Fork lives in a sibling repo (`oh-my-warp/warp-fork`) under AGPL.
-- Branches:
-  - `upstream/master` — mirror of `warpdotdev/master` (read-only).
-  - `omw/main` — our integration branch.
-  - `omw/local-mode` — patch series for local backend.
-  - `omw/branding` — patch series for omw branding.
-- CI: nightly job rebases `omw/main` onto `upstream/master`; opens a tracking issue on conflict.
-- Public *patch series* (`git format-patch`) so the diff against upstream is auditable and reviewable.
-- Full strategy in `specs/fork-strategy.md` (Phase 0 deliverable).
+omw uses a **tracked-snapshot model** rather than a continuously-rebased fork:
+
+- The Warp source lives in this repo at `vendor/warp-stripped/` as a tracked tree (AGPL-3.0), not as a submodule. The full source is available by cloning this repo alone — no chase for a sibling repo.
+- Snapshots are restripped from upstream `warpdotdev/warp` on cadence (every ~2 minor releases, or on security advisory). Restrips are deliberate, half-day operations rather than nightly automation.
+- omw-specific edits inside `vendor/warp-stripped/` are tagged in commit messages with one of three trailers — `omw/local-mode:`, `omw/branding:`, or `omw/wiring:` — so the next restrip can categorize them with `git log --grep`.
+- The dormant `vendor/warp-fork/` submodule is retained as a Route B fallback only (§8.4); under Route A it is unused.
+- Full strategy and restrip procedure live in [`specs/fork-strategy.md`](./specs/fork-strategy.md). Snapshot promotion history is logged there in §8.
+
+Tradeoff: we accept lagging upstream by up to two minor versions in exchange for AGPL-boundary clarity, solo-maintainer realism, and zero rebase-CI overhead. If upstream divergence becomes too costly, Route B (§8.4) kicks in.
 
 ### 8.6 Repo layout
 
@@ -457,12 +457,13 @@ oh-my-warp/                  # repo / codename
   README.md
   PRD.md
   TODO.md
-  LICENSE                    # MIT — covers original omw-* crates
-  LICENSE-AGPL               # AGPL notice for combined distribution
+  LICENSE                    # MIT — covers original omw-* crates and apps/*
+  LICENSE-AGPL               # combined-distribution AGPL notice
   CLAUDE.md
+  Cargo.toml                 # outer workspace (MIT crates only)
   crates/
     omw-cli/
-    omw-server/
+    omw-server/              # axum local server; embedded into vendor/warp-stripped/app/ via path dep
     omw-remote/
     omw-config/
     omw-policy/              # approval mode + allowlist config; wired into pi-agent beforeToolCall hook
@@ -474,23 +475,31 @@ oh-my-warp/                  # repo / codename
     web-controller/          # PWA-installable web app — official BYORC client
     omw-agent/               # pi-agent fork: WarpSessionBashOperations adapter + omw ACP wrapper (TypeScript)
   vendor/
-    warp/                    # upstream Warp fork (submodule → oh-my-warp/warp-fork)
+    warp-stripped/           # tracked snapshot of upstream Warp + omw local-mode strip (AGPL-3.0)
+                             #   inner workspace, separate from outer Cargo.toml
+                             #   restrip procedure: specs/fork-strategy.md s3
     pi-mono/                 # pi-agent monorepo (submodule → badlogic/pi-mono)
+    forge-code/              # ACP reference (submodule)
+    warp-fork/               # DORMANT — Route B fallback only; unused under Route A
   specs/
     byok.md
     byorc-protocol.md        # auth, signing, replay, capability scopes (Phase 0)
-    fork-strategy.md         # branching, patch series, upstream tracking (Phase 0)
+    fork-strategy.md         # tracked-snapshot model + restrip procedure
     threat-model.md          # actors, surfaces, invariants (Phase 0)
     test-plan.md             # trust-tiered test strategy (Phase 0)
     audit.md
   packaging/
     homebrew/
+  docs/
+    superpowers/plans/       # implementation plans
+    agpl-compliance-audit-*.md
   .github/
     workflows/
-      upstream-rebase.yml    # nightly fork tracking
+      ci.yml                 # build, fmt, clippy, test
+      # (upstream-rebase.yml retired with the move to tracked-snapshot model)
 ```
 
-The Warp fork itself is a sibling repo (`oh-my-warp/warp-fork`), referenced via a submodule under `vendor/warp-fork/`.
+The Warp tree itself lives **in this repo** at `vendor/warp-stripped/` as a tracked snapshot. There is no separate fork repository to chase under Route A. `omw-server` source lives at outer `crates/omw-server/` (MIT) and is embedded into `vendor/warp-stripped/app/` as a path dependency — the resulting binary is AGPL by combination, but the omw-server source files themselves remain MIT.
 
 ---
 
@@ -662,9 +671,11 @@ This split keeps the homage in the open-source/community context (where it's cus
 
 ### 12.2 Licensing
 
-- **Warp upstream is AGPL-3.0.** Any fork we distribute carries AGPL obligations: source must be available; users running our distribution can request source.
-- **This repo's `LICENSE` is MIT.** Covers original `omw-*` crates only. The actual fork lives in a sibling repo (`oh-my-warp/warp-fork`) under AGPL with full upstream attribution.
-- **Combined distribution.** When we ship a binary that includes both AGPL Warp code and MIT `omw-*` code, the *combined work* is effectively AGPL. The user-facing license is AGPL. The MIT'd crates can still be used independently.
+- **Warp upstream is AGPL-3.0.** Any derivation we distribute carries AGPL obligations: source must be available; users running our distribution can request source.
+- **This repo's `LICENSE` is MIT.** It covers original `omw-*` source files in `crates/omw-*/` and `apps/*/`. It does NOT cover `vendor/warp-stripped/`.
+- **`vendor/warp-stripped/` is AGPL-3.0** with upstream's `LICENSE-AGPL` and `LICENSE-MIT` files preserved verbatim. Edits we make inside that tree retain upstream's license headers; new files we add carry an AGPL-3.0 header attributing original authorship to the upstream maintainers and incremental authorship to omw contributors.
+- **Combined distribution is AGPL.** The umbrella repo (`oh-my-warp/oh-my-warp`) bundles the AGPL `vendor/warp-stripped/` tree, so the umbrella's combined source distribution is effectively AGPL. The MIT'd `crates/omw-*` source files retain MIT licensing and can be used independently (e.g., `cargo install omw-cli` from someone who has only the outer workspace), but the Homebrew-shipped `omw` binary that includes the Warp-derived GUI is AGPL.
+- **Source-corresponding satisfied by repo tag alone.** Because `vendor/warp-stripped/` is a tracked tree (not a submodule), any tagged release of `oh-my-warp/oh-my-warp` already contains the full source corresponding to the binary built from that tag. No separate fork-repo clone step is required of distributors or downstream users.
 
 ### 12.3 Trademarks
 
@@ -710,19 +721,50 @@ MCP client (stdio + HTTP). Built-in tools (shell, fs, grep, git, editor). `omw-p
 
 **Exit:** multi-step agent task with shell + file edits, every destructive op prompts, full audit trail, hash chain verifiable.
 
-### v0.3 — Forked client + local mode
+### v0.3 — Stripped client + local mode
 
-Fork Warp into `oh-my-warp/warp-fork`; first rebase onto upstream. `omw_local` Cargo feature. Branding patches (binary rename to `omw`, icon swap, palette). `omw-server` minimal surface to boot the client. Wire fork's agent panel to `omw-server` → `omw-agent`. Provider settings UI. Cost surface in UI.
+Most of the v0.3 fork work landed early via the manual strip on 2026-04-29, when `vendor/warp-stripped/` was added as a tracked snapshot of upstream Warp with cloud, account, billing, Drive, Oz, and hosted-workflow surfaces removed and an `omw_local` Cargo feature wired in. The binary builds and runs as `warp-oss`. Remaining v0.3 work is therefore narrower than originally scoped:
 
-**Exit:** `omw` GUI opens, agent panel works against BYOK keys, zero outbound calls to Warp cloud (verified via packet capture).
+- Final branding pass: rename binary `warp-oss` → `omw`, icon swap, color palette, wordmark sweep (per CLAUDE.md §5 brand rule, no `Warp` capitalized in product surfaces).
+- `omw-server` axum surface — embedded into `vendor/warp-stripped/app/` via path dep; minimum to boot the GUI in local mode (identity, providers, settings, audit-append, agent sessions, internal session registry).
+- Wire stripped client's agent panel to `omw-server` → `omw-agent`.
+- Provider settings UI.
+- Cost surface in UI.
 
-### v0.4 — BYORC + Web Controller (single host)
+**Exit:** `omw` GUI opens (rebranded), agent panel works against BYOK keys, zero outbound calls to Warp cloud (verified via packet capture).
 
-**Gate:** `specs/byorc-protocol.md` written, reviewed externally, and merged before any code work in this phase.
+### v0.4-thin — BYORC transport + Web Controller scaffold
 
-`omw-pty` over `portable-pty`. `omw-remote` GUI-anchored session bridge. `WarpSessionBashOperations` adapter in `apps/omw-agent` — routes pi-agent bash tool calls to the Warp terminal session PTY via `omw-server` internal session API instead of isolated subprocess spawn. HTTP + WS API per the spec. Pairing flow (QR, Ed25519 keypair, signed requests, replay window). Web Controller (`apps/web-controller/`): pairing, terminal, agent, approvals, diff. Audit "Activity" view in the forked client. Single-host scope only.
+**Gate stance.** `specs/byorc-protocol.md` is in draft and not yet externally reviewed. v0.4-thin proceeds *in parallel* with the review process. Reviewer-driven protocol changes will be paid for in code rework; the rework risk is accepted because pairing/signing/replay/capability-token primitives are conventional and the spec is judged stable enough on internal read.
 
-**Exit:** I pair a single host, attach to a GUI terminal session over Tailscale Serve, ask agent something, approve a write, see the audit entry. Protocol review sign-off in repo.
+This phase delivers the **transport and pairing layer** of BYORC plus the Web Controller scaffold, but defers agent integration and policy/audit surfacing (which depend on v0.2 and v0.3 deliverables that are not yet landed).
+
+- `omw-pty` over `portable-pty`.
+- `omw-remote`: pairing (Ed25519 keypair, QR, hashed one-time tokens, 10-min TTL), signed-request validation, nonce dedup with 30-second replay window, capability-scoped tokens, `request_log` table.
+- `omw-remote`: HTTP API + WS framing per `specs/byorc-protocol.md`, with frame-level auth on the WS surface.
+- `omw-remote`: shell PTY direct-spawn (interim — the Warp-pane PTY adapter ships in v0.4-cleanup once `omw-server` lands in v0.3).
+- `omw-cli`: `omw pair {qr,list,revoke}`, `omw remote {start,status,stop}`.
+- `apps/web-controller/`: Vite + React + TS + Tailwind scaffold, PWA manifest, signed-request fetch wrapper.
+- `apps/web-controller/`: pairing UI (camera QR scan + paste-token fallback) using WebCrypto Ed25519, IndexedDB token storage.
+- `apps/web-controller/`: xterm.js terminal view connected to `omw-remote` `/ws/v1/pty/:id`.
+
+**Exit:** I pair a host (laptop or phone) via QR over Tailscale Serve, the Web Controller opens a terminal of my laptop's shell, I run shell commands and see output. No agent integration, no approval prompts, no audit attribution.
+
+### v0.4-cleanup — Agent integration + audit + approvals (post-v0.3)
+
+Sequenced after v0.2 (policy + audit) and v0.3 (stripped GUI + omw-server) land. Closes the original v0.4 exit criteria.
+
+- `WarpSessionBashOperations` adapter in `apps/omw-agent` — routes pi-agent bash tool calls to the Warp terminal session PTY via `omw-server`'s internal session API instead of isolated subprocess spawn.
+- Web Controller agent view: streaming responses, tool calls, approve/reject UI.
+- Web Controller approvals tray (depends on `omw-policy` from v0.2).
+- Web Controller diff view.
+- Web Controller settings page (read-only providers, device info, permissions).
+- Audit "Activity" view in the stripped client (depends on `omw-audit` from v0.2).
+- `omw-remote` migrates from direct-spawn shell PTY to subscribing to `omw-server`'s session registry (so the user attaches to the *Warp terminal pane* PTY they're already looking at, not a sibling shell).
+
+**Gate.** `specs/byorc-protocol.md` external review must be merged before v0.4-cleanup begins, OR v0.4-cleanup reconciles any reviewer-driven changes from the v0.4-thin transport layer.
+
+**Exit:** the original v0.4 exit criteria — "I pair a host, attach to a GUI terminal session, ask the agent something, the bash tool executes in the Warp terminal pane, I approve a write, I see the audit entry." Protocol review sign-off in repo.
 
 ### v1.0 — Polish & ship
 
@@ -754,14 +796,16 @@ Listed for direction; not in v1.0 scope.
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| Warp upstream breaks `with_local_server` | Medium | High | Nightly rebase CI + Route B trigger. Keep our patch series small. |
+| Warp upstream breaks `with_local_server` | Medium | High | Detected at next restrip + smoke build. Route B trigger fires if breakage is intentional/permanent. Keep `omw_local` feature gates surgical so the strip diff stays small. |
 | Warp adds anti-fork measures (signed binaries) | Low | High | Stay current with upstream; legal review of any DRM clauses. Worst case: continue from a pinned good commit. |
-| AGPL compliance failure in distribution | Medium | High | Separate fork repo with clear AGPL labeling; lawyer review pre-launch. |
+| AGPL compliance failure in distribution | Medium | High | `vendor/warp-stripped/` retains upstream license files + headers; root `LICENSE-AGPL` documents combined-distribution terms; periodic audit (initial: `docs/agpl-compliance-audit-2026-05-01.md`); lawyer review pre-launch. |
 | Trademark complaint from Warp | Low | High | Distinct brand (omw); codename `oh-my-warp` confined to repo only; public statement that we are an unofficial fork. |
 | Tailscale dependency creates onboarding friction | High | Medium | Excellent docs; Beyond-v1 `tsnet` gateway eliminates external Tailscale install. |
 | BYOK costs surprise users | High | Medium | Real-time cost UX is a v1 must. Default to lowest-cost-suitable models. Reconciliation makes overruns visible immediately. |
 | iOS PWA limits (push, background) degrade oncall journey | High | Medium | Beyond-v1 native shim closes the gap. Document the limit prominently in v1; recommend pairing with PagerDuty/etc. for true oncall. |
-| Fork rebase becomes unmaintainable | Medium | High | Keep patches small + targeted. Force ourselves to upstream improvements where possible. |
+| Snapshot drift from upstream grows past restrip-cadence threshold | Medium | Medium | Tracked-snapshot model documents 2-minor-version lag tolerance (`specs/fork-strategy.md` §2.3). Restrip becomes triggered work, not background work. Route B fork-in-place is the escape hatch if drift becomes unmaintainable. |
+| AGPL boundary muddied by tracking warp-stripped in MIT umbrella | Low | Medium | Boundary is documented in PRD §12.2 and `specs/fork-strategy.md` §7. omw-server source remains MIT in `crates/omw-server/`; only the combined binary is AGPL. Periodic AGPL audit (initial pass: `docs/agpl-compliance-audit-2026-05-01.md`). |
+| BYORC protocol review surfaces breaking changes after v0.4-thin code lands | Medium | Medium | Acknowledged in v0.4-thin gate stance (PRD §13). Protocol primitives are conventional (Ed25519, signed requests, nonce dedup); rework risk modest. Versioned protocol field allows clean v2 if needed. |
 | Sole maintainer bus factor | High (early) | High | Public roadmap, contributor docs, RFC process from week 1. |
 | MCP/ACP standards churn | Medium | Low | Both are versioned; pin major versions; isolation behind a trait. |
 | External security review unaffordable for indie team | Medium | High | Tiered: peer/community review for v0.4 design; paid scoped review for v1.0 ship. Downgrade language from "audit" to "review" until funded. |
@@ -786,7 +830,7 @@ Open (in priority order):
 6. **Workspace/profile boundaries.** Per-project provider settings? Per-project agent permissions? Beyond v1.
 7. **Public-internet exposure path.** Document Cloudflare Tunnel / ngrok as a Beyond-v1 fallback for users without Tailscale, or hard non-goal? Lean Beyond-v1 with strong warnings.
 8. **Plugin/theme system.** "oh-my-warp" framing implies pluggability. v1 has no commitment; Beyond v1 with a committed RFC.
-9. **License decision for the umbrella repo.** MIT for original code is fine; revisit if combined-distribution language is unclear post-launch. Lean toward keeping MIT + clear submodule split.
+9. **License decision for the umbrella repo.** MIT for original `crates/omw-*` and `apps/*` is fine; the combined distribution is AGPL by virtue of `vendor/warp-stripped/`. Revisit if combined-distribution language is unclear post-launch. Lean toward keeping MIT + clear in-tree license boundary as documented in §12.2.
 
 ---
 

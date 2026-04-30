@@ -20,7 +20,7 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 - [x] Repo skeleton: Cargo workspace with empty `omw-*` crates
 - [x] Add `LICENSE-AGPL` file referencing combined-distribution terms
 - [x] CI: build, fmt, clippy, test
-- [x] CI: nightly `upstream-rebase.yml` workflow rebasing `omw/main` onto `warpdotdev/master` (scaffold; activates when `oh-my-warp/warp-fork` is created in v0.3)
+- [x] ~~CI: nightly `upstream-rebase.yml` workflow rebasing `omw/main` onto `warpdotdev/master`~~ — retired 2026-05-01 with the move to the tracked-snapshot fork model (`specs/fork-strategy.md` v0.2). Workflow file deleted.
 
 **Exit criteria:** all listed specs merged; CI green; license boundaries documented; legal review at least initiated.
 
@@ -60,52 +60,68 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 
 ---
 
-## v0.3 — Forked client + local mode
+## v0.3 — Stripped client + local mode
 
-- [ ] Fork Warp into `oh-my-warp/warp-fork`; first rebase against `warpdotdev/master`
-- [ ] Add `omw_local` Cargo feature
-- [ ] Branding patch series: rename binary to `omw`, swap icon, change palette (no "Warp" wordmark anywhere)
-- [ ] `omw-server` (axum): identity, providers, agent sessions, settings endpoints
-- [ ] `omw-server`: single audit-writer endpoint (`POST /api/v1/audit/append`)
-- [ ] `omw-server`: minimum GraphQL surface needed to boot the client (instrument the fork to discover required queries)
-- [ ] Wire fork's agent panel to `omw-server` → `omw-agent`
-- [ ] Provider settings page in the GUI
-- [ ] Cost surface in the GUI (per-message + session totals)
+The bulk of the v0.3 fork work landed early via the manual strip on 2026-04-29 — `vendor/warp-stripped/` is a tracked snapshot of upstream Warp with cloud, account, billing, Drive, Oz, and hosted-workflow surfaces removed and an `omw_local` Cargo feature wired in. Remaining work is narrower than originally scoped.
 
-**Exit criteria:** `omw` GUI opens, agent panel works against BYOK keys, zero outbound calls to Warp cloud (verified via packet capture).
+- [x] ~~Fork Warp into `oh-my-warp/warp-fork`~~ — superseded by tracked-snapshot model. `vendor/warp-stripped/` is the canonical Warp host (per `specs/fork-strategy.md` v0.2).
+- [x] Add `omw_local` Cargo feature (already wired; binary builds as `warp-oss` with `--features omw_local`).
+- [ ] Branding final pass: rename binary `warp-oss` → `omw`, swap icon, color palette, full wordmark removal sweep across remaining product surfaces (per CLAUDE.md §5).
+- [ ] `omw-server` (axum) — embedded into `vendor/warp-stripped/app/` via path dep: identity, providers, agent sessions, settings endpoints.
+- [ ] `omw-server`: single audit-writer endpoint (`POST /api/v1/audit/append`).
+- [ ] `omw-server`: internal session registry API (`GET /internal/v1/sessions`, `WS /internal/v1/sessions/:id/pty`, `POST /internal/v1/sessions/:id/input`) — required by v0.4-cleanup; foundation may land early via v0.4-thin Phase C.
+- [ ] `omw-server`: minimum GraphQL surface needed to boot the stripped client (instrument the binary to discover required queries).
+- [ ] Wire stripped client's agent panel to `omw-server` → `omw-agent`.
+- [ ] Provider settings page in the GUI.
+- [ ] Cost surface in the GUI (per-message + session totals).
+
+**Exit criteria:** `omw` GUI opens (rebranded), agent panel works against BYOK keys, zero outbound calls to Warp cloud (verified via packet capture).
 
 ---
 
-## v0.4 — BYORC + Web Controller (single host)
+## v0.4-thin — BYORC transport + Web Controller scaffold
 
-**Gate:** `specs/byorc-protocol.md` reviewed externally and merged before any code below starts.
+**Gate stance.** `specs/byorc-protocol.md` is in draft and not yet externally reviewed. v0.4-thin proceeds *in parallel* with the review process, accepting reviewer-driven rework risk on conventional primitives. See PRD §13 v0.4-thin for rationale. Implementation plan: `docs/superpowers/plans/2026-05-01-v0.4-thin-byorc.md`.
 
-- [ ] `omw-pty`: PTY abstraction over `portable-pty`
-- [ ] `omw-server`: internal session registry API (`GET /internal/v1/sessions`, `WS /internal/v1/sessions/:id/pty`, `POST /internal/v1/sessions/:id/input`)
-- [ ] `omw-remote`: GUI-anchored PTY bridge — subscribe to omw-server session events, pipe to Web Controller WS
-- [ ] `WarpSessionBashOperations` adapter in `apps/omw-agent` — route pi-agent bash tool calls to Warp terminal session PTY via omw-server internal API
-- [ ] HTTP API per spec: sessions, agent tasks, pairing, audit
-- [ ] WebSocket streams per spec: `/ws/v1/pty/:id`, `/ws/v1/agent/:id`, `/ws/v1/events`
-- [ ] Pairing flow per spec: QR, one-time hashed token, Ed25519 keypair, signed requests, replay window
-- [ ] `request_log` table + nonce dedup
-- [ ] Capability tokens with per-route scoping
-- [ ] WS frame-level auth (not just handshake)
-- [ ] Origin pinning + CORS posture
-- [ ] `omw pair {qr,list,revoke}`
-- [ ] `omw remote {start,status,stop}`
-- [ ] Web Controller scaffold (`apps/web-controller/`, Vite + React + TS + Tailwind)
-- [ ] Web Controller: pairing flow (camera QR scan + paste-token fallback)
-- [ ] Web Controller: terminal view with `xterm.js`
-- [ ] Web Controller: agent view with streaming + tool calls
-- [ ] Web Controller: approvals tray
-- [ ] Web Controller: diff view
-- [ ] Web Controller: settings (read-only providers, device info, permissions)
-- [ ] Web Controller: responsive layout (dense on phone, multi-pane on desktop)
-- [ ] Web Controller: PWA install + service worker for fast re-attach
-- [ ] Audit "Activity" view in the forked client
-- [ ] **External protocol/design review sign-off in repo**
+Transport, pairing, and Web Controller surfaces only — agent integration, approvals, audit attribution, and the Warp-pane PTY adapter all defer to v0.4-cleanup.
 
-**Exit criteria:** pair a single host (phone or laptop) via QR, attach to a GUI terminal session over Tailscale Serve, ask agent something (bash tool executes in the Warp terminal pane), approve a write, see the audit entry. Protocol review sign-off in repo.
+- [ ] `omw-pty`: PTY abstraction over `portable-pty`.
+- [ ] `omw-remote`: pairing flow per `specs/byorc-protocol.md` — QR, hashed one-time token (10-min TTL), Ed25519 keypair, signed requests.
+- [ ] `omw-remote`: nonce dedup with 30-second replay window; `request_log` table.
+- [ ] `omw-remote`: capability tokens with per-route scoping.
+- [ ] `omw-remote`: HTTP API surface (status, devices, sessions, pair) per spec.
+- [ ] `omw-remote`: WS framing — `/ws/v1/pty/:id` with frame-level auth, origin pinning + CORS posture.
+- [ ] `omw-remote`: shell PTY direct-spawn via `omw-pty` (interim — Warp-pane PTY adapter ships in v0.4-cleanup).
+- [ ] `omw-cli`: `omw pair {qr,list,revoke}`.
+- [ ] `omw-cli`: `omw remote {start,status,stop}`.
+- [ ] Web Controller scaffold (`apps/web-controller/`, Vite + React + TS + Tailwind, PWA manifest).
+- [ ] Web Controller: signed-request fetch wrapper using WebCrypto Ed25519.
+- [ ] Web Controller: pairing flow (camera QR scan + paste-token fallback), capability tokens stored in IndexedDB.
+- [ ] Web Controller: terminal view with `xterm.js`, signed WS connection, resize handling.
+
+**Exit criteria:** pair a host (laptop or phone) via QR over Tailscale Serve, the Web Controller opens a terminal of the host's shell, run shell commands and see output. No agent integration, no approvals, no audit attribution — those land in v0.4-cleanup.
+
+---
+
+## v0.4-cleanup — Agent integration + audit + approvals (post-v0.3)
+
+Sequenced after v0.2 (policy + audit) and v0.3 (stripped GUI + omw-server) land. Closes the original v0.4 exit criteria.
+
+- [ ] `omw-remote`: subscribe to `omw-server`'s internal session registry — replaces the v0.4-thin direct-spawn fallback so the user attaches to the *Warp terminal pane* PTY they're already viewing, not a sibling shell.
+- [ ] `WarpSessionBashOperations` adapter in `apps/omw-agent` — route pi-agent bash tool calls to Warp terminal session PTY via `omw-server` internal API.
+- [ ] HTTP API: agent tasks (`GET /api/v1/agent/tasks`, `POST /api/v1/agent/tasks`, approve/reject).
+- [ ] WS streams: `/ws/v1/agent/:id`, `/ws/v1/events`.
+- [ ] Audit append wiring — `omw-remote` and `omw-agent` write to `omw-server`'s single audit-writer endpoint.
+- [ ] Web Controller: agent view with streaming + tool calls.
+- [ ] Web Controller: approvals tray (depends on `omw-policy` from v0.2).
+- [ ] Web Controller: diff view.
+- [ ] Web Controller: settings page (read-only providers, device info, permissions).
+- [ ] Web Controller: responsive layout (dense on phone, multi-pane on desktop).
+- [ ] Web Controller: PWA service worker for fast re-attach.
+- [ ] Audit "Activity" view in the stripped client (depends on `omw-audit` from v0.2).
+- [ ] **External protocol/design review sign-off in repo** (or merged reviewer-driven rework if v0.4-thin proceeded in parallel).
+
+**Exit criteria:** pair a single host via QR, attach to a GUI terminal session over Tailscale Serve, ask agent something (bash tool executes in the Warp terminal pane), approve a write, see the audit entry. Protocol review sign-off in repo.
 
 ---
 

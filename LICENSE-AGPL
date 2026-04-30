@@ -12,11 +12,15 @@ omw is composed of two parts that ship under different licenses:
    (web-controller, omw-agent overlay) are licensed under the **MIT
    License**. See `LICENSE` at the repo root.
 
-2. **The forked Warp client** at `vendor/warp-fork/` is licensed under
-   the **GNU Affero General Public License version 3** (AGPL-3.0), as
-   inherited from upstream `warpdotdev/warp`. The fork lives in the
-   sibling repository `oh-my-warp/warp-fork`; this repository
-   references it via a git submodule.
+2. **The Warp-derived client** at `vendor/warp-stripped/` is licensed
+   under the **GNU Affero General Public License version 3** (AGPL-3.0),
+   as inherited from upstream `warpdotdev/warp`. As of 2026-05-01 it is
+   tracked as a snapshot tree directly inside this repository (not as a
+   submodule); see `specs/fork-strategy.md` for the snapshot-and-restrip
+   model and PRD §12.2 for the AGPL/MIT boundary. The dormant
+   `vendor/warp-fork/` submodule, if present, is retained only as a
+   Route B fallback and is not part of the shipped distribution under
+   Route A.
 
 ## Combined Distribution
 
@@ -37,10 +41,12 @@ The Corresponding Source for any combined-distribution build of omw is
 available at:
 
 - This repository (the umbrella): https://github.com/oh-my-warp/oh-my-warp
-- The fork repository: https://github.com/oh-my-warp/warp-fork
-- The `patches/v<version>/` archive in this repository, reproducing
-  every patch we apply to upstream Warp at each release tag (see
-  `specs/fork-strategy.md` §3.3 and §8.1).
+  — the Warp-derived AGPL source lives in tree under
+  `vendor/warp-stripped/`. Cloning this repo at any release tag yields
+  the full corresponding source for the binary built from that tag; no
+  separate fork-repo clone is required.
+- Snapshot promotion history (which upstream tag was used and when) is
+  logged in `specs/fork-strategy.md` §8.
 
 ## Trademarks
 

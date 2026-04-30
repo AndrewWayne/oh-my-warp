@@ -1325,10 +1325,15 @@ dependencies = [
 name = "omw-remote"
 version = "0.0.0"
 dependencies = [
+ "axum",
  "base32",
  "base64",
+ "bytes",
  "chrono",
  "ed25519-dalek",
+ "futures-util",
+ "http",
+ "omw-pty",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rusqlite",
@@ -1338,6 +1343,8 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-tungstenite",
+ "tower",
  "uuid",
 ]
 

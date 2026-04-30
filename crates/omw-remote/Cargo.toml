@@ -21,8 +21,17 @@ rusqlite = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 uuid = { version = "1", features = ["v4", "serde"] }
-tokio = { workspace = true }
+# axum 0.7 + tokio-tungstenite 0.24 to match omw-server (avoid duplicate-version
+# bloat in the workspace lockfile; brief proposed 0.8/0.21 — deviation noted).
+axum = { version = "0.7", features = ["ws", "macros"] }
+tower = "0.5"
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "net", "io-util", "sync", "time"] }
+omw-pty = { path = "../omw-pty" }
+bytes = "1"
+futures-util = "0.3"
 
 [dev-dependencies]
 tempfile = { workspace = true }
-tokio = { version = "1", default-features = false, features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }
+tokio = { version = "1", default-features = false, features = ["sync", "rt", "rt-multi-thread", "macros", "time", "net", "io-util", "test-util"] }
+tokio-tungstenite = "0.24"
+http = "1"

@@ -1,6 +1,9 @@
 //! `omw-remote` — GUI-anchored PTY bridge + BYORC daemon.
 //!
 //! Phase D — auth core (pairing + capability tokens + signed-request verifier).
+//! Phase E — WS framing for PTY sessions: signed `Frame` envelope, per-frame
+//! verification ladder (§7.3), and `/ws/v1/pty/:session_id` route.
+//!
 //! v0.4 implementation gates on
 //! [`specs/byorc-protocol.md`](../../../specs/byorc-protocol.md). See
 //! [PRD §8.2](../../../PRD.md#82-components),
@@ -14,6 +17,9 @@ pub mod host_key;
 pub mod pairing;
 pub mod replay;
 pub mod request_log;
+pub mod revocations;
+pub mod server;
+pub mod ws;
 
 pub use auth::{AuthError, CanonicalRequest, DeviceId, Signer, Verifier};
 pub use capability::{Capability, CapabilityError, CapabilityToken, ParseError as CapParseError};
@@ -25,3 +31,6 @@ pub use pairing::{
 };
 pub use replay::{NonceError, NonceStore};
 pub use request_log::{RequestLog, RequestLogEntry};
+pub use revocations::RevocationList;
+pub use server::{make_router, serve, ServerConfig};
+pub use ws::{Frame, FrameAuthError, FrameError, FrameKind, ShellSpec, WsSessionAuth};

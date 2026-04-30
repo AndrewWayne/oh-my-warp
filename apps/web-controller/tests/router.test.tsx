@@ -21,7 +21,9 @@ describe("App routing", () => {
       </MemoryRouter>
     );
     expect(screen.getByRole("heading", { name: "Pair" })).toBeInTheDocument();
-    expect(screen.getByText(/Phase H will fill this in/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /start scan/i })
+    ).toBeInTheDocument();
   });
 
   it("renders Terminal with route params", () => {

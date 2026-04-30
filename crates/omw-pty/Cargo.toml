@@ -6,4 +6,15 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
-description = "PTY abstraction (portable-pty wrapper) for omw. Phase 0 placeholder."
+description = "PTY abstraction (portable-pty wrapper) for omw."
+
+[dependencies]
+portable-pty = "0.8"
+tokio = { version = "1", default-features = false, features = ["sync", "rt", "rt-multi-thread", "io-util", "time", "macros"] }
+bytes = "1"
+futures = "0.3"
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = ["sync", "rt", "rt-multi-thread", "io-util", "time", "macros", "test-util"] }
+tempfile = { workspace = true }

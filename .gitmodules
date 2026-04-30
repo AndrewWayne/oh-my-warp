@@ -4,3 +4,6 @@
 [submodule "vendor/warp-fork"]
 	path = vendor/warp-fork
 	url = https://github.com/warpdotdev/warp.git
+[submodule "vendor/forge-code"]
+	path = vendor/forge-code
+	url = https://github.com/tailcallhq/forgecode.git

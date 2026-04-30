@@ -274,8 +274,8 @@ Documented explicitly so reviewers don't assume coverage we don't have.
 
 ## 7. Open Questions
 
-- Loopback authentication — the per-process token file approach (§3.1) is a v0.1 design. Should `omw-server` use UNIX-domain sockets with peer-credential checks instead? Decide during v0.1.
-- Should `omw-config` include a SSRF allowlist for OpenAI-compatible base URLs by default, or accept any URL the user types? Decide during v0.1.
+- Loopback authentication — the per-process token file approach (§3.1) is the proposed design; UNIX-domain sockets with peer-credential checks remain an alternative. Deferred to v0.3 when `omw-server` actually ships (no `omw-server` exists in v0.1).
+- ~~Should `omw-config` include a SSRF allowlist for OpenAI-compatible base URLs by default, or accept any URL the user types?~~ **Decided in v0.1: scheme-only check.** `omw_config::BaseUrl` permits `http`/`https` and rejects every other scheme (`file://`, `data://`, `javascript://`, `ftp://`, …). Private/LAN IPs are allowed because Ollama runs on `127.0.0.1` and blocking it by default would break the zero-config Ollama UX. Tighter network policy is Beyond v1.
 - MCP tool-result surfacing to the user (vs only model-internal): Beyond v1 RFC.
 - Linux/Windows keychain models — the §3.4 threat model is macOS-specific. Beyond v1.
 - Approval-prompt UX hardening (no default-button, typed confirmation for destructive ops): v1.0 polish vs Beyond v1.

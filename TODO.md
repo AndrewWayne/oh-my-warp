@@ -30,8 +30,8 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 
 - [x] `omw-config` crate (TOML loading, schema validation, watcher)
 - [x] `omw-keychain` crate (macOS Keychain first; Linux/Windows Beyond v1)
-- [x] Wire pi-agent (`vendor/pi-mono`) as `apps/omw-agent` TypeScript package
-- [x] Plumb `omw-keychain` into pi-agent's `getApiKey` hook for Tier-1 providers (OpenAI, Anthropic, OpenAI-compatible, Ollama)
+- [x] Stand up `apps/omw-agent` TypeScript package (v0.1: direct fetch streaming for the four Tier-1 providers; pi-agent kernel adoption from `vendor/pi-mono` deferred to v0.2)
+- [x] Plumb `omw-keychain` into the agent's `getApiKey` hook for Tier-1 providers (OpenAI, Anthropic, OpenAI-compatible, Ollama) — `makeGetApiKey` factory is the v0.2 pi-agent contract surface, used today by tests
 - [x] Adapt pi-agent SQLite session storage path to `~/.local/share/omw/` (resolved via `omw-cli/src/db.rs::data_dir`; pi-agent kernel itself deferred to v0.2)
 - [x] `omw-cli`: `omw provider {add,list,remove}` (test deferred; needs HTTP cassette infra)
 - [x] `omw-cli`: `omw ask "<prompt>"` (one-shot, streams to stdout)

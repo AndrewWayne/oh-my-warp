@@ -221,6 +221,40 @@ pub enum ProviderConfig {
     },
 }
 
+impl ProviderConfig {
+    /// The kebab-case discriminator string ("openai", "anthropic",
+    /// "openai-compatible", "ollama") matching the `kind = ...` TOML field.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::OpenAi { .. } => "openai",
+            Self::Anthropic { .. } => "anthropic",
+            Self::OpenAiCompatible { .. } => "openai-compatible",
+            Self::Ollama { .. } => "ollama",
+        }
+    }
+
+    /// Borrow the configured `KeyRef` if present. `None` for Ollama with no
+    /// `key_ref` field (Ollama is the only kind where the key is optional).
+    pub fn key_ref(&self) -> Option<&KeyRef> {
+        match self {
+            Self::OpenAi { key_ref, .. }
+            | Self::Anthropic { key_ref, .. }
+            | Self::OpenAiCompatible { key_ref, .. } => Some(key_ref),
+            Self::Ollama { key_ref, .. } => key_ref.as_ref(),
+        }
+    }
+
+    /// Borrow the `default_model` field if set.
+    pub fn default_model(&self) -> Option<&str> {
+        match self {
+            Self::OpenAi { default_model, .. }
+            | Self::Anthropic { default_model, .. }
+            | Self::OpenAiCompatible { default_model, .. }
+            | Self::Ollama { default_model, .. } => default_model.as_deref(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

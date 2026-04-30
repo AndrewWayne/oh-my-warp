@@ -172,6 +172,12 @@ const PROVIDER_KEY_REFS: Record<string, string> = {
 	"openai-compatible": "keychain:omw/openai-compatible",
 };
 
+// v0.1 cli.ts resolves API keys via the `key_ref` field from the loaded
+// config (`getKeychainSecret(keyRef)`), so this factory is unused in
+// production today. It exists for the v0.2 pi-agent contract: when the
+// agent kernel is invoked without a config (e.g. inside the embedded
+// terminal), it will receive a provider name and need to look up the key
+// from a hard-coded mapping — exactly what this factory exposes.
 export function makeGetApiKey(
 	opts?: KeychainHelperOptions,
 ): (provider: string) => Promise<string | undefined> {

@@ -79,7 +79,7 @@ fn run_inner(
     }
     if let Some(t) = opts.temperature {
         child_argv.push("--temperature".to_string());
-        child_argv.push(format_temperature(t));
+        child_argv.push(t.to_string());
     }
 
     let mut cmd = Command::new(&bin);
@@ -258,17 +258,7 @@ fn resolve_provider_kind(provider_id: &str) -> Option<String> {
     let path = omw_config::config_path().ok()?;
     let cfg = omw_config::Config::load_from(&path).ok()?;
     let pid: omw_config::ProviderId = provider_id.parse().ok()?;
-    let prov = cfg.providers.get(&pid)?;
-    Some(provider_kind_str(prov).to_string())
-}
-
-fn provider_kind_str(p: &omw_config::ProviderConfig) -> &'static str {
-    match p {
-        omw_config::ProviderConfig::OpenAi { .. } => "openai",
-        omw_config::ProviderConfig::Anthropic { .. } => "anthropic",
-        omw_config::ProviderConfig::OpenAiCompatible { .. } => "openai-compatible",
-        omw_config::ProviderConfig::Ollama { .. } => "ollama",
-    }
+    cfg.providers.get(&pid).map(|p| p.kind_str().to_string())
 }
 
 fn pump(stream: &mut impl Read, tx: &mpsc::Sender<Vec<u8>>) -> std::io::Result<()> {
@@ -308,11 +298,4 @@ fn pump_with_capture(
             Err(e) => return Err(e),
         }
     }
-}
-
-/// Render the temperature flag value for the child argv. Default `Display`
-/// for f64 produces the shortest round-trip representation (`0.5`, `1`,
-/// `0.7`).
-fn format_temperature(t: f64) -> String {
-    t.to_string()
 }

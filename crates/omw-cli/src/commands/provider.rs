@@ -36,8 +36,8 @@ pub(crate) fn list(stdout: &mut dyn Write, _stderr: &mut dyn Write) -> anyhow::R
         .as_ref()
         .map(|p| p.as_str().to_string());
     for (id, prov) in cfg.providers.iter() {
-        let kind = kind_of(prov);
-        let default_model = default_model_of(prov).unwrap_or("(unset)");
+        let kind = prov.kind_str();
+        let default_model = prov.default_model().unwrap_or("(unset)");
         let key_status = key_status(prov);
         let is_default = default_id.as_deref() == Some(id.as_str());
         let suffix = if is_default { " (default)" } else { "" };
@@ -54,40 +54,11 @@ pub(crate) fn list(stdout: &mut dyn Write, _stderr: &mut dyn Write) -> anyhow::R
     Ok(())
 }
 
-fn kind_of(p: &ProviderConfig) -> &'static str {
-    match p {
-        ProviderConfig::OpenAi { .. } => "openai",
-        ProviderConfig::Anthropic { .. } => "anthropic",
-        ProviderConfig::OpenAiCompatible { .. } => "openai-compatible",
-        ProviderConfig::Ollama { .. } => "ollama",
-    }
-}
-
-fn default_model_of(p: &ProviderConfig) -> Option<&str> {
-    match p {
-        ProviderConfig::OpenAi { default_model, .. }
-        | ProviderConfig::Anthropic { default_model, .. }
-        | ProviderConfig::OpenAiCompatible { default_model, .. }
-        | ProviderConfig::Ollama { default_model, .. } => default_model.as_deref(),
-    }
-}
-
-fn key_ref_of(p: &ProviderConfig) -> Option<&KeyRef> {
-    match p {
-        ProviderConfig::OpenAi { key_ref, .. }
-        | ProviderConfig::Anthropic { key_ref, .. }
-        | ProviderConfig::OpenAiCompatible { key_ref, .. } => Some(key_ref),
-        ProviderConfig::Ollama { key_ref, .. } => key_ref.as_ref(),
-    }
-}
-
 fn key_status(p: &ProviderConfig) -> &'static str {
-    match (p, key_ref_of(p)) {
-        (ProviderConfig::Ollama { .. }, None) => "(no key)",
-        (_, None) => "(no key)",
-        (_, Some(kr)) => match omw_keychain::get(kr) {
+    match p.key_ref() {
+        None => "(no key)",
+        Some(kr) => match omw_keychain::get(kr) {
             Ok(_) => "stored",
-            Err(KeychainError::NotFound) => "missing",
             Err(_) => "missing",
         },
     }
@@ -130,11 +101,10 @@ pub(crate) fn add(
     stdout: &mut dyn Write,
     _stderr: &mut dyn Write,
 ) -> anyhow::Result<()> {
-    // Step 1: validate id (cheap, do first to fail before any IO).
+    // Validate the id first — cheapest check, fails before any IO.
     let pid = ProviderId::from_str(&args.id)
         .map_err(|e| anyhow!("invalid provider id `{}`: {e}", args.id))?;
 
-    // Step 2: kind is required in non-interactive (every test passes it).
     let kind = match args.kind {
         Some(k) => k,
         None => {
@@ -145,8 +115,7 @@ pub(crate) fn add(
         }
     };
 
-    // Step 3: openai-compatible requires --base-url. Validate before touching
-    // disk or the keychain.
+    // Validate --base-url before touching disk or the keychain.
     let base_url_str = args.base_url.as_deref();
     if matches!(kind, ProviderKindArg::OpenaiCompatible) && base_url_str.is_none() {
         bail!("--base-url is required for kind=openai-compatible");
@@ -157,17 +126,12 @@ pub(crate) fn add(
         }
         None => None,
     };
-    // Ollama default base_url is http://127.0.0.1:11434 if none provided —
-    // but only when running interactively per the spec; the tests pass an
-    // explicit --base-url for ollama. For non-interactive we only persist what
-    // the user gave us. (Loader treats Ollama base_url as Optional anyway.)
 
-    // Step 4: load the config doc with toml_edit (preserves comments). If the
-    // file is missing, start from a fresh doc with `version = 1`.
+    // toml_edit preserves user comments across rewrites.
     let cfg_path = config_path()?;
     let mut doc = read_doc_or_empty(&cfg_path)?;
 
-    // Step 5: existence check — fail fast before any keychain mutation.
+    // Fail fast on a duplicate id, before any keychain mutation.
     let providers_already_has_id = providers_table(&doc)
         .map(|t| t.contains_key(pid.as_str()))
         .unwrap_or(false);
@@ -178,11 +142,11 @@ pub(crate) fn add(
         );
     }
 
-    // Step 6: collect the secret. Bind tightly; never written to stdio.
-    // `--from-stdin` is preprocessed in `main.rs` (the binary entry point) into
-    // `--key <line>` before `run()` is called, so the library half never reads
-    // process stdin. If the flag still reaches us here, refuse rather than
-    // silently consuming the caller's stdin.
+    // I-1: bind the secret tightly and never write it to stdio.
+    // `--from-stdin` is preprocessed in `main.rs` into `--key <line>` before
+    // `run()` is called, so the library half never reads process stdin. If
+    // the flag still reaches us here, refuse rather than silently consuming
+    // the caller's stdin.
     if args.from_stdin {
         bail!("--from-stdin is only supported in the binary entry point");
     }
@@ -196,21 +160,17 @@ pub(crate) fn add(
         bail!("interactive key prompt is not implemented in v0.1; pass --key or --from-stdin");
     }
 
-    // Step 7: write the secret to the keychain (only when we have one).
     let key_ref_for_id = KeyRef::Keychain {
         name: format!("omw/{}", pid.as_str()),
     };
     if let Some(secret) = &key_value {
-        // overwrite is fine — `set` semantics already replace.
         omw_keychain::set(&key_ref_for_id, secret).context("storing key in keychain")?;
     }
 
-    // Step 8: ensure top-level `version = 1`.
     if !doc.as_table().contains_key("version") {
         doc["version"] = value(1_i64);
     }
 
-    // Step 9: build the new provider table and install it.
     let mut new_table = Table::new();
     new_table["kind"] = value(kind.as_kebab());
     if key_value.is_some() {
@@ -227,7 +187,6 @@ pub(crate) fn add(
     let providers = ensure_providers_table(&mut doc);
     providers.insert(pid.as_str(), Item::Table(new_table));
 
-    // Step 10: handle default_provider.
     let had_default_provider = doc
         .as_table()
         .get("default_provider")
@@ -239,10 +198,9 @@ pub(crate) fn add(
         doc["default_provider"] = value(pid.as_str());
     }
 
-    // Step 11: write back atomically-ish. Create parent dir if needed.
     write_doc(&cfg_path, &doc)?;
 
-    // Step 12: confirmation. Use the kebab kind name; never echo the secret.
+    // I-1: never echo the secret in the confirmation line.
     writeln!(
         stdout,
         "Added provider `{}` (kind={})",

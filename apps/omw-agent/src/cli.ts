@@ -484,14 +484,11 @@ async function streamAnthropic(
 				usage.completion_tokens = u.output_tokens;
 			}
 		} else if (type === "message_delta") {
-			const u = parsed.usage as
-				| { input_tokens?: number; output_tokens?: number }
-				| undefined;
+			// Anthropic emits cumulative output_tokens in message_delta;
+			// input_tokens only appears in message_start above.
+			const u = parsed.usage as { output_tokens?: number } | undefined;
 			if (u && typeof u.output_tokens === "number") {
 				usage.completion_tokens = u.output_tokens;
-			}
-			if (u && typeof u.input_tokens === "number") {
-				usage.prompt_tokens = u.input_tokens;
 			}
 		}
 	}

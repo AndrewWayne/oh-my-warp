@@ -72,12 +72,15 @@ pub(crate) async fn handle_authed_socket(
     session_id: Uuid,
     mut pty_rx: broadcast::Receiver<Bytes>,
 ) {
+    eprintln!("[omw-debug] handle_authed_socket: upgrade closure entered, session={session_id}");
     let auth = Arc::new(WsSessionAuth {
         last_inbound_seq: AtomicU64::new(u64::MAX),
         device_id,
         capability,
         revocations: state.revocations.clone(),
-        ts_skew_seconds: 30,
+        // Match the WS-handshake skew bumped to 300 s — 30 s is too tight for
+        // mobile clients.
+        ts_skew_seconds: 300,
         host_pubkey: state.host_pubkey,
     });
 

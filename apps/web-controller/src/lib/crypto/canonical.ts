@@ -24,6 +24,17 @@ export interface CanonicalRequest {
 }
 
 export function canonicalBytes(req: CanonicalRequest): Uint8Array {
+  // Per byorc-protocol §4.1, the canonical bytes are:
+  //   METHOD\nPATH\nQUERY\nTS\nNONCE\nhex(SHA256(BODY))\nDEVICE_ID\nVERSION\n
+  // Note the TRAILING \n after VERSION. The Rust server side
+  // (`crates/omw-remote/src/auth.rs::CanonicalRequest::to_bytes`) builds
+  // it via `format!("{}\n{}\n...{}\n", ...)`, so each line terminates with
+  // \n including the last. A previous version of this file used
+  // `lines.join("\n")` which omits the trailing newline — that produced a
+  // valid-looking signature that the server rejected as
+  // "signature_invalid" because the canonical bytes differed by exactly
+  // one byte. Spotted while running JS-client-vs-Rust-server end-to-end
+  // for the first time (existing tests were JS-vs-mock or Rust-vs-Rust).
   const lines = [
     req.method.toUpperCase(),
     req.path,
@@ -34,7 +45,7 @@ export function canonicalBytes(req: CanonicalRequest): Uint8Array {
     req.deviceId,
     String(req.protocolVersion),
   ];
-  return new TextEncoder().encode(lines.join("\n"));
+  return new TextEncoder().encode(lines.join("\n") + "\n");
 }
 
 export async function bodyHashHex(body: Uint8Array): Promise<string> {

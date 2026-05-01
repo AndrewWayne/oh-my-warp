@@ -18,20 +18,28 @@ const sample: CanonicalRequest = {
 };
 
 describe("canonicalBytes", () => {
-  it("joins exactly 8 lines with \\n and no trailing newline", () => {
+  it("emits exactly 8 lines each terminated with \\n (per byorc §4.1)", () => {
     const bytes = canonicalBytes(sample);
     const text = new TextDecoder().decode(bytes);
-    const lines = text.split("\n");
-    expect(lines).toHaveLength(8);
-    expect(text.endsWith("\n")).toBe(false);
-    expect(lines[0]).toBe("GET");
-    expect(lines[1]).toBe("/api/v1/sessions");
-    expect(lines[2]).toBe("");
-    expect(lines[3]).toBe(sample.ts);
-    expect(lines[4]).toBe(sample.nonce);
-    expect(lines[5]).toBe(sample.bodySha256Hex);
-    expect(lines[6]).toBe(sample.deviceId);
-    expect(lines[7]).toBe("1");
+    // The canonical format includes a trailing \n after the version line
+    // — same shape the Rust server reconstructs in
+    // crates/omw-remote/src/auth.rs::CanonicalRequest::to_bytes via
+    // `format!("{}\n{}\n...{}\n", ...)`. Without the trailing \n the
+    // server rejects the signature as `signature_invalid`.
+    expect(text.endsWith("\n")).toBe(true);
+    // 8 fields + trailing \n => split("\n") yields 9 elements with the
+    // last being "".
+    const parts = text.split("\n");
+    expect(parts).toHaveLength(9);
+    expect(parts[0]).toBe("GET");
+    expect(parts[1]).toBe("/api/v1/sessions");
+    expect(parts[2]).toBe("");
+    expect(parts[3]).toBe(sample.ts);
+    expect(parts[4]).toBe(sample.nonce);
+    expect(parts[5]).toBe(sample.bodySha256Hex);
+    expect(parts[6]).toBe(sample.deviceId);
+    expect(parts[7]).toBe("1");
+    expect(parts[8]).toBe(""); // the trailing newline
   });
 
   it("uppercases the method", () => {

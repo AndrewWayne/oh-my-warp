@@ -9,6 +9,7 @@
 
 pub mod pane_share;
 pub mod remote_state;
+pub mod tailscale;
 
 #[allow(unused_imports)]
 pub use pane_share::{share_pane, PaneShareHandle, ShareError};

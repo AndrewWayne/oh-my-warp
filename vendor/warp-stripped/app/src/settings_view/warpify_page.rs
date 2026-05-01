@@ -497,7 +497,10 @@ impl TypedActionView for WarpifyPageView {
 
 impl SettingsPageMeta for WarpifyPageView {
     fn section() -> SettingsSection {
-        SettingsSection::Warpify
+        #[cfg(not(feature = "omw_local"))]
+        return SettingsSection::Warpify;
+        #[cfg(feature = "omw_local")]
+        SettingsSection::About // placeholder; excluded from nav under omw_local
     }
 
     fn should_render(&self, _ctx: &AppContext) -> bool {
@@ -537,7 +540,7 @@ impl TitleWidget {
             ),
             FormattedTextFragment::hyperlink(
                 "Learn more",
-                "https://docs.warp.dev/terminal/warpify/subshells",
+                "",
             ),
         ];
 
@@ -746,7 +749,7 @@ impl SettingsWidget for SSHWidget {
                     Some(AdditionalInfo {
                         mouse_state: self.additional_info_mouse_state.clone(),
                         on_click_action: Some(WarpifyPageAction::OpenUrl(
-                            "https://docs.warp.dev/terminal/warpify/ssh".into(),
+                            "".into(),
                         )),
                         secondary_text: None,
                         tooltip_override_text: None,

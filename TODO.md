@@ -11,16 +11,16 @@ Brand: **omw** (product) · Repo codename: **oh-my-warp**.
 Phase 0 is *only* about getting decisions and specs written down. No application code starts until Phase 0 closes.
 
 - [x] Brand decision (omw + oh-my-warp codename)
-- [x] Initiate legal review (AGPL/MIT boundary, trademark posture, Homebrew distribution)
+- [x] Initiate legal review (AGPL compliance, trademark posture, Homebrew distribution)
 - [x] Write `specs/threat-model.md` — actors, surfaces, invariants
 - [x] Write `specs/byorc-protocol.md` — auth, signing, replay, capability scopes (used in v0.4)
-- [x] Write `specs/fork-strategy.md` — tracked-snapshot model, restrip procedure, omw-edits provenance (rewritten v0.2 on 2026-05-01 to replace the original branching/patch-series design)
+- [x] Write `specs/fork-strategy.md` — in-tree fork policy, manual upstream sync, AGPL compliance (rewritten 2026-05-01)
 - [x] Write `specs/test-plan.md` — trust tiers, property/fuzz catalog, cassette strategy
 - [x] Component ownership map (already in PRD §8.3 — confirm with engineering leads)
 - [x] Repo skeleton: Cargo workspace with empty `omw-*` crates
 - [x] Add `LICENSE-AGPL` file referencing combined-distribution terms
 - [x] CI: build, fmt, clippy, test
-- [x] ~~CI: nightly `upstream-rebase.yml` workflow rebasing `omw/main` onto `warpdotdev/master`~~ — retired 2026-05-01 with the move to the tracked-snapshot fork model (`specs/fork-strategy.md` v0.2). Workflow file deleted.
+- [x] ~~CI: nightly `upstream-rebase.yml` workflow~~ — removed 2026-05-01 with the sibling-fork plan; upstream sync is manual (see `specs/fork-strategy.md` §2)
 
 **Exit criteria:** all listed specs merged; CI green; license boundaries documented; legal review at least initiated.
 
@@ -62,10 +62,11 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 
 ## v0.3 — Stripped client + local mode
 
-The bulk of the v0.3 fork work landed early via the manual strip on 2026-04-29 — `vendor/warp-stripped/` is a tracked snapshot of upstream Warp with cloud, account, billing, Drive, Oz, and hosted-workflow surfaces removed and an `omw_local` Cargo feature wired in. Remaining work is narrower than originally scoped.
-
-- [x] ~~Fork Warp into `oh-my-warp/warp-fork`~~ — superseded by tracked-snapshot model. `vendor/warp-stripped/` is the canonical Warp host (per `specs/fork-strategy.md` v0.2).
-- [x] Add `omw_local` Cargo feature (already wired; binary builds as `warp-oss` with `--features omw_local`).
+- [x] Maintain Warp source in-tree at `vendor/warp-stripped/` (initial tree added 2026-04-30)
+- [x] Add `omw_local` Cargo feature (initial scaffolding pre-existing; expanded 2026-05-01 to gate AI/cloud UI surfaces and exclude cloud-only crates from the binary)
+- [x] **Cloud-strip cascade** — `--no-default-features --features omw_local` compiles cleanly; `audit-no-cloud.sh` reports zero hits on all six patterns. Default cloud build still passes. Plan: [`specs/cloud-strip-plan.md`](./specs/cloud-strip-plan.md). Completed 2026-05-01 in ~5 hours rather than the projected 4 days — see commit `aadae83`. The cloud crates were misclassified as needing source-level removal; in fact they are pure-types/local-utility crates with no forbidden strings.
+- [x] **Mac preview release scaffolding** — umbrella-level `scripts/build-mac-dmg.sh` produces `omw-warp-oss-v<version>-aarch64-apple-darwin.dmg` from the audit-clean `omw_local` build. First tag: `omw-local-preview-v0.0.1` (2026-05-01). Naming conventions documented in [CLAUDE.md §5.1](./CLAUDE.md#51-release-naming-conventions-omw_local-previews). Does not modify `vendor/warp-stripped/`.
+- [x] **Strip residual signup / Warp-brand UI for v0.0.2 preview** — Per [`docs/superpowers/specs/2026-05-01-strip-residual-signup-design.md`](./docs/superpowers/specs/2026-05-01-strip-residual-signup-design.md). Cfg-gated under `omw_local`: inline AI signup banner, Settings Account & About pages, Help menu, Get Started tab, GITHUB_ISSUES_URL constant, Toggle Warp AI label, and dead-but-compiled-in "Warp" strings in unreachable auth/billing flows. Default cloud build unchanged. Done 2026-05-01 on branch `omw/strip-residual-signup`.
 - [ ] Branding final pass: rename binary `warp-oss` → `omw`, swap icon, color palette, full wordmark removal sweep across remaining product surfaces (per CLAUDE.md §5).
 - [ ] `omw-server` (axum) — embedded into `vendor/warp-stripped/app/` via path dep: identity, providers, agent sessions, settings endpoints.
 - [ ] `omw-server`: single audit-writer endpoint (`POST /api/v1/audit/append`).
@@ -197,4 +198,4 @@ See PRD §15. Highlights:
 - [ ] (v0.4) Single device identity per host vs reused across hosts (current default: per-host)
 - [ ] (Beyond v1) Cloudflare Tunnel as documented fallback — yes or hard non-goal?
 - [ ] (Beyond v1) Plugin system stake-in-the-ground for v1.x
-- [ ] (Phase 0) Umbrella repo license — keep MIT or relicense AGPL
+- [x] ~~(Phase 0) Umbrella repo license — keep MIT or relicense AGPL~~ → AGPL-3.0 (closed 2026-05-01; see PRD §15 #9)

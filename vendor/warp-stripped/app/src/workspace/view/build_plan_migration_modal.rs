@@ -515,7 +515,12 @@ impl BuildPlanMigrationModal {
         let title_text = if is_business {
             "Welcome to the New Business Plan"
         } else {
-            "Welcome to Warp Build"
+            {
+                #[cfg(feature = "omw_local")]
+                { "" }
+                #[cfg(not(feature = "omw_local"))]
+                { "Welcome to Warp Build" }
+            }
         };
 
         let title = Self::create_text(
@@ -631,7 +636,7 @@ impl BuildPlanMigrationModal {
 
         let learn_more_fragments = vec![
             FormattedTextFragment::plain_text("Learn more on our "),
-            FormattedTextFragment::hyperlink("pricing page", "https://www.warp.dev/pricing"),
+            FormattedTextFragment::hyperlink("pricing page", ""),
             FormattedTextFragment::plain_text("."),
         ];
         let learn_more = Container::new(
@@ -646,7 +651,7 @@ impl BuildPlanMigrationModal {
             .with_hyperlink_font_color(appearance.theme().accent().into_solid())
             .register_default_click_handlers(|_url, ctx, _| {
                 ctx.dispatch_typed_action(BuildPlanMigrationModalViewAction::OpenUrl(
-                    "https://www.warp.dev/pricing",
+                    "",
                 ));
             })
             .finish(),

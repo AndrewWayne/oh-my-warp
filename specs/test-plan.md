@@ -75,14 +75,12 @@ See §2 catalog. Run with 1000 cases per property nightly.
 #### B.4 Fuzz tests *(introduced v0.4)*
 See §3 catalog. Run for 5 min per target nightly under `cargo-fuzz`. Linux runner.
 
-#### B.5 Snapshot-rebuild smoke *(per-restrip, not nightly)*
-
-Replaces the v0.1-spec "fork-rebase smoke" now that upstream tracking moved to the tracked-snapshot model (`specs/fork-strategy.md` v0.2). This check runs **only when `vendor/warp-stripped/` is restripped** — the snapshot model has no nightly CI.
-
-- After a restrip PR is opened, CI builds `vendor/warp-stripped/` (`cargo build -p warp --bin warp-oss --features omw_local`) on macOS and Linux.
-- CI runs upstream Warp's own `cargo test --workspace` inside `vendor/warp-stripped/` against the new snapshot — smoke signal that omw's strip didn't break upstream invariants.
-- CI runs the outer workspace's tests (`cargo test --workspace` from repo root) to catch path-dep wiring breakage (e.g., `omw-server` embedded into the stripped tree).
-- A failed restrip PR is iterated on by the maintainer until both checks pass; no `upstream-conflict` issues filed (restrip is not a background process — it's the active PR's responsibility).
+#### B.5 Upstream-sync smoke (manual)
+- Triggered manually by the maintainer after running the upstream-sync procedure in `specs/fork-strategy.md` §2.
+- Run `cargo build -p warp --bin warp-oss --features omw_local` from `vendor/warp-stripped/` — must succeed.
+- Run `vendor/warp-stripped/scripts/audit-no-cloud.sh` — must report zero forbidden hostnames in the binary.
+- Run our crate tests in the umbrella workspace.
+- If anything fails, the sync commit is reverted; the maintainer re-applies the omw modifications and retries.
 
 ### Tier C — pre-release manual
 
@@ -263,9 +261,9 @@ User decision: **adopt upstream Warp's existing test suite as-is; no new GUI-spe
 
 ### 5.3 Failure handling
 
-- Upstream test red on a restrip PR → triage in the PR itself (no separate `upstream-conflict` issue, since restrip is not a background process):
-  - If their test is testing a behavior we accidentally broke → fix the strip in this restrip PR.
-  - If their test is testing a behavior we *intentionally* changed → skip with `#[ignore = "omw-strip: <reason>"]` inside the new snapshot tree, with a commit-message trailer `Series-tag: omw/local-mode` per `specs/fork-strategy.md` §4.
+- Upstream test red after manual sync → triage in the sync commit's review:
+  - If the test is exercising a behavior we accidentally broke → fix the in-tree fork.
+  - If the test is exercising a behavior we *intentionally* changed → mark with `#[ignore = "omw-fork: <reason>"]` and document the rationale in the sync commit's body.
 
 ### 5.4 Visual rendering
 
@@ -283,7 +281,7 @@ Tier C manual eyeball on macOS at each pre-release. No automation in v1.
 | Tier B E2E A+B | nightly | macOS | 1×/day | 15 min |
 | Tier B property | nightly | macOS | 1×/day | 10 min |
 | Tier B fuzz (per target) | nightly | Linux | 1×/day | 5 min × N |
-| Tier C snapshot-rebuild smoke | restrip PR | macOS, Linux | per-restrip | 30 min |
+| Tier B upstream-sync smoke | manual | macOS | per-sync | 30 min |
 | Tier C manual | pre-release | manual | per-release | varies |
 | Tier D external | gate | external | once per phase gate | vendor |
 

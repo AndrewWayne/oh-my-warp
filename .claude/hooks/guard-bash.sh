@@ -12,13 +12,14 @@ CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null ||
 
 [ -z "$CMD" ] && exit 0
 
-# Block rm -rf against vendor/ (submodule destruction).
-# Match flexibly: `rm -rf vendor`, `rm -rf ./vendor`, `rm -rf /abs/vendor`, with optional /warp-fork suffix.
+# Block rm -rf against vendor/ (in-tree fork + submodules).
+# Match flexibly: `rm -rf vendor`, `rm -rf ./vendor`, `rm -rf /abs/vendor`.
 case "$CMD" in
   *"rm -rf vendor"*|*"rm -rf ./vendor"*|*"rm -rf /"*"/vendor"*|*"rm -rf  vendor"*)
     cat >&2 <<EOF
-blocked: 'rm -rf vendor/' would destroy the warp-fork submodule.
-  Use 'git submodule deinit' or operate inside the sibling repo instead.
+blocked: 'rm -rf vendor/' would destroy the in-tree Warp fork at vendor/warp-stripped/
+  and the pi-mono / forge-code submodules.
+  Use 'git submodule deinit' for submodules, or 'git rm <path>' for tracked files.
   Command: $CMD
 EOF
     exit 2

@@ -40,7 +40,7 @@ use std::cell::Cell;
 use pathfinder_geometry::vector::vec2f;
 use warpui::elements::{ChildAnchor, ParentAnchor, ParentOffsetBounds};
 
-const TOS_URL: &str = "https://www.warp.dev/terms-of-service";
+const TOS_URL: &str = "";
 
 // ---------------------------------------------------------------------------
 // Init (keybindings)
@@ -510,10 +510,15 @@ impl LoginSlideView {
             ..Default::default()
         };
 
+        #[cfg(feature = "omw_local")]
+        let tos_span_text = "";
+        #[cfg(not(feature = "omw_local"))]
+        let tos_span_text = "By continuing, you agree to Warp's ";
+
         let tos_line = Flex::row()
             .with_child(
                 ui_builder
-                    .span("By continuing, you agree to Warp's ")
+                    .span(tos_span_text)
                     .with_style(disclaimer_styles)
                     .build()
                     .finish(),

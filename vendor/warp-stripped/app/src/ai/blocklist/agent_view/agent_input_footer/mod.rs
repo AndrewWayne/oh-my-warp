@@ -2476,6 +2476,7 @@ impl TypedActionView for AgentInputFooter {
             }
             AgentInputFooterAction::OpenCodingAgentSettings => {
                 #[cfg(not(target_family = "wasm"))]
+                #[cfg(not(feature = "omw_local"))]
                 ctx.dispatch_typed_action_deferred(WorkspaceAction::ScrollToSettingsWidget {
                     page: SettingsSection::ThirdPartyCLIAgents,
                     widget_id: crate::settings_view::cli_agent_settings_widget_id(),

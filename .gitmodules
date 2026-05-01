@@ -1,9 +1,6 @@
 [submodule "vendor/pi-mono"]
 	path = vendor/pi-mono
 	url = https://github.com/badlogic/pi-mono.git
-[submodule "vendor/warp-fork"]
-	path = vendor/warp-fork
-	url = https://github.com/warpdotdev/warp.git
 [submodule "vendor/forge-code"]
 	path = vendor/forge-code
 	url = https://github.com/tailcallhq/forgecode.git

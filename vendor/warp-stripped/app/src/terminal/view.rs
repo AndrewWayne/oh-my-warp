@@ -667,15 +667,15 @@ const BOOTSTRAP_FAILED_DURATION: Duration = Duration::from_secs(7);
 /// during the bootstrap period.
 const ENV_VAR_BOOTSTRAP_FAILED_DURATION: Duration = Duration::from_secs(60);
 const KNOWN_ISSUES_URL: &str =
-    "https://docs.warp.dev/support-and-community/troubleshooting-and-support/known-issues";
+    "";
 
 /// Link to supported custom prompts.
 const PROMPT_COMPATIBILITY_URL: &str =
-    "https://docs.warp.dev/terminal/appearance/prompt#custom-prompt-compatibility-table";
+    "";
 
 /// Link to troubleshooting steps for ControlMaster errors.
 const CONTROLMASTER_ISSUES_URL: &str =
-    "https://docs.warp.dev/terminal/warpify/ssh-legacy#troubleshooting";
+    "";
 
 /// Link to instructions on how to update p10k.
 const P10K_UPDATE_INSTRUCTIONS_URL: &str =
@@ -691,9 +691,9 @@ const MIN_DELTA_FOR_TEXT_SELECTION: f32 = 0.5;
 /// Notifications-specific info
 /// TODO (suraj): add documentation for notifications in gitbook
 const NOTIFICATIONS_LEARN_MORE_URL: &str =
-    "https://docs.warp.dev/terminal/more-features/notifications";
+    "";
 pub const NOTIFICATIONS_TROUBLESHOOT_URL: &str =
-    "https://docs.warp.dev/terminal/more-features/notifications#troubleshooting-notifications";
+    "";
 
 const DEBOUNCE_PERIOD: Duration = Duration::from_millis(40);
 
@@ -8460,11 +8460,12 @@ impl TerminalView {
     fn handle_ssh_success_block_events(
         &mut self,
         event: &WarpifySuccessBlockEvent,
-        ctx: &mut ViewContext<Self>,
+        _ctx: &mut ViewContext<Self>,
     ) {
         match event {
             WarpifySuccessBlockEvent::OpenWarpifySettings => {
-                ctx.emit(Event::OpenSettings(SettingsSection::Warpify));
+                #[cfg(not(feature = "omw_local"))]
+                _ctx.emit(Event::OpenSettings(SettingsSection::Warpify));
             }
         }
     }
@@ -11326,6 +11327,7 @@ impl TerminalView {
                 ctx.emit(Event::RemoteServerSkipRequested { session_id });
             }
             SshRemoteServerChoiceViewEvent::OpenWarpifySettings => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.emit(Event::OpenSettings(SettingsSection::Warpify));
             }
         });
@@ -13028,11 +13030,17 @@ fn fork_label_for_query(query: &str) -> String {
 }
 
 impl TerminalView {
+    #[allow(unreachable_code)]
     fn start_agent_onboarding_tutorial(
         &mut self,
         version: AgentOnboardingVersion,
         ctx: &mut ViewContext<Self>,
     ) {
+        #[cfg(feature = "omw_local")]
+        {
+            let _ = (version, ctx);
+            return;
+        }
         // If we are already showing the onboarding callout, do nothing.
         if self.onboarding_callout_view.is_some() {
             log::warn!("Attempted to start onboarding tutorial when one is already active.");
@@ -18779,7 +18787,7 @@ impl TerminalView {
                     ctx.emit(Event::OpenWarpDriveObjectInPane(uid.clone()));
                 }
                 AIAgentCitation::WarpDocumentation { path } => {
-                    ctx.open_url(&format!("https://docs.warp.dev/{path}"));
+                    ctx.open_url(&format!(""));
                 }
                 AIAgentCitation::WebPage { url } => {
                     ctx.open_url(url);
@@ -18860,6 +18868,7 @@ impl TerminalView {
                 self.handle_usage_footer_toggled(block.id(), *conversation_id, *is_expanded, ctx);
             }
             AIBlockEvent::OpenSettings => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.emit(Event::OpenSettings(SettingsSection::WarpAgent));
             }
             #[cfg(feature = "local_fs")]
@@ -23223,14 +23232,17 @@ impl TerminalView {
 
         match action {
             LearnMore => {
-                ctx.open_url("https://docs.warp.dev/terminal/warpify/ssh-legacy#implementation");
+                ctx.open_url("");
             }
             Settings => {
+                #[cfg(not(feature = "omw_local"))]
                 if FeatureFlag::SSHTmuxWrapper.is_enabled() {
                     ctx.emit(Event::OpenSettings(SettingsSection::Warpify));
                 } else {
                     ctx.emit(Event::OpenSettings(SettingsSection::Features));
                 }
+                #[cfg(feature = "omw_local")]
+                ctx.emit(Event::OpenSettings(SettingsSection::Features));
             }
         }
     }
@@ -25001,6 +25013,7 @@ impl TypedActionView for TerminalView {
                 });
             }
             OpenTeamSettingsPage => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.emit(Event::OpenSettings(SettingsSection::Teams));
             }
             SetMarkedText {
@@ -25023,7 +25036,10 @@ impl TypedActionView for TerminalView {
             LoadAgentModeConversation => {
                 self.load_agent_mode_conversation(ctx);
             }
-            ShowWarpifySettings => ctx.emit(Event::OpenSettings(SettingsSection::Warpify)),
+            ShowWarpifySettings => {
+                #[cfg(not(feature = "omw_local"))]
+                ctx.emit(Event::OpenSettings(SettingsSection::Warpify));
+            }
             DeleteAttachment { index } => {
                 self.ai_context_model.update(ctx, |context_model, ctx| {
                     context_model.remove_pending_attachment(*index, ctx);
@@ -25243,6 +25259,7 @@ impl TypedActionView for TerminalView {
                 });
             }
             OpenBillingAndUsagePane => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.emit(Event::OpenSettings(SettingsSection::BillingAndUsage));
             }
             OpenAddRulePane => {

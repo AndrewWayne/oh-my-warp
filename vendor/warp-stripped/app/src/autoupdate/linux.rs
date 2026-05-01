@@ -397,7 +397,7 @@ impl PackageManager {
                     let cache_dir_str = cache_dir.display();
                     // Back up the existing pacman.conf file just in case
                     // anything goes wrong, then add the repository config.
-                    format!("mkdir -p {cache_dir_str}{and}\\\ncp /etc/pacman.conf {cache_dir_str}{and}\\\nsudo sh -c \"echo '\n[{repo_name}]\nServer = https://releases.warp.dev/linux/pacman/\\$repo/\\$arch' >> /etc/pacman.conf\"{and}\\\n")
+                    format!("mkdir -p {cache_dir_str}{and}\\\ncp /etc/pacman.conf {cache_dir_str}{and}\\\nsudo sh -c \""{and}\\\n")
                 } else {
                     String::new()
                 };
@@ -405,7 +405,7 @@ impl PackageManager {
                     // Retrieve our key from keys.openpgp.org and locally sign
                     // it before retrieving the package repository and
                     // installing the updated package.
-                    format!("sudo pacman-key -r \"linux-maintainers@warp.dev\" --keyserver hkp://keys.openpgp.org:80{and}\\\nsudo pacman-key --lsign-key \"linux-maintainers@warp.dev\"{and}\\\n")
+                    format!("sudo pacman-key -r \"" --keyserver hkp://keys.openpgp.org:80{and}\\\nsudo pacman-key --lsign-key \""{and}\\\n")
                 } else {
                     String::new()
                 };
@@ -609,7 +609,7 @@ fn is_pacman_signing_key_installed() -> bool {
             "/etc/pacman.d/gnupg",
             "--list-keys",
             "--with-colons",
-            "linux-maintainers@warp.dev",
+            "",
         ])
         .output()
     {

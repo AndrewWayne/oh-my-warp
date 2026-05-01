@@ -84,7 +84,10 @@ impl View for WarpDriveSettingsPageView {
 
 impl SettingsPageMeta for WarpDriveSettingsPageView {
     fn section() -> SettingsSection {
-        SettingsSection::WarpDrive
+        #[cfg(not(feature = "omw_local"))]
+        return SettingsSection::WarpDrive;
+        #[cfg(feature = "omw_local")]
+        SettingsSection::About // placeholder; excluded from nav under omw_local
     }
 
     fn should_render(&self, _ctx: &AppContext) -> bool {
@@ -222,7 +225,7 @@ impl SettingsWidget for WarpDriveToggleWidget {
             Some(AdditionalInfo {
                 mouse_state: self.info_icon_mouse_state.clone(),
                 on_click_action: Some(WarpDriveSettingsPageAction::OpenUrl(
-                    "https://docs.warp.dev/knowledge-and-collaboration/warp-drive".to_string(),
+                    "".to_string(),
                 )),
                 secondary_text: None,
                 tooltip_override_text: None,

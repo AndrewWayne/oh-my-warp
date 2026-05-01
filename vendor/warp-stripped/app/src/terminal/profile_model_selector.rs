@@ -56,8 +56,9 @@ use crate::{
         action_button::{ActionButton, ActionButtonTheme, ButtonSize, SecondaryTheme},
         FeaturePopup, NewFeaturePopupEvent, NewFeaturePopupLabel,
     },
-    workspace::WorkspaceAction,
 };
+#[cfg(not(feature = "omw_local"))]
+use crate::workspace::WorkspaceAction;
 
 use warp_core::ui::theme::{color::internal_colors, Fill};
 use warp_core::{
@@ -509,8 +510,9 @@ impl ProfileModelSelector {
             ActionButton::new("Manage", SecondaryTheme)
                 .with_tooltip("Manage API keys")
                 .with_size(ButtonSize::XSmall)
-                .on_click(|ctx| {
-                    ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPageWithSearch {
+                .on_click(|_ctx| {
+                    #[cfg(not(feature = "omw_local"))]
+                    _ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPageWithSearch {
                         search_query: "api".to_string(),
                         section: Some(SettingsSection::WarpAgent),
                     });
@@ -1824,6 +1826,7 @@ impl TypedActionView for ProfileModelSelector {
             }
             ProfileModelSelectorAction::ManageProfiles => {
                 self.set_profile_menu_visibility(false, ctx);
+                #[cfg(not(feature = "omw_local"))]
                 ctx.emit(ProfileModelSelectorEvent::OpenSettings(
                     SettingsSection::WarpAgent,
                 ));

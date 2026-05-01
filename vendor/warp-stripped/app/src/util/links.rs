@@ -1,10 +1,15 @@
 use crate::channel::ChannelState;
 
-pub const USER_DOCS_URL: &str = "https://docs.warp.dev/";
+pub const USER_DOCS_URL: &str = "";
+#[cfg(feature = "omw_local")]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub const GITHUB_ISSUES_URL: &str = "https://github.com/AndrewWayne/oh-my-warp/issues";
+
+#[cfg(not(feature = "omw_local"))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const GITHUB_ISSUES_URL: &str = "https://github.com/warpdotdev/Warp/issues";
-pub const SLACK_URL: &str = "http://go.warp.dev/join-preview";
-pub const PRIVACY_POLICY_URL: &str = "https://www.warp.dev/privacy";
+pub const SLACK_URL: &str = "";
+pub const PRIVACY_POLICY_URL: &str = "";
 
 pub fn feedback_form_url() -> String {
     let mut url = url::Url::parse("https://github.com/warpdotdev/Warp/issues/new/choose")

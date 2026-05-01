@@ -125,11 +125,11 @@ const OFFLINE_TEXT: &str = "You are offline.";
 
 const LIMIT_HIT_ADMIN_TEXT: &str =
     "You've reached the team member limit for your plan. Upgrade to add more teammates.";
-const LIMIT_HIT_ADMIN_NOT_AUTO_UPGRADEABLE_TEXT: &str = "You've reached the team member limit for your plan. Contact support@warp.dev to add more teammates.";
+const LIMIT_HIT_ADMIN_NOT_AUTO_UPGRADEABLE_TEXT: &str = "";
 const LIMIT_HIT_NON_ADMIN_TEXT: &str =
     "You've reached the team member limit for your plan. Contact a team admin to add more teammates.";
 
-const DELINQUENT_ADMIN_NON_SELF_SERVE_TEXT: &str = "Team invites have been restricted due to a payment issue. Please contact support@warp.dev to restore access.";
+const DELINQUENT_ADMIN_NON_SELF_SERVE_TEXT: &str = "";
 const DELINQUENT_NON_ADMIN_TEXT: &str = "Team invites have been restricted due to a payment issue. Please contact a team admin to restore access.";
 const DELINQUENT_ADMIN_SELF_SERVE_LINE_1_TEXT: &str =
     "Team invites have been restricted due to a subscription payment issue.";
@@ -137,7 +137,7 @@ const DELINQUENT_ADMIN_SELF_SERVE_LINE_2_PREFIX_TEXT: &str = "Please ";
 const DELINQUENT_ADMIN_SELF_SERVE_LINE_2_LINK_TEXT: &str = "update your payment information";
 const DELINQUENT_ADMIN_SELF_SERVE_LINE_2_SUFFIX_TEXT: &str = " to restore access.";
 
-const TEAM_LIMIT_EXCEEDED_ADMIN_NOT_AUTO_UPGRADEABLE_TEXT: &str = "You've exceeded the team member limit for your plan. Please contact support@warp.dev to upgrade your team.";
+const TEAM_LIMIT_EXCEEDED_ADMIN_NOT_AUTO_UPGRADEABLE_TEXT: &str = "";
 const TEAM_LIMIT_EXCEEDED_NON_ADMIN_TEXT: &str =
     "You've exceeded the team member limit for your plan. Contact a team admin to upgrade your team.";
 const TEAM_LIMIT_EXCEEDED_ADMIN_UPGRADEABLE: &str =
@@ -445,6 +445,7 @@ pub struct TeamsPageView {
     delete_or_leave_team_confirmation_dialog: ViewHandle<CloudActionConfirmationDialog>,
     show_delete_or_leave_team_confirmation_dialog: bool,
     transfer_ownership_modal_state: ModalViewState<Modal<TransferOwnershipConfirmationModal>>,
+    #[cfg_attr(feature = "omw_local", allow(dead_code))]
     clipped_scroll_state: ClippedScrollStateHandle,
     discoverable_teams_states: Vec<DiscoverableTeamState>,
     rename_team_editor: ViewHandle<ClickableTextInput>,
@@ -930,7 +931,7 @@ impl TeamsPageView {
                 ctx.open_url(upgrade_link);
             }
             UserWorkspacesEvent::GenerateUpgradeLinkRejected(err) => self.show_error(
-                "Failed to generate upgrade link. Please contact us at feedback@warp.dev",
+                "",
                 Some(err),
                 ctx,
             ),
@@ -938,7 +939,7 @@ impl TeamsPageView {
                 ctx.open_url(billing_session_link);
             }
             UserWorkspacesEvent::GenerateStripeBillingPortalLinkRejected(err) => self.show_error(
-                "Failed to generate billing link. Please contact us at feedback@warp.dev",
+                "",
                 Some(err),
                 ctx,
             ),
@@ -1017,6 +1018,7 @@ impl TeamsPageView {
 
     /// Scroll to the team membership settings. If an email is provided, it's prepopulated in the
     /// invite editor.
+    #[cfg_attr(feature = "omw_local", allow(dead_code))]
     pub fn open_team_members(&mut self, email: Option<&String>, ctx: &mut ViewContext<Self>) {
         if let Some(email) = email {
             self.email_invites_block_editor.update(
@@ -1698,7 +1700,10 @@ impl TeamsPageView {
 
 impl SettingsPageMeta for TeamsPageView {
     fn section() -> SettingsSection {
-        SettingsSection::Teams
+        #[cfg(not(feature = "omw_local"))]
+        return SettingsSection::Teams;
+        #[cfg(feature = "omw_local")]
+        SettingsSection::About // placeholder; excluded from nav under omw_local
     }
 
     fn on_page_selected(&mut self, allow_steal_focus: bool, ctx: &mut ViewContext<Self>) {
@@ -4081,17 +4086,17 @@ impl SettingsWidget for TeamsWidget {
 #[cfg(test)]
 #[test]
 pub fn test_valid_domains() {
-    assert!(!TeamsPageView::is_valid_domain("@warp.dev"));
+    assert!(!TeamsPageView::is_valid_domain(""));
     assert!(!TeamsPageView::is_valid_domain("warp,"));
     assert!(!TeamsPageView::is_valid_domain("warpdev"));
     assert!(!TeamsPageView::is_valid_domain(".dev"));
     assert!(!TeamsPageView::is_valid_domain("warp..dev"));
     assert!(!TeamsPageView::is_valid_domain(" "));
     assert!(!TeamsPageView::is_valid_domain("warp!.dev"));
-    assert!(!TeamsPageView::is_valid_domain("warp.dev>"));
-    assert!(!TeamsPageView::is_valid_domain("warp.dev."));
-    assert!(TeamsPageView::is_valid_domain("app.warp.dev"));
+    assert!(!TeamsPageView::is_valid_domain(""));
+    assert!(!TeamsPageView::is_valid_domain(""));
+    assert!(TeamsPageView::is_valid_domain(""));
     assert!(TeamsPageView::is_valid_domain("warp0.dev0"));
-    assert!(TeamsPageView::is_valid_domain("warp.dev"));
+    assert!(TeamsPageView::is_valid_domain(""));
     assert!(TeamsPageView::is_valid_domain("miniclip.com"));
 }

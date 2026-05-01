@@ -1759,6 +1759,9 @@ impl RootView {
             cfg_if! {
                 if #[cfg(target_family = "wasm")] {
                     AuthOnboardingState::WebImport(AuthOnboardingTarget::Workspace(workspace_args.into()))
+                } else if #[cfg(feature = "omw_local")] {
+                    // omw_local: no signup, onboarding, or login slides. Go straight to terminal.
+                    AuthOnboardingState::Terminal(workspace_args.create_workspace(ctx))
                 } else {
                     // When OpenWarpNewSettingsModes is enabled, show onboarding before login for
                     // users who haven't completed it yet (tracked via a local UserPreferences key).
@@ -2883,10 +2886,11 @@ impl RootView {
 
     pub fn open_team_settings_page(&mut self, _: &(), ctx: &mut ViewContext<Self>) -> bool {
         let window_id = ctx.window_id();
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
+        if let AuthOnboardingState::Terminal(_handle) = &self.auth_onboarding_state {
+            #[cfg(not(feature = "omw_local"))]
             ctx.dispatch_typed_action_for_view(
                 window_id,
-                handle.id(),
+                _handle.id(),
                 &WorkspaceAction::ShowSettingsPage(SettingsSection::Teams),
             );
             ctx.windows().show_window_and_focus_app(window_id);

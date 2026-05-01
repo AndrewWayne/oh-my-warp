@@ -18,6 +18,7 @@ use crate::ai::llms::{LLMId, LLMPreferences, LLMPreferencesEvent};
 use crate::features::FeatureFlag;
 use crate::search::data_source::{Query, QueryFilter};
 use crate::search::mixer::{SearchMixer, SearchMixerEvent};
+#[cfg(not(feature = "omw_local"))]
 use crate::settings_view::SettingsSection;
 use crate::terminal::input::buffer_model::InputBufferModel;
 use crate::terminal::input::inline_menu::{
@@ -31,6 +32,7 @@ use crate::terminal::input::suggestions_mode_model::{
 use crate::ui_components::icons::Icon;
 use crate::view_components::action_button::{ActionButton, ActionButtonTheme, ButtonSize};
 use crate::view_components::alert::{Alert, AlertConfig};
+#[cfg(not(feature = "omw_local"))]
 use crate::workspace::WorkspaceAction;
 use ai::api_keys::{ApiKeyManager, ApiKeyManagerEvent};
 
@@ -145,8 +147,9 @@ impl InlineModelSelectorView {
                 ActionButton::new("Manage defaults", ManageDefaultsTheme)
                     .with_icon(Icon::Settings)
                     .with_size(ButtonSize::Small)
-                    .on_click(|ctx| {
-                        ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPageWithSearch {
+                    .on_click(|_ctx| {
+                        #[cfg(not(feature = "omw_local"))]
+                        _ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPageWithSearch {
                             search_query: String::new(),
                             section: Some(SettingsSection::WarpAgent),
                         });

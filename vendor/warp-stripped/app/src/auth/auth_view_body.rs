@@ -44,7 +44,7 @@ use super::{
     AuthStateProvider,
 };
 
-const TOS_URL: &str = "https://www.warp.dev/terms-of-service";
+const TOS_URL: &str = "";
 
 const COMMON_BODY_UI_FONT_SIZE: f32 = 12.;
 const AUTH_MODAL_GAP: f32 = 16.;
@@ -81,6 +81,7 @@ pub fn init(app: &mut AppContext) {
 
 #[derive(Default)]
 struct MouseStateHandles {
+    #[allow(dead_code)]
     login_link_mouse_state_handle: MouseStateHandle,
     enter_login_later_mouse_state_handle: MouseStateHandle,
     confirm_login_later_mouse_state_handle: MouseStateHandle,
@@ -127,6 +128,7 @@ pub enum AuthStep {
 
 #[derive(Clone, Copy, Debug)]
 pub enum AuthViewBodyAction {
+    #[allow(dead_code)]
     Login,
     InitiateLoginLater,
     LoginLater,
@@ -328,11 +330,16 @@ impl AuthViewBody {
             ..Default::default()
         };
 
+        #[cfg(feature = "omw_local")]
+        let tos_span_text = "";
+        #[cfg(not(feature = "omw_local"))]
+        let tos_span_text = "By continuing, you agree to Warp's ";
+
         let disclaimer_line_1 = Container::new(
             Flex::row()
                 .with_child(
                     ui_builder
-                        .span("By continuing, you agree to Warp's ")
+                        .span(tos_span_text)
                         .with_style(disclaimer_styles)
                         .build()
                         .finish(),
@@ -487,6 +494,12 @@ impl AuthViewBody {
     }
 
     fn render_sign_in_row(&self, ui_builder: &UiBuilder) -> Box<dyn Element> {
+        #[cfg(feature = "omw_local")]
+        {
+            let _ = ui_builder;
+            return warpui::elements::Empty::new().finish();
+        }
+        #[cfg(not(feature = "omw_local"))]
         Flex::row()
             .with_child(
                 ui_builder
@@ -607,14 +620,23 @@ impl AuthViewBody {
         };
 
         let text = match self.variant {
-            AuthViewVariant::RequireLoginCloseable  => {
-                "In order to use Warp’s AI features or collaborate with others, please create an account."
+            AuthViewVariant::RequireLoginCloseable => {
+                #[cfg(feature = "omw_local")]
+                { "" }
+                #[cfg(not(feature = "omw_local"))]
+                { "In order to use Warp’s AI features or collaborate with others, please create an account." }
             }
             AuthViewVariant::HitDriveObjectLimitCloseable => {
-                "In order to create more objects in Warp Drive, please create an account."
+                #[cfg(feature = "omw_local")]
+                { "" }
+                #[cfg(not(feature = "omw_local"))]
+                { "In order to create more objects in Warp Drive, please create an account." }
             }
             AuthViewVariant::ShareRequirementCloseable => {
-                "In order to share, please create an account."
+                #[cfg(feature = "omw_local")]
+                { "" }
+                #[cfg(not(feature = "omw_local"))]
+                { "In order to share, please create an account." }
             }
             _ => "",
         };
@@ -639,6 +661,9 @@ impl AuthViewBody {
             ..Default::default()
         };
 
+        #[cfg(feature = "omw_local")]
+        let text = "";
+        #[cfg(not(feature = "omw_local"))]
         let text = match self.variant {
             AuthViewVariant::Initial => "Welcome to Warp!",
             AuthViewVariant::RequireLoginCloseable
@@ -997,8 +1022,12 @@ impl View for AuthViewBody {
     }
 
     fn accessibility_contents(&self, _: &AppContext) -> Option<AccessibilityContent> {
+        #[cfg(feature = "omw_local")]
+        let a11y_title = "";
+        #[cfg(not(feature = "omw_local"))]
+        let a11y_title = "Welcome to Warp!";
         Some(AccessibilityContent::new(
-            "Welcome to Warp!",
+            a11y_title,
             "Press enter to open your browser to Sign Up or Sign In.",
             WarpA11yRole::HelpRole,
         ))

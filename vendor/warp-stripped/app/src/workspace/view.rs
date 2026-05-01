@@ -230,6 +230,7 @@ use crate::cloud_object::{
 };
 use crate::context_chips::ChipRuntimeCapabilities;
 use crate::drive::import::modal::{ImportModal, ImportModalEvent};
+#[cfg(not(feature = "omw_local"))]
 use crate::drive::workflows::arguments::ArgumentsState;
 use crate::drive::workflows::modal::{WorkflowModal, WorkflowModalEvent};
 use crate::drive::{
@@ -364,9 +365,11 @@ use crate::workspace::sync_inputs::SyncedInputState;
 use crate::workspace::toast_stack::{
     ToastStack as WorkspaceToastStack, ToastStackEvent as WorkspaceToastStackEvent,
 };
+#[cfg(not(feature = "omw_local"))]
+use crate::ai_assistant::panel::AIAssistantPanelEvent;
 use crate::{
     ai_assistant::{
-        panel::{AIAssistantPanelEvent, AIAssistantPanelView},
+        panel::AIAssistantPanelView,
         AskAIType, AI_ASSISTANT_FEATURE_NAME, AI_ASSISTANT_LOGO_COLOR,
     },
     settings,
@@ -1488,6 +1491,7 @@ impl Workspace {
         (welcome_tips_view, welcome_tips_view_state)
     }
 
+    #[cfg(not(feature = "omw_local"))]
     fn build_ai_assistant_panel_view(
         ctx: &mut ViewContext<Self>,
         server_api: Arc<ServerApi>,
@@ -1501,6 +1505,17 @@ impl Workspace {
         });
 
         ai_assistant_panel
+    }
+
+    #[cfg(feature = "omw_local")]
+    fn build_ai_assistant_panel_view_placeholder(
+        ctx: &mut ViewContext<Self>,
+        server_api: Arc<ServerApi>,
+        ai_client: Arc<dyn AIClient>,
+    ) -> ViewHandle<AIAssistantPanelView> {
+        ctx.add_typed_action_view(|ctx| {
+            AIAssistantPanelView::new_omw_placeholder(server_api, ai_client, ctx)
+        })
     }
 
     fn build_resource_center_view(
@@ -2777,6 +2792,10 @@ impl Workspace {
             None
         };
 
+        #[cfg(feature = "omw_local")]
+        let ai_assistant_panel =
+            Self::build_ai_assistant_panel_view_placeholder(ctx, server_api.clone(), ai_client.clone());
+        #[cfg(not(feature = "omw_local"))]
         let ai_assistant_panel =
             Self::build_ai_assistant_panel_view(ctx, server_api.clone(), ai_client.clone());
 
@@ -2964,6 +2983,7 @@ impl Workspace {
                     ctx.notify();
                 }
                 SharedObjectsCreationDeniedModalEvent::TeamSettings => {
+                    #[cfg(not(feature = "omw_local"))]
                     me.show_settings_with_section(Some(SettingsSection::Teams), ctx);
                     me.current_workspace_state
                         .is_shared_objects_creation_denied_modal_open = false;
@@ -5581,6 +5601,7 @@ impl Workspace {
     fn handle_ai_fact_view_event(&mut self, event: &AIFactViewEvent, ctx: &mut ViewContext<Self>) {
         match event {
             AIFactViewEvent::OpenSettings => {
+                #[cfg(not(feature = "omw_local"))]
                 self.show_settings_with_section(Some(SettingsSection::WarpAgent), ctx);
             }
             #[allow(unused_variables)]
@@ -6276,7 +6297,7 @@ impl Workspace {
                 },
             ),
             NewSessionMenuItem::OpenLaunchConfigDocs => {
-                ctx.open_url("https://docs.warp.dev/terminal/sessions/launch-configurations")
+                ctx.open_url("")
             }
             #[cfg(feature = "local_fs")]
             NewSessionMenuItem::CreateNewTabConfig => {
@@ -7572,7 +7593,7 @@ impl Workspace {
                         let toast = DismissibleToast::success(message.to_string())
                             .with_link(
                                 ToastLink::new("Learn more".to_string()).with_href(
-                                    "https://docs.warp.dev/reference/cli".to_string(),
+                                    "".to_string(),
                                 ),
                             );
                         toast_stack.add_ephemeral_toast(toast, ctx);
@@ -8344,6 +8365,7 @@ impl Workspace {
             .map(|workspace| workspace.billing_metadata.is_user_on_paid_plan())
             .unwrap_or(false);
 
+        #[cfg(not(feature = "omw_local"))]
         if is_on_paid_plan {
             items.push(
                 MenuItemFields::new("Billing and usage")
@@ -8352,6 +8374,9 @@ impl Workspace {
                     ))
                     .into_item(),
             );
+        }
+        #[cfg(feature = "omw_local")]
+        if is_on_paid_plan {
         } else {
             items.push(
                 MenuItemFields::new("Upgrade")
@@ -10502,7 +10527,7 @@ impl Workspace {
 
     pub fn open_autoupdate_failure_link(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.open_url(
-            "https://docs.warp.dev/support-and-community/troubleshooting-and-support/updating-warp",
+            "",
         );
     }
 
@@ -14444,6 +14469,7 @@ impl Workspace {
                 );
             }
             DrivePanelEvent::OpenTeamSettingsPage => {
+                #[cfg(not(feature = "omw_local"))]
                 self.show_settings_with_section(Some(SettingsSection::Teams), ctx);
             }
             DrivePanelEvent::OpenImportModal {
@@ -15488,6 +15514,7 @@ impl Workspace {
         email_invite: Option<&String>,
         ctx: &mut ViewContext<Self>,
     ) {
+        #[cfg(not(feature = "omw_local"))]
         self.show_settings_with_section(Some(SettingsSection::Teams), ctx);
 
         self.settings_pane.update(ctx, |view, ctx| {
@@ -15769,6 +15796,7 @@ impl Workspace {
         };
     }
 
+    #[cfg(not(feature = "omw_local"))]
     fn handle_ai_assistant_panel_event(
         &mut self,
         event: &AIAssistantPanelEvent,
@@ -16996,7 +17024,7 @@ impl Workspace {
                 .finish()
             })
             .on_click(|ctx, _, _| {
-                ctx.dispatch_typed_action(WorkspaceAction::OpenLink("https://warp.dev".to_owned()));
+                ctx.dispatch_typed_action(WorkspaceAction::OpenLink("".to_owned()));
             })
             .with_cursor(Cursor::PointingHand)
             .finish();
@@ -19509,6 +19537,9 @@ impl Workspace {
     }
 
     fn redirect_to_sign_in(&mut self) {
+        #[cfg(feature = "omw_local")]
+        return;
+
         #[cfg(target_family = "wasm")]
         if let Some(current_url) = parse_current_url() {
             update_browser_url(
@@ -19645,7 +19676,7 @@ impl Workspace {
 
         if !is_app_installed {
             // App not installed - redirect to download page
-            ctx.open_url("https://warp.dev/download");
+            ctx.open_url("");
             // In webapp code we cannot distinguish between
             // the localhost:9277/install_detection endpoint not running (not installed) vs
             // the browser blocking Local Network Access which results in CORS error;
@@ -19671,9 +19702,13 @@ impl Entity for Workspace {
     type Event = ();
 }
 
-fn is_omw_local_hidden_settings_section(section: Option<SettingsSection>) -> bool {
+fn is_omw_local_hidden_settings_section(_section: Option<SettingsSection>) -> bool {
+    // Under omw_local, all gated variants are compile-time removed, so none can be hidden.
+    #[cfg(feature = "omw_local")]
+    return false;
+    #[cfg(not(feature = "omw_local"))]
     matches!(
-        section,
+        _section,
         Some(
             SettingsSection::Account
                 | SettingsSection::AI
@@ -20172,6 +20207,7 @@ impl TypedActionView for Workspace {
                 ctx.open_url(&upgrade_url);
             }
             ShowReferralSettingsPage => {
+                #[cfg(not(feature = "omw_local"))]
                 self.show_settings_with_section(Some(SettingsSection::Referrals), ctx);
             }
             JoinSlack => self.join_slack(ctx),
@@ -20994,7 +21030,7 @@ impl TypedActionView for Workspace {
             #[cfg(all(enable_crash_recovery, target_os = "linux"))]
             DismissWaylandCrashRecoveryBannerAndOpenLink => {
                 self.dismiss_workspace_banner(ctx, &WorkspaceBanner::WaylandCrashRecovery);
-                ctx.open_url("https://docs.warp.dev/terminal/more-features/linux#native-wayland");
+                ctx.open_url("");
             }
             FixInAgentMode { query } => {
                 self.active_tab_pane_group().update(ctx, |pane_group, ctx| {

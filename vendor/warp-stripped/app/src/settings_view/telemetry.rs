@@ -6,6 +6,7 @@ use warp_core::telemetry::{EnablementState, TelemetryEvent, TelemetryEventDesc};
 #[derive(Debug, EnumDiscriminants)]
 #[strum_discriminants(derive(EnumIter))]
 pub enum SettingsTelemetryEvent {
+    #[cfg_attr(feature = "omw_local", allow(dead_code))]
     EnvironmentsPageOpened,
 }
 

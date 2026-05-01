@@ -2010,7 +2010,10 @@ impl EnvironmentsPageWidget {
 
 impl SettingsPageMeta for EnvironmentsPageView {
     fn section() -> SettingsSection {
-        SettingsSection::CloudEnvironments
+        #[cfg(not(feature = "omw_local"))]
+        return SettingsSection::CloudEnvironments;
+        #[cfg(feature = "omw_local")]
+        SettingsSection::About // placeholder; excluded from nav under omw_local
     }
     fn on_page_selected(&mut self, _allow_steal_focus: bool, ctx: &mut ViewContext<Self>) {
         self.environment_form.update(ctx, |form, ctx| {

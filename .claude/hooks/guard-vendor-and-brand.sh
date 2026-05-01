@@ -1,9 +1,8 @@
 #!/bin/sh
-# PreToolUse hook for Write/Edit. Two jobs:
-#   1. Block writes to vendor/warp-fork/ (it's a submodule).
-#   2. Warn on capitalized `Warp` landing in product-surface source.
+# PreToolUse hook for Write/Edit.
+#   Warn on capitalized `Warp` landing in product-surface source.
 #
-# Exits 2 to block, 0 with stderr text to warn, 0 to pass.
+# Exits 0 with stderr text to warn, 0 to pass.
 # Honors CLAUDE_HOOKS_DISABLED=1.
 
 set -u
@@ -17,19 +16,7 @@ TARGET=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/nu
 
 [ -z "$TARGET" ] && exit 0
 
-# 1. Block writes to vendored fork.
-case "$TARGET" in
-  */vendor/warp-fork/*|vendor/warp-fork/*)
-    cat >&2 <<EOF
-blocked: vendor/warp-fork/ is a submodule pointing at oh-my-warp/warp-fork.
-  Edit upstream there and rebase via specs/fork-strategy.md.
-  Path: $TARGET
-EOF
-    exit 2
-    ;;
-esac
-
-# 2. Brand check on product-surface paths only.
+# Brand check on product-surface paths only.
 PRODUCT_SURFACE=0
 case "$TARGET" in
   */crates/omw-*/src/*|crates/omw-*/src/*) PRODUCT_SURFACE=1 ;;
@@ -52,7 +39,7 @@ fi
 # Strip lines with allow-list phrases, then look for capitalized `Warp` as a word.
 HITS=$(
   printf '%s\n' "$CONTENT" \
-    | grep -v -E '(oh-my-warp|warp-fork|warpdotdev|upstream:|LICENSE-AGPL|[Tt]rademark)' \
+    | grep -v -E '(oh-my-warp|warp-stripped|warpdotdev|upstream:|[Tt]rademark)' \
     | grep -nE '(^|[^A-Za-z])Warp([^a-z]|$)' \
     || true
 )
@@ -64,7 +51,7 @@ warning: 'Warp' (capitalized) found in product-surface file.
   'oh-my-warp' is the repo codename only.
   Lines:
 $(printf '%s\n' "$HITS" | sed 's/^/    /')
-  If this is upstream attribution, tag the line with 'upstream:' or move it to LICENSE-AGPL.
+  If this is upstream attribution, tag the line with 'upstream:' or move it to LICENSE.
 EOF
 fi
 

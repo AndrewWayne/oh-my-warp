@@ -3143,6 +3143,7 @@ impl Input {
         let buy_credits_banner = ctx.add_typed_action_view(BuyCreditsBanner::new);
         ctx.subscribe_to_view(&buy_credits_banner, |me, _, event, ctx| match event {
             BuyCreditsBannerEvent::OpenBillingAndUsage => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.emit(Event::OpenSettings(SettingsSection::BillingAndUsage));
             }
             BuyCreditsBannerEvent::RefocusInput => {
@@ -3843,6 +3844,7 @@ impl Input {
                 });
             }
             InlineProfileSelectorEvent::ManageProfiles => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.emit(Event::OpenSettings(SettingsSection::WarpAgent));
             }
             InlineProfileSelectorEvent::Dismissed => {
@@ -5312,6 +5314,7 @@ impl Input {
                 });
             }
             PromptAlertEvent::OpenBillingAndUsagePage => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.emit(Event::OpenSettings(SettingsSection::BillingAndUsage));
             }
             PromptAlertEvent::OpenPrivacyPage => {
@@ -13849,6 +13852,7 @@ impl Input {
                 entrypoint: AnonymousUserSignupEntrypoint::SignUpAIPrompt,
             }),
             PromptSuggestionsEvent::OpenBillingAndUsagePage => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.emit(Event::OpenSettings(SettingsSection::BillingAndUsage))
             }
             PromptSuggestionsEvent::OpenPrivacyPage => {

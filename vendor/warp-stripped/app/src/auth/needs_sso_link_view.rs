@@ -76,7 +76,12 @@ impl View for NeedsSsoLinkView {
 
         LoginErrorModal::new(app)
             .with_header("Your organization has enabled SSO for your account")
-            .with_detail("Click the button below to link your Warp account to your SSO provider.")
+            .with_detail({
+                #[cfg(feature = "omw_local")]
+                { "" }
+                #[cfg(not(feature = "omw_local"))]
+                { "Click the button below to link your Warp account to your SSO provider." }
+            })
             .with_action(link_sso_button)
             .build()
             .finish()

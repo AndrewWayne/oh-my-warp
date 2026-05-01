@@ -180,7 +180,7 @@ pub fn output_conversation_debug_info(
                 // with staging.warp.dev instead of localhost:8080.
                 token
                     .debug_link()
-                    .replace("host.docker.internal:8080", "staging.warp.dev")
+                    .replace("host.docker.internal:8080", "")
             })
             .unwrap_or("unavailable".to_owned());
         write_to_debug_file(&format!("Conversation Debug Link: {debug_link}"));

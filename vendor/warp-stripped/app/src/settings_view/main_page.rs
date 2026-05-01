@@ -24,18 +24,22 @@ use crate::{workspace::WorkspaceAction, workspaces::update_manager::TeamUpdateMa
 use ::settings::{Setting, ToggleableSetting};
 use lazy_static::lazy_static;
 use pathfinder_color::ColorU;
+#[cfg(not(feature = "omw_local"))]
 use pathfinder_geometry::vector::vec2f;
 use std::sync::{Arc, Mutex};
 use warp_core::features::FeatureFlag;
+#[cfg(not(feature = "omw_local"))]
 use warp_core::ui::icons::Icon;
 use warp_core::{channel::ChannelState, context_flag::ContextFlag};
 use warpui::{
     assets::asset_cache::AssetSource,
-    elements::{Border, Empty, MainAxisAlignment, MainAxisSize},
+    elements::{Border, Empty, MainAxisAlignment},
     id,
     platform::Cursor,
     ui_components::switch::SwitchStateHandle,
 };
+#[cfg(not(feature = "omw_local"))]
+use warpui::elements::MainAxisSize;
 use warpui::{
     elements::{
         Align, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Element, Flex,
@@ -46,11 +50,15 @@ use warpui::{
 use warpui::{
     elements::{CacheOption, Image},
     ui_components::{
-        button::{ButtonVariant, TextAndIcon, TextAndIconAlignment},
+        button::ButtonVariant,
         components::{Coords, UiComponent, UiComponentStyles},
     },
 };
-use warpui::{fonts::Weight, keymap::ContextPredicate};
+#[cfg(not(feature = "omw_local"))]
+use warpui::ui_components::button::{TextAndIcon, TextAndIconAlignment};
+#[cfg(not(feature = "omw_local"))]
+use warpui::fonts::Weight;
+use warpui::keymap::ContextPredicate;
 use warpui::{
     Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
 };
@@ -304,6 +312,7 @@ impl MainSettingsPageView {
 #[derive(Default)]
 struct AccountWidgetStateHandles {
     upgrade_link: MouseStateHandle,
+    #[cfg_attr(feature = "omw_local", allow(dead_code))]
     anonymous_user_sign_up_button: MouseStateHandle,
     enterprise_contact_us_link: MouseStateHandle,
     stripe_billing_portal_link: MouseStateHandle,
@@ -315,6 +324,30 @@ struct AccountWidget {
 }
 
 impl AccountWidget {
+    #[cfg(feature = "omw_local")]
+    fn render_anonymous_account_info(
+        &self,
+        _auth_state: &AuthState,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let text_color = theme.nonactive_ui_text_color().into_solid();
+        Container::new(
+            Text::new(
+                "Standalone build — sign-in is disabled. See the About page for project info.".to_owned(),
+                appearance.ui_font_family(),
+                14.,
+            )
+            .with_color(text_color)
+            .soft_wrap(true)
+            .finish(),
+        )
+        .with_padding_top(16.)
+        .with_padding_bottom(16.)
+        .finish()
+    }
+
+    #[cfg(not(feature = "omw_local"))]
     fn render_anonymous_account_info(
         &self,
         auth_state: &AuthState,
@@ -501,7 +534,7 @@ impl AccountWidget {
                             .ui_builder()
                             .link(
                                 "Contact support".into(),
-                                Some("mailto:support@warp.dev".into()),
+                                Some("mailto:nobody@example.invalid".into()),
                                 None,
                                 self.ui_state_handles.enterprise_contact_us_link.clone(),
                             )
@@ -696,7 +729,7 @@ impl SettingsWidget for SettingsSyncWidget {
         let label_info = AdditionalInfo {
             mouse_state: self.tooltip_state.clone(),
             on_click_action: Some(MainPageAction::OpenUrl(
-                "https://docs.warp.dev/terminal/more-features/settings-sync".into(),
+                "".into(),
             )),
             secondary_text: None,
             tooltip_override_text: None,
@@ -1093,7 +1126,10 @@ impl SettingsWidget for LogoutWidget {
 
 impl SettingsPageMeta for MainSettingsPageView {
     fn section() -> SettingsSection {
-        SettingsSection::Account
+        #[cfg(not(feature = "omw_local"))]
+        return SettingsSection::Account;
+        #[cfg(feature = "omw_local")]
+        SettingsSection::About // placeholder; excluded from nav under omw_local
     }
 
     fn should_render(&self, _ctx: &AppContext) -> bool {

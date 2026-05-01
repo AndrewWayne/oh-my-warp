@@ -72,6 +72,7 @@ use crate::ai::blocklist::block::{DetectedLinksState, RICH_CONTENT_LINK_FIRST_CH
 use crate::ai::blocklist::history_model::BlocklistAIHistoryModel;
 use crate::cloud_object::model::persistence::CloudModel;
 
+#[cfg(not(feature = "omw_local"))]
 use crate::settings_view::SettingsSection;
 use crate::terminal::block_list_element::BlockListMenuSource;
 use crate::terminal::grid_renderer::URL_COLOR;
@@ -81,6 +82,7 @@ use crate::terminal::view::TerminalAction;
 use crate::ui_components::blended_colors;
 use crate::ui_components::icons::Icon;
 use crate::util::link_detection::DetectedLinkType;
+#[cfg(not(feature = "omw_local"))]
 use crate::workspace::WorkspaceAction;
 use itertools::Itertools;
 use warp_core::ui::color::contrast::{
@@ -799,8 +801,9 @@ pub fn render_autonomy_checkbox_setting_speedbump_footer(
                         .link(
                             "Manage AI Autonomy permissions".into(),
                             None,
-                            Some(Box::new(move |ctx| {
-                                ctx.dispatch_typed_action(
+                            Some(Box::new(move |_ctx| {
+                                #[cfg(not(feature = "omw_local"))]
+                                _ctx.dispatch_typed_action(
                                     WorkspaceAction::ShowSettingsPageWithSearch {
                                         search_query: "Autonomy".to_string(),
                                         section: Some(SettingsSection::WarpAgent),

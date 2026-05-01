@@ -175,6 +175,7 @@ use crate::auth::AuthStateProvider;
 use crate::code::editor::view::{CodeEditorEvent, CodeEditorView};
 use crate::notebooks::editor::model::FileLinkResolutionContext;
 use crate::notebooks::editor::view::{EditorViewEvent, RichTextEditorView};
+#[cfg(not(feature = "omw_local"))]
 use crate::settings_view::SettingsSection;
 use crate::terminal::model::session::active_session::{ActiveSession, ActiveSessionEvent};
 use crate::terminal::{ShellLaunchData, TerminalView};
@@ -3628,6 +3629,7 @@ impl AIBlock {
                 ctx.emit(AIBlockEvent::RunAwsLoginCommand);
             }
             AwsBedrockCredentialsErrorEvent::ConfigureLoginCommand => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.dispatch_typed_action(&WorkspaceAction::ShowSettingsPageWithSearch {
                     search_query: "aws bedrock".to_string(),
                     section: Some(SettingsSection::WarpAgent),
@@ -5815,7 +5817,7 @@ impl TypedActionView for AIBlock {
                     .write(ClipboardContent::plain_text(debug_id.clone()));
             }
             AIBlockAction::OpenFeedbackDocs => {
-                ctx.open_url("https://docs.warp.dev/support-and-community/troubleshooting-and-support/sending-us-feedback");
+                ctx.open_url("");
             }
             AIBlockAction::CancelRequestedAction { action_id } => {
                 self.cancel_action(action_id, ctx);
@@ -6254,6 +6256,7 @@ impl TypedActionView for AIBlock {
                 });
             }
             AIBlockAction::ConfigureAwsLoginCommand => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.dispatch_typed_action(&WorkspaceAction::ShowSettingsPageWithSearch {
                     search_query: "aws bedrock".to_string(),
                     section: Some(SettingsSection::WarpAgent),

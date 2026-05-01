@@ -1,3 +1,4 @@
+#[cfg(not(feature = "omw_local"))]
 use self::telemetry::SettingsTelemetryEvent;
 use crate::pane_group::focus_state::PaneFocusHandle;
 use crate::server::telemetry::MCPServerCollectionPaneEntrypoint;
@@ -109,7 +110,7 @@ pub mod update_environment_form;
 mod warp_drive_page;
 mod warpify_page;
 
-#[cfg(not(target_family = "wasm"))]
+#[cfg(all(not(target_family = "wasm"), not(feature = "omw_local")))]
 pub(crate) use ai_page::cli_agent_settings_widget_id;
 pub use billing_and_usage_page::create_discount_badge;
 pub use code_page::CodeSettingsPageView;
@@ -186,30 +187,44 @@ pub enum SettingsViewEvent {
 /// Different navigation sections within the settings view
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum SettingsSection {
+    #[cfg_attr(feature = "omw_local", default)]
     About,
+    #[cfg(not(feature = "omw_local"))]
     #[default]
     Account,
     MCPServers,
+    #[cfg(not(feature = "omw_local"))]
     BillingAndUsage,
     Appearance,
     Features,
     Keybindings,
     Privacy,
+    #[cfg(not(feature = "omw_local"))]
     Referrals,
+    #[cfg(not(feature = "omw_local"))]
     SharedBlocks,
+    #[cfg(not(feature = "omw_local"))]
     Teams,
+    #[cfg(not(feature = "omw_local"))]
     WarpDrive,
+    #[cfg(not(feature = "omw_local"))]
     Warpify,
     /// Internal backing-page identifier for AISettingsPageView. Multiple subpages
     /// (WarpAgent, AgentProfiles, Knowledge, ThirdPartyCLIAgents) share this single
     /// backing page, so this variant is needed as the key in `settings_pages`.
     /// External callers should navigate to a specific subpage (e.g. `WarpAgent`) instead.
+    #[cfg(not(feature = "omw_local"))]
     AI,
     // ── Agents umbrella subpages ──
+    #[cfg(not(feature = "omw_local"))]
     WarpAgent,
+    #[cfg(not(feature = "omw_local"))]
     AgentProfiles,
+    #[cfg(not(feature = "omw_local"))]
     AgentMCPServers,
+    #[cfg(not(feature = "omw_local"))]
     Knowledge,
+    #[cfg(not(feature = "omw_local"))]
     ThirdPartyCLIAgents,
     /// Internal backing-page identifier for CodeSettingsPageView. Multiple subpages
     /// (CodeIndexing, EditorAndCodeReview) share this single backing page,
@@ -220,7 +235,9 @@ pub enum SettingsSection {
     CodeIndexing,
     EditorAndCodeReview,
     // ── Cloud platform umbrella subpages ──
+    #[cfg(not(feature = "omw_local"))]
     CloudEnvironments,
+    #[cfg(not(feature = "omw_local"))]
     OzCloudAPIKeys,
 }
 
@@ -230,19 +247,29 @@ use std::fmt::{self, Display};
 impl Display for SettingsSection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::BillingAndUsage => write!(f, "Billing and usage"),
             SettingsSection::Keybindings => write!(f, "Keyboard shortcuts"),
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::SharedBlocks => write!(f, "Shared blocks"),
             SettingsSection::MCPServers => write!(f, "MCP Servers"),
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::WarpDrive => write!(f, "Warp Drive"),
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::WarpAgent => write!(f, "Warp Agent"),
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::AgentProfiles => write!(f, "Profiles"),
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::AgentMCPServers => write!(f, "MCP servers"),
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::Knowledge => write!(f, "Knowledge"),
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::ThirdPartyCLIAgents => write!(f, "Third party CLI agents"),
             SettingsSection::CodeIndexing => write!(f, "Indexing and projects"),
             SettingsSection::EditorAndCodeReview => write!(f, "Editor and Code Review"),
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::CloudEnvironments => write!(f, "Environments"),
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::OzCloudAPIKeys => write!(f, "Oz Cloud API Keys"),
             _ => write!(f, "{self:?}"),
         }
@@ -252,19 +279,28 @@ impl Display for SettingsSection {
 impl SettingsSection {
     /// Returns true if this section is a subpage under any umbrella.
     pub fn is_subpage(&self) -> bool {
-        self.is_ai_subpage() || self.is_code_subpage() || self.is_cloud_platform_subpage()
+        #[cfg(not(feature = "omw_local"))]
+        if self.is_ai_subpage() || self.is_cloud_platform_subpage() {
+            return true;
+        }
+        self.is_code_subpage()
     }
 
     /// Returns true if this section is a subpage under the "Agents" umbrella.
     pub fn is_ai_subpage(&self) -> bool {
-        matches!(
-            self,
-            Self::WarpAgent
-                | Self::AgentProfiles
-                | Self::AgentMCPServers
-                | Self::Knowledge
-                | Self::ThirdPartyCLIAgents
-        )
+        #[cfg(not(feature = "omw_local"))]
+        {
+            return matches!(
+                self,
+                Self::WarpAgent
+                    | Self::AgentProfiles
+                    | Self::AgentMCPServers
+                    | Self::Knowledge
+                    | Self::ThirdPartyCLIAgents
+            );
+        }
+        #[cfg(feature = "omw_local")]
+        false
     }
 
     /// Returns true if this section is a subpage under the "Code" umbrella.
@@ -274,26 +310,38 @@ impl SettingsSection {
 
     /// Returns true if this section is a subpage under the "Cloud platform" umbrella.
     pub fn is_cloud_platform_subpage(&self) -> bool {
-        matches!(self, Self::CloudEnvironments | Self::OzCloudAPIKeys)
+        #[cfg(not(feature = "omw_local"))]
+        {
+            return matches!(self, Self::CloudEnvironments | Self::OzCloudAPIKeys);
+        }
+        #[cfg(feature = "omw_local")]
+        false
     }
 
     /// Maps subpage sections back to their parent page section for page lookup.
     /// Non-subpage sections return themselves.
     pub fn parent_page_section(&self) -> Self {
-        match self {
-            // AgentMCPServers renders the standalone MCPServers page directly.
-            Self::AgentMCPServers => Self::MCPServers,
-            // All other AI subpages render within the AI page.
-            s if s.is_ai_subpage() => Self::AI,
-            // Code subpages render within the Code page.
-            s if s.is_code_subpage() => Self::Code,
-            // CloudEnvironments and OzCloudAPIKeys ARE their own backing pages
-            // (1:1 mapping), so they return themselves.
-            other => *other,
+        #[cfg(not(feature = "omw_local"))]
+        {
+            match self {
+                // AgentMCPServers renders the standalone MCPServers page directly.
+                Self::AgentMCPServers => return Self::MCPServers,
+                // All other AI subpages render within the AI page.
+                s if s.is_ai_subpage() => return Self::AI,
+                _ => {}
+            }
         }
+        // Code subpages render within the Code page.
+        if self.is_code_subpage() {
+            return Self::Code;
+        }
+        // CloudEnvironments and OzCloudAPIKeys ARE their own backing pages
+        // (1:1 mapping), so they return themselves.
+        *self
     }
 
     /// The ordered list of AI subpage sections shown under the Agents umbrella.
+    #[cfg(not(feature = "omw_local"))]
     pub fn ai_subpages() -> &'static [Self] {
         &[
             Self::WarpAgent,
@@ -304,14 +352,27 @@ impl SettingsSection {
         ]
     }
 
+    /// The ordered list of AI subpage sections shown under the Agents umbrella (omw_local: empty).
+    #[cfg(feature = "omw_local")]
+    pub fn ai_subpages() -> &'static [Self] {
+        &[]
+    }
+
     /// The ordered list of Code subpage sections shown under the Code umbrella.
     pub fn code_subpages() -> &'static [Self] {
         &[Self::CodeIndexing, Self::EditorAndCodeReview]
     }
 
     /// The ordered list of Cloud platform subpage sections.
+    #[cfg(not(feature = "omw_local"))]
     pub fn cloud_platform_subpages() -> &'static [Self] {
         &[Self::CloudEnvironments, Self::OzCloudAPIKeys]
+    }
+
+    /// The ordered list of Cloud platform subpage sections (omw_local: empty).
+    #[cfg(feature = "omw_local")]
+    pub fn cloud_platform_subpages() -> &'static [Self] {
+        &[]
     }
 
     fn is_visible_in_omw_local_mode(&self) -> bool {
@@ -320,7 +381,6 @@ impl SettingsSection {
             Self::Appearance
                 | Self::Features
                 | Self::Keybindings
-                | Self::Warpify
                 | Self::Code
                 | Self::CodeIndexing
                 | Self::EditorAndCodeReview
@@ -335,29 +395,44 @@ impl FromStr for SettingsSection {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "About" => Ok(Self::About),
+            #[cfg(not(feature = "omw_local"))]
             "Account" => Ok(Self::Account),
+            #[cfg(not(feature = "omw_local"))]
             "AI" => Ok(Self::AI),
             "MCP Servers" => Ok(Self::MCPServers),
+            #[cfg(not(feature = "omw_local"))]
             "Billing and usage" => Ok(Self::BillingAndUsage),
             "Appearance" => Ok(Self::Appearance),
             "Code" => Ok(Self::Code),
             "Features" => Ok(Self::Features),
             "Keyboard shortcuts" => Ok(Self::Keybindings),
             "Privacy" => Ok(Self::Privacy),
+            #[cfg(not(feature = "omw_local"))]
             "Referrals" => Ok(Self::Referrals),
+            #[cfg(not(feature = "omw_local"))]
             "Shared blocks" => Ok(Self::SharedBlocks),
+            #[cfg(not(feature = "omw_local"))]
             "Teams" => Ok(Self::Teams),
+            #[cfg(not(feature = "omw_local"))]
             "Warpify" => Ok(Self::Warpify),
+            #[cfg(not(feature = "omw_local"))]
             "WarpDrive" | "Warp Drive" => Ok(Self::WarpDrive),
             // This page was called "Oz" at one point, keep for backward compatibility.
+            #[cfg(not(feature = "omw_local"))]
             "Oz" | "Warp Agent" => Ok(Self::WarpAgent),
+            #[cfg(not(feature = "omw_local"))]
             "Profiles" | "AgentProfiles" => Ok(Self::AgentProfiles),
+            #[cfg(not(feature = "omw_local"))]
             "MCP servers" | "AgentMCPServers" => Ok(Self::AgentMCPServers),
+            #[cfg(not(feature = "omw_local"))]
             "Knowledge" => Ok(Self::Knowledge),
+            #[cfg(not(feature = "omw_local"))]
             "Third party CLI agents" | "ThirdPartyCLIAgents" => Ok(Self::ThirdPartyCLIAgents),
             "Indexing and projects" | "CodeIndexing" => Ok(Self::CodeIndexing),
             "Editor and Code Review" | "EditorAndCodeReview" => Ok(Self::EditorAndCodeReview),
+            #[cfg(not(feature = "omw_local"))]
             "CloudEnvironments" => Ok(Self::CloudEnvironments),
+            #[cfg(not(feature = "omw_local"))]
             "Oz Cloud API Keys" | "OzCloudAPIKeys" => Ok(Self::OzCloudAPIKeys),
             _ => Err(()),
         }
@@ -998,6 +1073,7 @@ pub struct SettingsView {
     clipped_scroll_state: ClippedScrollStateHandle,
     context_menu: ViewHandle<Menu<SettingsAction>>,
     context_menu_state: Option<Vector2F>,
+    #[cfg_attr(feature = "omw_local", allow(dead_code))]
     environments_page_handle: ViewHandle<EnvironmentsPageView>,
     /// Sidebar navigation items (pages + umbrellas).
     nav_items: Vec<SettingsNavItem>,
@@ -1172,23 +1248,33 @@ impl SettingsView {
         });
 
         let mut settings_pages = vec![
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(main_page_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(ai_page_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(billing_and_usage_page_handle),
             SettingsPage::new(code_page_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(teams_page_handle),
             SettingsPage::new(appearance_page_handle),
             SettingsPage::new(features_page_handle),
             SettingsPage::new(keybindings_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(platform_page_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(warpify_page_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(referrals_page_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(show_blocks_view_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(warp_drive_page_handle),
         ];
 
         settings_pages.extend(vec![
             SettingsPage::new(mcp_servers_page_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(environments_page_handle.clone()),
             SettingsPage::new(privacy_page_handle),
             SettingsPage::new(about_page_handle),
@@ -1197,11 +1283,14 @@ impl SettingsView {
         // Build sidebar nav items. AI page is presented as an "Agents" umbrella
         // with subpages; the actual AI SettingsPage is hidden from direct sidebar listing.
         let mut nav_items = vec![
+            #[cfg(not(feature = "omw_local"))]
             SettingsNavItem::Page(SettingsSection::Account),
+            #[cfg(not(feature = "omw_local"))]
             SettingsNavItem::Umbrella(SettingsUmbrella::new(
                 "Agents",
                 SettingsSection::ai_subpages().to_vec(),
             )),
+            #[cfg(not(feature = "omw_local"))]
             SettingsNavItem::Page(SettingsSection::BillingAndUsage),
             SettingsNavItem::Umbrella(SettingsUmbrella::new(
                 "Code",
@@ -1210,6 +1299,7 @@ impl SettingsView {
                     SettingsSection::EditorAndCodeReview,
                 ],
             )),
+            #[cfg(not(feature = "omw_local"))]
             SettingsNavItem::Umbrella(SettingsUmbrella::new(
                 "Cloud platform",
                 vec![
@@ -1217,18 +1307,27 @@ impl SettingsView {
                     SettingsSection::OzCloudAPIKeys,
                 ],
             )),
+            #[cfg(not(feature = "omw_local"))]
             SettingsNavItem::Page(SettingsSection::Teams),
             SettingsNavItem::Page(SettingsSection::Appearance),
             SettingsNavItem::Page(SettingsSection::Features),
             SettingsNavItem::Page(SettingsSection::Keybindings),
+            #[cfg(not(feature = "omw_local"))]
             SettingsNavItem::Page(SettingsSection::Warpify),
+            #[cfg(not(feature = "omw_local"))]
             SettingsNavItem::Page(SettingsSection::Referrals),
+            #[cfg(not(feature = "omw_local"))]
             SettingsNavItem::Page(SettingsSection::SharedBlocks),
+            #[cfg(not(feature = "omw_local"))]
             SettingsNavItem::Page(SettingsSection::WarpDrive),
             SettingsNavItem::Page(SettingsSection::Privacy),
             SettingsNavItem::Page(SettingsSection::About),
         ];
 
+        // Runtime filter is a no-op under omw_local (compile-time cfg already removed
+        // all gated nav items above), but is kept for non-omw_local builds that happen
+        // to run in omw_local runtime mode.
+        #[cfg(not(feature = "omw_local"))]
         if ChannelState::omw_local_mode() {
             nav_items = nav_items
                 .into_iter()
@@ -1249,17 +1348,15 @@ impl SettingsView {
 
         // Resolve the initial page: map internal backing-page sections to their default subpage.
         let initial_page = match page {
+            #[cfg(not(feature = "omw_local"))]
             Some(SettingsSection::AI) => SettingsSection::WarpAgent,
             Some(SettingsSection::Code) => SettingsSection::CodeIndexing,
             Some(section) if section.is_subpage() => section,
-            other => other.unwrap_or_else(|| {
-                if ChannelState::omw_local_mode() {
-                    SettingsSection::Appearance
-                } else {
-                    SettingsSection::default()
-                }
-            }),
+            other => other.unwrap_or(SettingsSection::default()),
         };
+        // Under omw_local, the default variant is About (cfg_attr sets it).
+        // No runtime check needed since gated variants can't be constructed.
+        #[cfg(not(feature = "omw_local"))]
         let initial_page =
             if ChannelState::omw_local_mode() && !initial_page.is_visible_in_omw_local_mode() {
                 SettingsSection::Appearance
@@ -1370,6 +1467,7 @@ impl SettingsView {
                     // widget set and run the filter to get a subpage-specific result.
                     self.subpage_filter.clear();
                     for &subpage_section in SettingsSection::ai_subpages() {
+                        #[cfg(not(feature = "omw_local"))]
                         if subpage_section == SettingsSection::AgentMCPServers {
                             // AgentMCPServers has its own backing page; handled below.
                             continue;
@@ -1436,7 +1534,11 @@ impl SettingsView {
                 // Restore the active subpage after filtering.
                 if is_search_active {
                     let current = self.current_settings_page;
-                    if current.is_ai_subpage() && current != SettingsSection::AgentMCPServers {
+                    #[cfg(not(feature = "omw_local"))]
+                    let is_ai_non_mcp = current.is_ai_subpage() && current != SettingsSection::AgentMCPServers;
+                    #[cfg(feature = "omw_local")]
+                    let is_ai_non_mcp = false;
+                    if is_ai_non_mcp {
                         if let Some(subpage) = AISubpage::from_section(current) {
                             self.ai_page_handle.update(ctx, |view, ctx| {
                                 view.set_active_subpage(Some(subpage), ctx);
@@ -1892,11 +1994,14 @@ impl SettingsView {
     ) {
         // Map internal backing-page sections to their default subpage.
         // External callers should use subpage variants directly.
+        #[cfg_attr(feature = "omw_local", allow(unused_mut))]
         let mut section = match section {
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::AI => SettingsSection::WarpAgent,
             SettingsSection::Code => SettingsSection::CodeIndexing,
             other => other,
         };
+        #[cfg(not(feature = "omw_local"))]
         if ChannelState::omw_local_mode() && !section.is_visible_in_omw_local_mode() {
             section = SettingsSection::Appearance;
         }
@@ -1906,6 +2011,7 @@ impl SettingsView {
         if self.settings_page(page_section).is_none() {
             return;
         }
+        #[cfg_attr(feature = "omw_local", allow(unused_variables))]
         let previous_section = self.current_settings_page;
 
         ctx.enable_key_bindings_dispatching();
@@ -1925,6 +2031,7 @@ impl SettingsView {
             self.clear_search_query(ctx);
         }
         self.current_settings_page = section;
+        #[cfg(not(feature = "omw_local"))]
         if previous_section != section && section == SettingsSection::CloudEnvironments {
             send_telemetry_from_ctx!(SettingsTelemetryEvent::EnvironmentsPageOpened, ctx);
         }
@@ -1933,7 +2040,11 @@ impl SettingsView {
         // and auto-expand the umbrella containing it.
         if section.is_subpage() {
             // AI subpages: update the AI page's subpage mode.
-            if section.is_ai_subpage() && section != SettingsSection::AgentMCPServers {
+            #[cfg(not(feature = "omw_local"))]
+            let is_ai_non_mcp = section.is_ai_subpage() && section != SettingsSection::AgentMCPServers;
+            #[cfg(feature = "omw_local")]
+            let is_ai_non_mcp = false;
+            if is_ai_non_mcp {
                 let subpage = AISubpage::from_section(section);
                 self.ai_page_handle.update(ctx, |view, ctx| {
                     view.set_active_subpage(subpage, ctx);
@@ -2022,12 +2133,18 @@ impl SettingsView {
         email: Option<&String>,
         ctx: &mut ViewContext<Self>,
     ) {
+        #[cfg(not(feature = "omw_local"))]
         if let Some(team_page) = self.settings_page(SettingsSection::Teams) {
             if let SettingsPageViewHandle::Teams(view) = &team_page.view_handle {
                 view.update(ctx, |view, ctx| {
                     view.open_team_members(email, ctx);
                 })
             }
+        }
+        #[cfg(feature = "omw_local")]
+        {
+            let _ = email;
+            let _ = ctx;
         }
     }
 
@@ -2040,7 +2157,10 @@ impl SettingsView {
         ctx: &mut ViewContext<Self>,
     ) {
         // Navigate to the AgentMCPServers subpage (under the Agents umbrella).
+        #[cfg(not(feature = "omw_local"))]
         self.set_and_refresh_current_page(SettingsSection::AgentMCPServers, ctx);
+        #[cfg(feature = "omw_local")]
+        self.set_and_refresh_current_page(SettingsSection::MCPServers, ctx);
         if let Some(mcp_page) = self.settings_page(SettingsSection::MCPServers) {
             if let SettingsPageViewHandle::MCPServers(view) = &mcp_page.view_handle {
                 view.update(ctx, |view, ctx| {
@@ -2530,6 +2650,7 @@ impl View for SettingsView {
         }
 
         // Render environment setup mode selector overlay when open.
+        #[cfg(not(feature = "omw_local"))]
         if let Some(selector_handle) = self
             .environments_page_handle
             .as_ref(app)
@@ -2539,6 +2660,7 @@ impl View for SettingsView {
         }
 
         // Render agent-assisted environment modal overlay when open.
+        #[cfg(not(feature = "omw_local"))]
         if let Some(modal_handle) = self
             .environments_page_handle
             .as_ref(app)
@@ -2577,6 +2699,7 @@ impl TypedActionView for SettingsView {
                 }
             }
             SettingsAction::MainPageToggle(main_page_action) => {
+                #[cfg(not(feature = "omw_local"))]
                 if let Some(main_page) = self.settings_page(SettingsSection::Account) {
                     if let SettingsPageViewHandle::Main(view) = &main_page.view_handle {
                         view.update(ctx, |view, ctx| {
@@ -2584,6 +2707,8 @@ impl TypedActionView for SettingsView {
                         })
                     }
                 }
+                #[cfg(feature = "omw_local")]
+                let _ = main_page_action;
             }
             SettingsAction::AppearancePageToggle(appearance_action) => {
                 if let Some(appearance_page) = self.settings_page(SettingsSection::Appearance) {
@@ -2613,6 +2738,7 @@ impl TypedActionView for SettingsView {
                 }
             }
             SettingsAction::AI(ai_action) => {
+                #[cfg(not(feature = "omw_local"))]
                 if let Some(ai_page) = self.settings_page(SettingsSection::AI) {
                     if let SettingsPageViewHandle::AI(view) = &ai_page.view_handle {
                         view.update(ctx, |view, ctx| {
@@ -2620,6 +2746,8 @@ impl TypedActionView for SettingsView {
                         })
                     }
                 }
+                #[cfg(feature = "omw_local")]
+                let _ = ai_action;
             }
             SettingsAction::Code(code_action) => {
                 if let Some(code_page) = self.settings_page(SettingsSection::Code) {
@@ -2631,6 +2759,7 @@ impl TypedActionView for SettingsView {
                 }
             }
             SettingsAction::WarpDrive(warp_drive_action) => {
+                #[cfg(not(feature = "omw_local"))]
                 if let Some(warp_drive_page) = self.settings_page(SettingsSection::WarpDrive) {
                     if let SettingsPageViewHandle::WarpDrive(view) = &warp_drive_page.view_handle {
                         view.update(ctx, |view, ctx| {
@@ -2638,8 +2767,11 @@ impl TypedActionView for SettingsView {
                         })
                     }
                 }
+                #[cfg(feature = "omw_local")]
+                let _ = warp_drive_action;
             }
             SettingsAction::WarpifyPageToggle(warpify_action) => {
+                #[cfg(not(feature = "omw_local"))]
                 if let Some(warpify_page) = self.settings_page(SettingsSection::Warpify) {
                     if let SettingsPageViewHandle::Warpify(view) = &warpify_page.view_handle {
                         view.update(ctx, |view, ctx| {
@@ -2647,6 +2779,8 @@ impl TypedActionView for SettingsView {
                         })
                     }
                 }
+                #[cfg(feature = "omw_local")]
+                let _ = warpify_action;
             }
             SettingsAction::Tab => self.input_tab(ctx),
             SettingsAction::Split(direction) => {

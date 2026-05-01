@@ -6,10 +6,9 @@ use warpui::elements::{
     Container, CornerRadius, CrossAxisAlignment, Flex, Icon, MainAxisAlignment, MainAxisSize,
     MouseStateHandle, ParentElement, Radius, Shrinkable, Text,
 };
-use warpui::ui_components::{
-    button::ButtonVariant,
-    components::{Coords, UiComponent, UiComponentStyles},
-};
+#[cfg(not(feature = "omw_local"))]
+use warpui::ui_components::button::ButtonVariant;
+use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::Element;
 
 use super::{
@@ -17,10 +16,21 @@ use super::{
     INLINE_BANNER_MARGIN_BETWEEN_BUTTONS, INLINE_BANNER_RIGHT_MARGIN,
 };
 
+#[cfg(not(feature = "omw_local"))]
 const TITLE: &str = "Login for AI";
+#[cfg(not(feature = "omw_local"))]
 const CONTENT: &str =
     "AI features are unavailable for logged-out users. Create an account to use AI.";
+#[cfg(not(feature = "omw_local"))]
 const SIGN_UP_BUTTON_TEXT: &str = "Sign Up";
+
+#[cfg(feature = "omw_local")]
+const TITLE: &str = "Welcome to omw (oh-my-warp)";
+#[cfg(feature = "omw_local")]
+const CONTENT: &str =
+    "Project built on the open source warp terminal. AI is disabled in this build.";
+#[cfg(feature = "omw_local")]
+const SIGN_UP_BUTTON_TEXT: &str = "";
 
 // Layout constants for three-column banner
 const ICON_SIZE_OFFSET: f32 = 3.0;
@@ -66,6 +76,7 @@ impl AnonymousUserAISignUpBannerState {
 /// - Column 1: Icon
 /// - Column 2: Text column (Title row + Content row)
 /// - Column 3: Buttons (Sign Up + Close)
+#[cfg_attr(feature = "omw_local", allow(unused))]
 fn render_three_column_inline_banner(
     appearance: &Appearance,
     title: &str,
@@ -175,44 +186,47 @@ fn render_three_column_inline_banner(
     main_row.add_child(Shrinkable::new(1.0, left_section.finish()).finish());
     let mut buttons_column = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
 
-    // Sign Up Button
-    let button_styles = UiComponentStyles {
-        font_color: Some(active_text_color),
-        font_size: Some(button_text_size),
-        font_weight: Some(warpui::fonts::Weight::Semibold),
-        border_color: Some(warpui::elements::Fill::Solid(content_text_color)),
-        border_width: Some(1.0),
-        border_radius: Some(CornerRadius::with_all(Radius::Pixels(
-            INLINE_BANNER_BUTTON_PADDING,
-        ))),
-        ..Default::default()
-    };
+    #[cfg(not(feature = "omw_local"))]
+    {
+        // Sign Up Button
+        let button_styles = UiComponentStyles {
+            font_color: Some(active_text_color),
+            font_size: Some(button_text_size),
+            font_weight: Some(warpui::fonts::Weight::Semibold),
+            border_color: Some(warpui::elements::Fill::Solid(content_text_color)),
+            border_width: Some(1.0),
+            border_radius: Some(CornerRadius::with_all(Radius::Pixels(
+                INLINE_BANNER_BUTTON_PADDING,
+            ))),
+            ..Default::default()
+        };
 
-    let button_on_click_event =
-        TerminalAction::AnonymousUserAISignUpBanner(AnonymousUserLoginBannerAction::SignUp);
-    let button = appearance
-        .ui_builder()
-        .button_with_custom_styles(
-            ButtonVariant::Text,
-            button_mouse_state,
-            default_button_styles,
-            Some(hovered_and_clicked_styles),
-            Some(hovered_and_clicked_styles),
-            Some(hovered_and_clicked_styles),
-        )
-        .with_text_label(button_text.to_string())
-        .with_style(button_styles)
-        .build()
-        .on_click(move |ctx, _, _| {
-            ctx.dispatch_typed_action(button_on_click_event.clone());
-        })
-        .finish();
+        let button_on_click_event =
+            TerminalAction::AnonymousUserAISignUpBanner(AnonymousUserLoginBannerAction::SignUp);
+        let button = appearance
+            .ui_builder()
+            .button_with_custom_styles(
+                ButtonVariant::Text,
+                button_mouse_state,
+                default_button_styles,
+                Some(hovered_and_clicked_styles),
+                Some(hovered_and_clicked_styles),
+                Some(hovered_and_clicked_styles),
+            )
+            .with_text_label(button_text.to_string())
+            .with_style(button_styles)
+            .build()
+            .on_click(move |ctx, _, _| {
+                ctx.dispatch_typed_action(button_on_click_event.clone());
+            })
+            .finish();
 
-    buttons_column.add_child(
-        Container::new(button)
-            .with_margin_left(INLINE_BANNER_MARGIN_BETWEEN_BUTTONS)
-            .finish(),
-    );
+        buttons_column.add_child(
+            Container::new(button)
+                .with_margin_left(INLINE_BANNER_MARGIN_BETWEEN_BUTTONS)
+                .finish(),
+        );
+    }
 
     // Close button
     let close_button_on_click_event =

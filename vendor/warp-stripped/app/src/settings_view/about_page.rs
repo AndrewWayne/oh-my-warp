@@ -6,17 +6,22 @@ use super::{
     SettingsSection,
 };
 use crate::{
-    appearance::Appearance, channel::ChannelState, themes::theme::ColorScheme,
-    workspace::WorkspaceAction,
+    appearance::Appearance, channel::ChannelState, workspace::WorkspaceAction,
 };
+#[cfg(not(feature = "omw_local"))]
+use crate::themes::theme::ColorScheme;
 use warpui::{
-    assets::asset_cache::AssetSource,
     elements::{
-        Align, CacheOption, ConstrainedBox, Container, CrossAxisAlignment, Element, Flex, Image,
-        MainAxisAlignment, MouseStateHandle, ParentElement, Wrap,
+        Align, ConstrainedBox, Container, CrossAxisAlignment, Element, Flex, MainAxisAlignment,
+        MouseStateHandle, ParentElement, Wrap,
     },
     ui_components::components::UiComponent,
     AppContext, Entity, View, ViewContext, ViewHandle,
+};
+#[cfg(not(feature = "omw_local"))]
+use warpui::{
+    assets::asset_cache::AssetSource,
+    elements::{CacheOption, Image},
 };
 
 #[cfg(feature = "omw_local")]
@@ -188,26 +193,9 @@ impl SettingsWidget for AboutPageWidget {
         let theme = appearance.theme();
         let ui_builder = appearance.ui_builder();
 
-        let image_path = if theme.inferred_color_scheme() == ColorScheme::LightOnDark {
-            "bundled/svg/warp-logo-with-light-title.svg"
-        } else {
-            "bundled/svg/warp-logo-with-dark-title.svg"
-        };
-
         let version = ChannelState::app_version().unwrap_or("v#.##.###");
         let active_color = theme.active_ui_text_color().into_solid();
         let muted_color = theme.nonactive_ui_text_color().into_solid();
-
-        let logo = ConstrainedBox::new(
-            Image::new(
-                AssetSource::Bundled { path: image_path },
-                CacheOption::BySize,
-            )
-            .finish(),
-        )
-        .with_max_height(100.)
-        .with_max_width(350.)
-        .finish();
 
         let version_text = ui_builder
             .span(version.to_string())
@@ -362,7 +350,6 @@ impl SettingsWidget for AboutPageWidget {
         Align::new(
             Flex::column()
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_child(logo)
                 .with_child(version_row.finish())
                 .with_child(app_name)
                 .with_child(description)

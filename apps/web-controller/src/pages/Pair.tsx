@@ -176,7 +176,15 @@ export default function Pair() {
         pairedAt: new Date().toISOString(),
         capabilities: result.capabilities,
       });
-      navigate("/");
+      // Go straight to a terminal. omw-remote spawns a shell on first WS
+      // connect for an unknown session id, so "main" is fine as a stable
+      // identifier — reconnects from the same device land on the same
+      // session as long as the daemon keeps it. Without this jump, the
+      // /pair flow would land on Home, which is a stub with just a
+      // "Pair a host" link → users would think nothing happened.
+      navigate(
+        `/terminal/${encodeURIComponent(result.hostId)}/main`,
+      );
     } catch (e) {
       if (e instanceof PairError) {
         setErrorMsg(friendlyError(e.code));

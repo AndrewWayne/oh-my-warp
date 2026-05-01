@@ -65,6 +65,7 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 - [x] Maintain Warp source in-tree at `vendor/warp-stripped/` (initial tree added 2026-04-30)
 - [x] Add `omw_local` Cargo feature (initial scaffolding pre-existing; expanded 2026-05-01 to gate AI/cloud UI surfaces and exclude cloud-only crates from the binary)
 - [x] **Cloud-strip cascade** — `--no-default-features --features omw_local` compiles cleanly; `audit-no-cloud.sh` reports zero hits on all six patterns. Default cloud build still passes. Plan: [`specs/cloud-strip-plan.md`](./specs/cloud-strip-plan.md). Completed 2026-05-01 in ~5 hours rather than the projected 4 days — see commit `aadae83`. The cloud crates were misclassified as needing source-level removal; in fact they are pure-types/local-utility crates with no forbidden strings.
+- [x] **Mac preview release scaffolding** — umbrella-level `scripts/build-mac-dmg.sh` produces `omw-warp-oss-v<version>-aarch64-apple-darwin.dmg` from the audit-clean `omw_local` build. First tag: `omw-local-preview-v0.0.1` (2026-05-01). Naming conventions documented in [CLAUDE.md §5.1](./CLAUDE.md#51-release-naming-conventions-omw_local-previews). Does not modify `vendor/warp-stripped/`.
 - [ ] Branding: rename binary to `omw`, swap icon, change palette (no "Warp" wordmark anywhere)
 - [ ] `omw-server` (axum): identity, providers, agent sessions, settings endpoints
 - [ ] `omw-server`: single audit-writer endpoint (`POST /api/v1/audit/append`)

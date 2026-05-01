@@ -14,6 +14,7 @@ pub mod auth;
 pub mod capability;
 pub mod db;
 pub mod host_key;
+pub mod http;
 pub mod pairing;
 pub mod replay;
 pub mod request_log;

@@ -1,15 +1,15 @@
 //! WS PTY handler — `GET /ws/v1/pty/:session_id`.
 //!
-//! On accepted handshake (signed-request auth + origin check), spawns a
-//! shell PTY and bridges it to the WebSocket using the `Frame` envelope
-//! defined in §7.2.
+//! On accepted handshake (signed-request auth + origin check), looks up the
+//! session in the shared `omw_server::SessionRegistry` and bridges its PTY to
+//! the WebSocket using the `Frame` envelope defined in §7.2.
 //!
-//! - Inbound `Frame { kind: Input, payload: bytes }` -> PTY stdin.
-//! - PTY output bytes are wrapped as `Frame { kind: Output, payload: bytes }`,
-//!   signed with the host pairing key, and sent.
+//! - Inbound `Frame { kind: Input, payload: bytes }` -> `registry.write_input`.
+//! - PTY output bytes (from the session's broadcast channel) -> signed
+//!   `Frame { kind: Output, ... }`.
 //! - `Frame { kind: Ping }` -> server replies with signed `Pong`.
 //! - 60 s of inbound silence (configurable via `ServerConfig::inactivity_timeout`)
-//!   -> server closes WS with code 4401.
+//!   -> server closes WS with code 4408.
 
 use std::ffi::OsString;
 use std::sync::atomic::AtomicU64;
@@ -21,20 +21,16 @@ use axum::response::IntoResponse;
 use bytes::Bytes;
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
+use uuid::Uuid;
 
 use crate::capability::CapabilityToken;
 use crate::server::AppState;
 use crate::ws::auth::WsSessionAuth;
 use crate::ws::frame::{Frame, FrameKind};
-use omw_pty::{Pty, PtyCommand};
 
-/// How to spawn the shell child for a WS PTY session.
-///
-/// Cross-platform shell selection lives here so tests can pin a deterministic
-/// child (e.g. `printf`-only loops) without going through whatever the host's
-/// default shell happens to be.
+/// How to spawn the shell child for a PTY session.
 #[derive(Clone, Debug)]
 pub struct ShellSpec {
     pub program: OsString,
@@ -62,43 +58,20 @@ impl ShellSpec {
     }
 }
 
-/// `GET /ws/v1/pty/:session_id` handler. Performs the §7.1 handshake checks,
-/// then on success delegates to `handle_socket` which runs the bridge loop.
-///
-/// Note: the live route in [`crate::server::make_router`] performs the §7.1
-/// signed-request + origin checks and then calls [`handle_authed_socket`]
-/// directly. This thin wrapper exists for the public re-export path; it
-/// rejects with 500 because authentication context isn't available without
-/// the full router state.
+/// Public re-export shim — see [`crate::server::make_router`] for the live route.
 pub async fn ws_handler(_ws: WebSocketUpgrade) -> impl IntoResponse {
     axum::http::StatusCode::INTERNAL_SERVER_ERROR
 }
 
-/// Bridge a fully-authenticated WS socket to a freshly spawned shell PTY.
-///
-/// Visible only within the crate; called from `server::ws_handler` after
-/// the §7.1 + §8.2 handshake checks pass.
+/// Bridge a fully-authenticated WS socket to a registered PTY session.
 pub(crate) async fn handle_authed_socket(
     socket: WebSocket,
     state: AppState,
     capability: CapabilityToken,
     device_id: String,
+    session_id: Uuid,
+    mut pty_rx: broadcast::Receiver<Bytes>,
 ) {
-    // Spawn a shell PTY for this session.
-    let mut cmd = PtyCommand::new(state.shell.program.clone());
-    cmd = cmd.args(state.shell.args.clone());
-    let mut pty = match Pty::spawn(cmd).await {
-        Ok(p) => p,
-        Err(_) => {
-            // Couldn't spawn the shell; close with auth_failed-shaped code so
-            // the client sees a clean shutdown.
-            let _ = close_socket(socket, 4500, "pty_spawn_failed").await;
-            return;
-        }
-    };
-    let mut pty_reader = pty.reader().expect("reader available");
-    let mut pty_writer = pty.writer().expect("writer available");
-
     let auth = Arc::new(WsSessionAuth {
         last_inbound_seq: AtomicU64::new(u64::MAX),
         device_id,
@@ -109,13 +82,12 @@ pub(crate) async fn handle_authed_socket(
     });
 
     let host_key = state.host_key.clone();
+    let registry = state.pty_registry.clone();
     let inactivity_timeout = state.inactivity_timeout;
 
     let (mut ws_sink, mut ws_stream) = socket.split();
 
-    // Channel from outbound producers (PTY reader, ping responder, inbound
-    // task on close) to the WS sink. Lets us serialize all writes through a
-    // single task, which simplifies sequencing and close-frame handling.
+    // Channel from outbound producers to the WS sink.
     enum Outbound {
         Frame(Frame),
         Close(u16, String),
@@ -157,27 +129,26 @@ pub(crate) async fn handle_authed_socket(
         }
     });
 
-    // ---- PTY -> outbound task ----
+    // ---- Registry-broadcast -> outbound task ----
     let reader_tx = out_tx.clone();
     let mut pty_to_ws = tokio::spawn(async move {
-        let mut buf = vec![0u8; 4096];
         loop {
-            match pty_reader.read(&mut buf).await {
-                Ok(0) => break, // EOF
-                Ok(n) => {
+            match pty_rx.recv().await {
+                Ok(chunk) => {
                     let frame = Frame {
                         v: 1,
-                        seq: 0, // assigned by writer task
+                        seq: 0,
                         ts: Utc::now(),
                         kind: FrameKind::Output,
-                        payload: Bytes::copy_from_slice(&buf[..n]),
+                        payload: chunk,
                         sig: [0u8; 64],
                     };
                     if reader_tx.send(Outbound::Frame(frame)).is_err() {
                         break;
                     }
                 }
-                Err(_) => break,
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     });
@@ -186,6 +157,7 @@ pub(crate) async fn handle_authed_socket(
     let inbound_tx = out_tx.clone();
     let inbound_auth = auth.clone();
     let inbound_last = last_inbound.clone();
+    let inbound_registry = registry.clone();
     let mut inbound_task = tokio::spawn(async move {
         while let Some(msg) = ws_stream.next().await {
             let msg = match msg {
@@ -209,7 +181,11 @@ pub(crate) async fn handle_authed_socket(
                     }
                     match frame.kind {
                         FrameKind::Input => {
-                            if pty_writer.write_all(&frame.payload).await.is_err() {
+                            if inbound_registry
+                                .write_input(session_id, &frame.payload)
+                                .await
+                                .is_err()
+                            {
                                 let _ = inbound_tx.send(Outbound::Close(4500, "pty_io".into()));
                                 return;
                             }
@@ -225,22 +201,15 @@ pub(crate) async fn handle_authed_socket(
                             };
                             let _ = inbound_tx.send(Outbound::Frame(pong));
                         }
-                        FrameKind::Pong | FrameKind::Output | FrameKind::Control => {
-                            // Pong/control acceptable; output from device is
-                            // not expected but also not a hard error.
-                        }
+                        FrameKind::Pong | FrameKind::Output | FrameKind::Control => {}
                     }
                 }
                 Message::Binary(_) => {
-                    // Spec only specifies text-JSON envelopes. Reject.
                     let _ = inbound_tx.send(Outbound::Close(4400, "binary_unsupported".into()));
                     return;
                 }
                 Message::Close(_) => break,
-                Message::Ping(_) | Message::Pong(_) => {
-                    // Transport-level pings; not part of the §7.5 signed
-                    // heartbeat. Axum auto-replies to pings.
-                }
+                Message::Ping(_) | Message::Pong(_) => {}
             }
         }
     });
@@ -260,12 +229,8 @@ pub(crate) async fn handle_authed_socket(
         }
     });
 
-    // Drop our local sender clone so the writer task exits when all producers
-    // close.
     drop(out_tx);
 
-    // Wait for any branch to finish, then tear down the rest. The PTY drop
-    // will kill the child shell.
     tokio::select! {
         _ = &mut inbound_task => {
             pty_to_ws.abort();
@@ -288,25 +253,9 @@ pub(crate) async fn handle_authed_socket(
             inactivity_task.abort();
         }
     }
-
-    // Ensure the PTY is killed even if read/write loops exited cleanly.
-    let _ = pty.kill();
 }
 
-async fn close_socket(socket: WebSocket, code: u16, reason: &str) -> Result<(), ()> {
-    let (mut sink, _stream) = socket.split();
-    let close = CloseFrame {
-        code,
-        reason: reason.to_string().into(),
-    };
-    let _ = sink.send(Message::Close(Some(close))).await;
-    let _ = sink.close().await;
-    Ok(())
-}
-
-/// Tiny atomic-Instant shim. `std::sync::atomic` doesn't carry `Instant`
-/// directly; we use a `Mutex<Instant>` here because PartialOrd matters and
-/// the contention is one writer + one reader per session.
+/// Tiny atomic-Instant shim.
 mod parking_lot_like {
     use std::sync::Mutex;
     use tokio::time::Instant;

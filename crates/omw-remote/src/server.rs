@@ -1,6 +1,12 @@
-//! HTTP/WS server skeleton for `omw-remote`. Phase E exposes only the
-//! `/ws/v1/pty/:session_id` route; pair-redeem and others land in later
-//! phases.
+//! HTTP/WS server for `omw-remote`.
+//!
+//! Routes:
+//! - `GET  /api/v1/host-info`           — unauthenticated discovery (host pubkey).
+//! - `POST /api/v1/pair/redeem`         — unauthenticated pair-redeem (rate-limited).
+//! - `GET  /api/v1/sessions`            — signed (PtyRead): list sessions.
+//! - `POST /api/v1/sessions`            — signed (PtyWrite): spawn a new shell PTY.
+//! - `DELETE /api/v1/sessions/:id`      — signed (PtyWrite): kill a session.
+//! - `GET  /ws/v1/pty/:session_id`      — signed WS upgrade (PtyWrite).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -9,14 +15,16 @@ use std::time::Duration;
 use axum::extract::{Path, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{delete, get, post};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use chrono::Utc;
+use uuid::Uuid;
 
 use crate::auth::{AuthError, CanonicalRequest, Verifier};
 use crate::capability::Capability;
 use crate::host_key::HostKey;
+use crate::http;
 use crate::pairing::Pairings;
 use crate::replay::NonceStore;
 use crate::revocations::RevocationList;
@@ -38,15 +46,18 @@ pub struct ServerConfig {
     pub inactivity_timeout: Duration,
     /// Shared revocation set; checked per-frame (§7.3 step 4).
     pub revocations: Arc<RevocationList>,
-    /// Shared nonce store for handshake replay defense (the WS upgrade is a
-    /// signed request just like an HTTP request — see §7.1).
+    /// Shared nonce store for handshake replay defense.
     pub nonce_store: Arc<NonceStore>,
-    /// Pairings registry used by future pair-redeem route. Phase E doesn't
-    /// route to it yet, but the server config carries it so test setup can
-    /// keep one shared instance across tests.
+    /// Pairings registry — required for the `/api/v1/pair/redeem` route.
+    /// `None` disables that route.
     pub pairings: Option<Arc<Pairings>>,
-    /// Shell spec for newly-spawned WS PTY sessions.
+    /// Default shell spec for newly-spawned PTY sessions (HTTP-created).
     pub shell: ShellSpec,
+    /// Live PTY-session registry. WS attach + HTTP CRUD share this.
+    pub pty_registry: Arc<omw_server::SessionRegistry>,
+    /// Friendly host id surfaced in `/api/v1/host-info` and pair-redeem
+    /// responses. Defaults to `"omw-host"` if the embedder doesn't override.
+    pub host_id: String,
 }
 
 /// Internal shared state passed to axum handlers. Cloning is cheap; all
@@ -60,17 +71,18 @@ pub(crate) struct AppState {
     pub revocations: Arc<RevocationList>,
     pub nonce_store: Arc<NonceStore>,
     pub shell: ShellSpec,
+    pub pty_registry: Arc<omw_server::SessionRegistry>,
+    pub pairings: Option<Arc<Pairings>>,
+    pub host_id: String,
 }
 
-/// Run the server forever. Equivalent to `axum::serve(listener, make_router(config))`.
+/// Run the server forever.
 pub async fn serve(config: ServerConfig) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     axum::serve(listener, make_router(config).into_make_service()).await
 }
 
-/// Build the axum router. Exposed separately from [`serve`] so tests can
-/// drive the router via `tower::ServiceExt::oneshot` or by binding to
-/// `127.0.0.1:0` themselves.
+/// Build the axum router.
 pub fn make_router(config: ServerConfig) -> axum::Router {
     let host_pubkey = config.host_key.pubkey();
     let state = AppState {
@@ -81,14 +93,24 @@ pub fn make_router(config: ServerConfig) -> axum::Router {
         revocations: config.revocations,
         nonce_store: config.nonce_store,
         shell: config.shell,
+        pty_registry: config.pty_registry,
+        pairings: config.pairings,
+        host_id: config.host_id,
     };
     axum::Router::new()
+        .route("/api/v1/host-info", get(http::host_info::handler))
+        .route("/api/v1/pair/redeem", post(http::pair_redeem::handler))
+        .route(
+            "/api/v1/sessions",
+            post(http::sessions::create).get(http::sessions::list),
+        )
+        .route("/api/v1/sessions/:id", delete(http::sessions::delete))
         .route("/ws/v1/pty/:session_id", get(ws_handler))
         .with_state(state)
 }
 
 /// `GET /ws/v1/pty/:session_id` handler. Performs the §7.1 handshake checks,
-/// then on success delegates to the per-socket bridge loop.
+/// then on success looks up the session in the registry and bridges it.
 async fn ws_handler(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -134,10 +156,7 @@ async fn ws_handler(
     sig.copy_from_slice(&sig_bytes);
 
     // 3. Reconstruct canonical request from path + headers.
-    //    Body is empty for the WS upgrade; SHA256("") is a known constant.
     let body_sha256 = sha256_empty();
-    // We need the device_id for the canonical request, but we only learn it
-    // by parsing the capability token. Parse first.
     let cap_token = match crate::capability::CapabilityToken::from_base64url(cap_b64) {
         Ok(t) => t,
         Err(_) => return (StatusCode::UNAUTHORIZED, "capability_invalid").into_response(),
@@ -172,16 +191,33 @@ async fn ws_handler(
         }
     };
 
-    // Per-frame revocation: check at handshake too, even though we'll re-check on every frame.
     if state.revocations.is_revoked(&device_id) {
         return (StatusCode::UNAUTHORIZED, "device_revoked").into_response();
     }
 
-    // 4. All checks passed — accept upgrade and hand off to the bridge loop.
+    // 4. Look up the session in the registry. If session_id is not a UUID or
+    //    not registered, reject the upgrade with 404.
+    let session_uuid = match Uuid::parse_str(&session_id) {
+        Ok(u) => u,
+        Err(_) => return (StatusCode::NOT_FOUND, "session_not_found").into_response(),
+    };
+    let output_rx = match state.pty_registry.subscribe(session_uuid) {
+        Some(rx) => rx,
+        None => return (StatusCode::NOT_FOUND, "session_not_found").into_response(),
+    };
+
+    // 5. Accept upgrade.
     let cap_for_session = cap_token.clone();
     let device_id_for_session = device_id.clone();
     ws.on_upgrade(move |socket| {
-        handle_authed_socket(socket, state, cap_for_session, device_id_for_session)
+        handle_authed_socket(
+            socket,
+            state,
+            cap_for_session,
+            device_id_for_session,
+            session_uuid,
+            output_rx,
+        )
     })
 }
 

@@ -3,14 +3,14 @@
 //! Exposes a fixture that:
 //! - generates a host pairing key + a deterministic device key,
 //! - mints a capability token with `pty:read + pty:write`,
-//! - builds a `ServerConfig` with an in-memory revocation list and nonce store,
+//! - builds a `ServerConfig` with an in-memory revocation list, nonce store,
+//!   and a freshly-spawned echo session in the shared registry,
 //! - binds the omw-remote router on `127.0.0.1:0` and returns the address,
 //! - provides helpers to build signed WS handshake headers and frames.
-//!
-//! Tests stay tight by reusing this module via `#[path = "ws_common/mod.rs"]`.
 
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,11 +20,11 @@ use omw_remote::{
     make_router, CanonicalRequest, Capability, CapabilityToken, HostKey, NonceStore,
     RevocationList, ServerConfig, ShellSpec, Signer,
 };
+use omw_server::{SessionRegistry, SessionSpec};
 use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
 
-/// Test fixture spun up per test. Keep all the long-lived bits alive here so
-/// the bound server doesn't get GC'd mid-test.
+/// Test fixture spun up per test.
 pub struct WsFixture {
     pub addr: std::net::SocketAddr,
     pub host: Arc<HostKey>,
@@ -36,7 +36,9 @@ pub struct WsFixture {
     pub nonce_store: Arc<NonceStore>,
     pub revocations: Arc<RevocationList>,
     pub pinned_origin: String,
+    /// Registered session id (UUID string) — pre-spawned by `spawn_server`.
     pub session_id: String,
+    pub registry: Arc<SessionRegistry>,
 }
 
 pub fn hex_lower(bytes: &[u8]) -> String {
@@ -65,14 +67,11 @@ pub fn body_hash(body: &[u8]) -> [u8; 32] {
 /// PTY-session tests don't depend on whatever the host's `$SHELL` does.
 pub fn echo_shell() -> ShellSpec {
     if cfg!(windows) {
-        let script = "while ($true) { $line = Read-Host; if ($null -eq $line) { break }; Write-Host $line }";
+        let script =
+            "while ($true) { $line = Read-Host; if ($null -eq $line) { break }; Write-Host $line }";
         ShellSpec {
             program: "powershell".into(),
-            args: vec![
-                "-NoProfile".into(),
-                "-Command".into(),
-                script.into(),
-            ],
+            args: vec!["-NoProfile".into(), "-Command".into(), script.into()],
         }
     } else {
         ShellSpec {
@@ -86,14 +85,32 @@ pub fn echo_shell() -> ShellSpec {
     }
 }
 
+/// Convert a [`ShellSpec`] (OsString) to the registry's [`SessionSpec`]
+/// (String). Lossy on non-UTF-8 OS strings — fine for tests.
+pub fn shell_to_session_spec(name: &str, shell: &ShellSpec) -> SessionSpec {
+    SessionSpec {
+        name: name.to_string(),
+        command: shell.program.to_string_lossy().into_owned(),
+        args: shell
+            .args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect(),
+        cwd: None,
+        env: Some(HashMap::new()),
+        cols: None,
+        rows: None,
+    }
+}
+
 /// Bind the omw-remote router on `127.0.0.1:0` with default config; return
-/// fixture state.
+/// fixture state. Pre-registers one echo session whose id is exposed as
+/// `WsFixture::session_id`.
 pub async fn spawn_server() -> WsFixture {
     spawn_server_with_inactivity(Duration::from_secs(60)).await
 }
 
-/// Like `spawn_server`, but with a custom inactivity timeout. Tests use a
-/// short value (e.g. 2 s) for the inactivity-close test.
+/// Like `spawn_server`, but with a custom inactivity timeout.
 pub async fn spawn_server_with_inactivity(inactivity_timeout: Duration) -> WsFixture {
     let host = HostKey::generate();
     let host_pubkey = host.pubkey();
@@ -115,7 +132,16 @@ pub async fn spawn_server_with_inactivity(inactivity_timeout: Duration) -> WsFix
     let nonce_store = NonceStore::new(Duration::from_secs(60));
     let revocations = RevocationList::new();
     let pinned_origin = "https://omw.test".to_string();
-    let session_id = "test-session-001".to_string();
+
+    let shell = echo_shell();
+
+    let registry = SessionRegistry::new();
+    // Pre-register an echo session so tests can WS-attach.
+    let session_uuid = registry
+        .register(shell_to_session_spec("default", &shell))
+        .await
+        .expect("register echo session");
+    let session_id = session_uuid.to_string();
 
     let cfg = ServerConfig {
         bind: "127.0.0.1:0".parse().unwrap(),
@@ -125,7 +151,9 @@ pub async fn spawn_server_with_inactivity(inactivity_timeout: Duration) -> WsFix
         revocations: revocations.clone(),
         nonce_store: nonce_store.clone(),
         pairings: None,
-        shell: echo_shell(),
+        shell,
+        pty_registry: registry.clone(),
+        host_id: "omw-host".to_string(),
     };
 
     let router = make_router(cfg);
@@ -150,6 +178,7 @@ pub async fn spawn_server_with_inactivity(inactivity_timeout: Duration) -> WsFix
         revocations,
         pinned_origin,
         session_id,
+        registry,
     }
 }
 
@@ -166,7 +195,6 @@ pub fn build_handshake_canonical(
         query: String::new(),
         ts: now.to_rfc3339(),
         nonce: nonce.into(),
-        // The handshake has no body (Upgrade); SHA-256 of empty is a known constant.
         body_sha256: body_hash(b""),
         device_id: f.device_id.clone(),
         protocol_version: 1,
@@ -176,5 +204,8 @@ pub fn build_handshake_canonical(
 /// Sign a canonical request with the fixture's device key.
 pub fn sign_canonical(f: &WsFixture, req: &CanonicalRequest) -> [u8; 64] {
     let priv_seed = f.device.to_bytes();
-    Signer { device_priv: &priv_seed }.sign(req)
+    Signer {
+        device_priv: &priv_seed,
+    }
+    .sign(req)
 }

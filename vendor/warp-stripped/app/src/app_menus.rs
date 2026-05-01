@@ -18,6 +18,7 @@ use crate::terminal::settings::{SpacingMode, TerminalSettings};
 use crate::undo_close::UndoCloseStack;
 use crate::user_config::WarpConfig;
 use crate::util::bindings::{self, trigger_to_keystroke, CustomAction};
+#[cfg_attr(feature = "omw_local", allow(unused_imports))]
 use crate::util::links;
 use crate::workspace::sync_inputs::SyncedInputState;
 use crate::report_if_error;
@@ -976,20 +977,25 @@ fn feedback_menu_item() -> MenuItem {
 }
 
 fn make_new_help_menu() -> Menu {
-    #[cfg_attr(feature = "omw_local", allow(unused_mut))]
-    let mut items = vec![
-        link_menu_item("Warp Documentation...", links::USER_DOCS_URL.into()),
-        link_menu_item("GitHub Issues...", links::GITHUB_ISSUES_URL.into()),
+    #[cfg(feature = "omw_local")]
+    let items = vec![
+        link_menu_item(
+            "Project on GitHub...",
+            "https://github.com/AndrewWayne/oh-my-warp".into(),
+        ),
+        link_menu_item(
+            "Report an Issue...",
+            "https://github.com/AndrewWayne/oh-my-warp/issues".into(),
+        ),
     ];
 
     #[cfg(not(feature = "omw_local"))]
-    {
-        items.insert(0, feedback_menu_item());
-        items.push(link_menu_item(
-            "Warp Slack Community...",
-            links::SLACK_URL.into(),
-        ));
-    }
+    let items = vec![
+        feedback_menu_item(),
+        link_menu_item("Warp Documentation...", links::USER_DOCS_URL.into()),
+        link_menu_item("GitHub Issues...", links::GITHUB_ISSUES_URL.into()),
+        link_menu_item("Warp Slack Community...", links::SLACK_URL.into()),
+    ];
 
     Menu::new("Help", items)
 }

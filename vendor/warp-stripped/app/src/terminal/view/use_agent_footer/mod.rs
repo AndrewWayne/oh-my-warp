@@ -279,9 +279,28 @@ impl TerminalView {
             }
             #[cfg(feature = "omw_local")]
             UseAgentToolbarEvent::ToggleOmwPair => {
-                let state = crate::omw::OmwRemoteState::shared();
-                let new_status = state.toggle();
-                log::info!("omw-remote toggle -> {new_status:?}");
+                use crate::omw::pair_modal::{
+                    format_pair_modal_text_block, PairModalContent,
+                };
+                use crate::omw::tailscale::detect_status as detect_tailscale_status;
+                use crate::omw::{OmwRemoteState, OmwRemoteStatus};
+
+                let state = OmwRemoteState::shared();
+
+                // Gap 2: explicit start-then-surface flow. Click no longer
+                // toggles off implicitly — the modal/toast surfaces a "Stop
+                // Daemon" affordance for the explicit stop path. (Today the
+                // toast is informational; once the real `View`-backed modal
+                // lands, the Stop button will be in the dialog footer.)
+                if matches!(
+                    state.status(),
+                    OmwRemoteStatus::Stopped | OmwRemoteStatus::Failed { .. }
+                ) {
+                    if let Err(e) = state.start() {
+                        log::warn!("omw-remote: start failed: {e}");
+                    }
+                }
+
                 // TODO(omw/wiring, gap-1c): auto-share the active pane here by
                 // calling `crate::omw::pane_share::share_pane` with the pane's
                 // `event_loop_tx` / `pty_reads_tx` and the registry from
@@ -291,6 +310,41 @@ impl TerminalView {
                 // through `pane_stack` -> `PaneView::child_data()` and then
                 // downcasting `Box<dyn TerminalManager>`. Until that lands,
                 // the daemon spawns a sibling shell on phone connect.
+
+                // Gap 2 (toast surface): after start, snapshot the daemon
+                // state + Tailscale probe and render the modal text body.
+                // This is the deferred-modal fallback per the Gap 2 task
+                // brief: the URL is surfaced visibly via clipboard + stderr
+                // until the full reactive `View`-backed dialog lands. A
+                // future commit replaces this block with a workspace-view
+                // dialog handle while keeping the same `format_pair_modal_*`
+                // helpers and copy-on-open ergonomics.
+                let content = PairModalContent {
+                    status: state.status(),
+                    tailscale: detect_tailscale_status(),
+                    paired_device_count: None,
+                };
+
+                // Auto-copy the URL to the clipboard so the user has it
+                // ready to paste, even before the real modal lands. Only do
+                // this on a successful Running transition — copying nothing
+                // (or an error message) would be more confusing than a
+                // silent toast.
+                if let OmwRemoteStatus::Running { pair_url, .. } = &content.status {
+                    ctx.clipboard().write(
+                        ClipboardContent::plain_text(pair_url.clone()),
+                    );
+                }
+
+                eprintln!(
+                    "\n=== omw Remote Control ===\n{}\n==========================\n",
+                    format_pair_modal_text_block(&content)
+                );
+                log::info!(
+                    "omw-remote: surfaced pair-modal toast (status={:?})",
+                    content.status
+                );
+
                 // Belt-and-suspenders re-render. Gap 3 wired the Phone
                 // button's label/tooltip/icon to `OmwRemoteState`'s watch
                 // channel, so the toolbar updates itself on every status

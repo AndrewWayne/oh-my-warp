@@ -258,6 +258,10 @@ warp_managed_secrets.workspace = true
 omw_server = { path = "../../../crates/omw-server", package = "omw-server", optional = true }
 omw_remote = { path = "../../../crates/omw-remote", package = "omw-remote", default-features = false, optional = true }
 omw_pty = { path = "../../../crates/omw-pty", package = "omw-pty", optional = true }
+# Gap 2: QR rendering for the pair-modal preview. `default-features = false`
+# strips the `image` crate's raster encoders; we keep the `svg` feature so the
+# pair modal can embed a crisp scalable preview.
+qrcode = { version = "0.14", default-features = false, features = ["svg"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block.workspace = true
@@ -731,6 +735,7 @@ omw_local = [
     "dep:omw_server",
     "dep:omw_remote",
     "dep:omw_pty",
+    "dep:qrcode",
 ]
 oz_changelog_updates = []
 personal_cloud_objects = []

@@ -7,7 +7,9 @@
 //! Gated behind the `omw_local` feature so non-omw_local builds (if any) stay
 //! clean. See `vendor/warp-stripped/OMW_LOCAL_BUILD.md`.
 
+pub mod pair_modal;
 pub mod pane_share;
+pub mod qr;
 pub mod remote_state;
 pub mod tailscale;
 

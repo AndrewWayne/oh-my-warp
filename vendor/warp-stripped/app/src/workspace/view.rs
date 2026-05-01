@@ -230,6 +230,7 @@ use crate::cloud_object::{
 };
 use crate::context_chips::ChipRuntimeCapabilities;
 use crate::drive::import::modal::{ImportModal, ImportModalEvent};
+#[cfg(not(feature = "omw_local"))]
 use crate::drive::workflows::arguments::ArgumentsState;
 use crate::drive::workflows::modal::{WorkflowModal, WorkflowModalEvent};
 use crate::drive::{
@@ -364,9 +365,11 @@ use crate::workspace::sync_inputs::SyncedInputState;
 use crate::workspace::toast_stack::{
     ToastStack as WorkspaceToastStack, ToastStackEvent as WorkspaceToastStackEvent,
 };
+#[cfg(not(feature = "omw_local"))]
+use crate::ai_assistant::panel::AIAssistantPanelEvent;
 use crate::{
     ai_assistant::{
-        panel::{AIAssistantPanelEvent, AIAssistantPanelView},
+        panel::AIAssistantPanelView,
         AskAIType, AI_ASSISTANT_FEATURE_NAME, AI_ASSISTANT_LOGO_COLOR,
     },
     settings,
@@ -1488,6 +1491,7 @@ impl Workspace {
         (welcome_tips_view, welcome_tips_view_state)
     }
 
+    #[cfg(not(feature = "omw_local"))]
     fn build_ai_assistant_panel_view(
         ctx: &mut ViewContext<Self>,
         server_api: Arc<ServerApi>,
@@ -1501,6 +1505,17 @@ impl Workspace {
         });
 
         ai_assistant_panel
+    }
+
+    #[cfg(feature = "omw_local")]
+    fn build_ai_assistant_panel_view_placeholder(
+        ctx: &mut ViewContext<Self>,
+        server_api: Arc<ServerApi>,
+        ai_client: Arc<dyn AIClient>,
+    ) -> ViewHandle<AIAssistantPanelView> {
+        ctx.add_typed_action_view(|ctx| {
+            AIAssistantPanelView::new_omw_placeholder(server_api, ai_client, ctx)
+        })
     }
 
     fn build_resource_center_view(
@@ -2777,6 +2792,10 @@ impl Workspace {
             None
         };
 
+        #[cfg(feature = "omw_local")]
+        let ai_assistant_panel =
+            Self::build_ai_assistant_panel_view_placeholder(ctx, server_api.clone(), ai_client.clone());
+        #[cfg(not(feature = "omw_local"))]
         let ai_assistant_panel =
             Self::build_ai_assistant_panel_view(ctx, server_api.clone(), ai_client.clone());
 
@@ -15769,6 +15788,7 @@ impl Workspace {
         };
     }
 
+    #[cfg(not(feature = "omw_local"))]
     fn handle_ai_assistant_panel_event(
         &mut self,
         event: &AIAssistantPanelEvent,

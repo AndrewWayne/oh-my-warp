@@ -32,7 +32,10 @@ use warpui::{AppContext, Entity, SingletonEntity, TypedActionView, View, ViewCon
 const DOCS_URL: &str = "https://docs.warp.dev/agent-platform/cloud-agents/overview";
 const ENV_DOCS_URL: &str =
     "https://docs.warp.dev/reference/cli/integration-setup#creating-an-environment";
+#[cfg(not(feature = "omw_local"))]
 const OZ_URL: &str = "https://oz.warp.dev";
+#[cfg(feature = "omw_local")]
+const OZ_URL: &str = "";
 
 const CONTENT_MAX_WIDTH: f32 = 720.;
 
@@ -212,8 +215,13 @@ impl CloudSetupGuideView {
         let theme = appearance.theme();
         let font_size = 16.;
 
+        #[cfg(not(feature = "omw_local"))]
+        let banner_text = "Quick start: Visit oz.warp.dev for a UI-based setup experience.";
+        #[cfg(feature = "omw_local")]
+        let banner_text = "Quick start: Cloud agent setup is unavailable in this build.";
+
         let text = Text::new_inline(
-            "Quick start: Visit oz.warp.dev for a UI-based setup experience.",
+            banner_text,
             appearance.ui_font_family(),
             font_size,
         )

@@ -21,9 +21,11 @@ PATTERNS=(
   "app.warp.dev"
   "api.warp.dev"
   "cloud.warp.dev"
+  "oz.warp.dev"
   "firebase.googleapis.com"
   "firebaseio.com"
   "identitytoolkit.googleapis.com"
+  "securetoken.googleapis.com"
 )
 
 fail=0

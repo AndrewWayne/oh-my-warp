@@ -515,7 +515,12 @@ impl BuildPlanMigrationModal {
         let title_text = if is_business {
             "Welcome to the New Business Plan"
         } else {
-            "Welcome to Warp Build"
+            {
+                #[cfg(feature = "omw_local")]
+                { "" }
+                #[cfg(not(feature = "omw_local"))]
+                { "Welcome to Warp Build" }
+            }
         };
 
         let title = Self::create_text(

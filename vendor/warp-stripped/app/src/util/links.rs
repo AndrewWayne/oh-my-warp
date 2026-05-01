@@ -1,6 +1,11 @@
 use crate::channel::ChannelState;
 
 pub const USER_DOCS_URL: &str = "";
+#[cfg(feature = "omw_local")]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub const GITHUB_ISSUES_URL: &str = "https://github.com/AndrewWayne/oh-my-warp/issues";
+
+#[cfg(not(feature = "omw_local"))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const GITHUB_ISSUES_URL: &str = "https://github.com/warpdotdev/Warp/issues";
 pub const SLACK_URL: &str = "";

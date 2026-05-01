@@ -1248,23 +1248,33 @@ impl SettingsView {
         });
 
         let mut settings_pages = vec![
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(main_page_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(ai_page_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(billing_and_usage_page_handle),
             SettingsPage::new(code_page_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(teams_page_handle),
             SettingsPage::new(appearance_page_handle),
             SettingsPage::new(features_page_handle),
             SettingsPage::new(keybindings_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(platform_page_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(warpify_page_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(referrals_page_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(show_blocks_view_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(warp_drive_page_handle),
         ];
 
         settings_pages.extend(vec![
             SettingsPage::new(mcp_servers_page_handle),
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(environments_page_handle.clone()),
             SettingsPage::new(privacy_page_handle),
             SettingsPage::new(about_page_handle),

@@ -214,6 +214,16 @@ impl GetStartedView {
             }
         }
 
+        #[cfg(not(feature = "omw_local"))]
+        const GET_STARTED_TITLE: &str = "Welcome to Warp";
+        #[cfg(feature = "omw_local")]
+        const GET_STARTED_TITLE: &str = "Welcome to omw";
+
+        #[cfg(not(feature = "omw_local"))]
+        const GET_STARTED_TAGLINE: &str = "The Agentic Development Environment";
+        #[cfg(feature = "omw_local")]
+        const GET_STARTED_TAGLINE: &str = "Open-source terminal — local build";
+
         Flex::column()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_children([
@@ -229,7 +239,7 @@ impl GetStartedView {
                 .finish(),
                 appearance
                     .ui_builder()
-                    .paragraph("Welcome to Warp")
+                    .paragraph(GET_STARTED_TITLE)
                     .with_style(UiComponentStyles {
                         font_size: Some(20.),
                         ..Default::default()
@@ -239,7 +249,7 @@ impl GetStartedView {
                 Container::new(
                     appearance
                         .ui_builder()
-                        .paragraph("The Agentic Development Environment")
+                        .paragraph(GET_STARTED_TAGLINE)
                         .with_style(UiComponentStyles {
                             font_size: Some(14.),
                             font_family_id: Some(appearance.monospace_font_family()),

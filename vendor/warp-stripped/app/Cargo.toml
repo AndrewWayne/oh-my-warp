@@ -256,7 +256,12 @@ warp_managed_secrets.workspace = true
 # Controller is only meaningfully embedded when omw-remote is run as a
 # standalone daemon via the omw-cli binary.
 omw_server = { path = "../../../crates/omw-server", package = "omw-server", optional = true }
-omw_remote = { path = "../../../crates/omw-remote", package = "omw-remote", default-features = false, optional = true }
+# `embedded-web-controller` is `omw-remote`'s default feature — bakes the
+# Vite-built `apps/web-controller/dist/` into the binary via `include_dir!`
+# and serves it as a static-asset fallback. Required for warp-oss to surface
+# a working pair page when the user clicks the Phone button (otherwise the
+# pair URL points at `/pair?t=...` which has nothing to render).
+omw_remote = { path = "../../../crates/omw-remote", package = "omw-remote", optional = true }
 omw_pty = { path = "../../../crates/omw-pty", package = "omw-pty", optional = true }
 # Gap 2: QR rendering for the pair-modal preview. `default-features = false`
 # strips the `image` crate's raster encoders; we keep the `svg` feature so the

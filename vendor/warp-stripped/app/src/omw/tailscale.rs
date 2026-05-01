@@ -91,6 +91,11 @@ pub struct TailscaleStatus {
     /// Tailnet name derived from the FQDN by stripping the leading hostname
     /// label, e.g. `"tail-abc12.ts.net"`.
     pub tailnet: Option<String>,
+    /// First IPv4 address Tailscale assigned this node, e.g. `"100.114.215.118"`.
+    /// Used as a fallback when `tailscale serve` is unavailable or not enabled
+    /// on the tailnet — we can still build a phone-reachable URL by binding
+    /// the daemon on 0.0.0.0 and naming this IP in the pair URL.
+    pub tailnet_ipv4: Option<String>,
 }
 
 /// Failure modes for [`serve_https`] / [`unserve`]. We don't try to
@@ -218,29 +223,48 @@ fn parse_status_json(s: &str) -> TailscaleStatus {
         .as_deref()
         .and_then(|h| h.split_once('.').map(|(_, rest)| rest.to_string()));
 
+    // First IPv4 from Self.TailscaleIPs (preferred) or top-level TailscaleIPs.
+    let tailnet_ipv4 = v
+        .get("Self")
+        .and_then(|s| s.get("TailscaleIPs"))
+        .or_else(|| v.get("TailscaleIPs"))
+        .and_then(|ips| ips.as_array())
+        .and_then(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str())
+                .find(|s| !s.contains(':'))
+                .map(|s| s.to_string())
+        });
+
     TailscaleStatus {
         installed: true,
         running,
         local_hostname,
         tailnet,
+        tailnet_ipv4,
     }
 }
 
-/// `tailscale serve --bg --https=<port> http://127.0.0.1:<port>` and return
-/// the URL the node is now reachable at (`https://<DNSName>` — Tailscale
-/// listens on 443 by default for the `--https` flag, no port suffix needed).
+/// `tailscale serve --bg <port>` and return the URL the node is now reachable
+/// at (`https://<DNSName>` — Tailscale's modern `serve` implies HTTPS on the
+/// tailnet hostname's port 443).
+///
+/// Works on Tailscale 1.62+. On 1.96+ the older `--https=PORT <target>` form
+/// was removed; using it returns a usage error. We use the modern form.
+///
+/// Common failure mode: `Serve is not enabled on your tailnet.` — the user
+/// must enable Serve in their Tailscale admin console first
+/// (https://login.tailscale.com/f/serve). [`ServeError::CommandFailed`]
+/// surfaces the underlying stderr so callers can detect this and fall back to
+/// a tailnet-IP-based URL instead.
 pub fn serve_https(port: u16) -> Result<String, ServeError> {
     if !tailscale_on_path() {
         return Err(ServeError::NotInstalled);
     }
-    let target = format!("http://127.0.0.1:{port}");
-    let https_arg = format!("--https={port}");
+    let port_str = port.to_string();
 
-    let output = run_with_timeout(
-        &["serve", "--bg", &https_arg, &target],
-        SERVE_TIMEOUT,
-    )
-    .map_err(ServeError::Spawn)?;
+    let output = run_with_timeout(&["serve", "--bg", &port_str], SERVE_TIMEOUT)
+        .map_err(ServeError::Spawn)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -252,19 +276,23 @@ pub fn serve_https(port: u16) -> Result<String, ServeError> {
     Ok(format!("https://{host}"))
 }
 
-/// `tailscale serve --bg --https=<port> off`. Best-effort teardown; callers
-/// run this on shutdown but can also invoke it before re-binding.
+/// `tailscale serve --bg <port> off`. Best-effort teardown; callers run this
+/// on shutdown but can also invoke it before re-binding. On Tailscale 1.96+
+/// the modern path is `tailscale serve clear`, but the legacy `<target> off`
+/// form is still accepted as a no-op when nothing is mapped — so we use the
+/// per-port form here to avoid clobbering unrelated Serve configs the user
+/// may have set up by hand.
 pub fn unserve(port: u16) -> Result<(), ServeError> {
     if !tailscale_on_path() {
         return Err(ServeError::NotInstalled);
     }
-    let https_arg = format!("--https={port}");
-    let output = run_with_timeout(
-        &["serve", "--bg", &https_arg, "off"],
-        SERVE_TIMEOUT,
-    )
-    .map_err(ServeError::Spawn)?;
+    let port_str = port.to_string();
+    let output = run_with_timeout(&["serve", "--bg", &port_str, "off"], SERVE_TIMEOUT)
+        .map_err(ServeError::Spawn)?;
     if !output.status.success() {
+        // Don't propagate — failure here is expected when Serve was never
+        // enabled or the port was never mapped. Caller already treats this
+        // best-effort.
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         return Err(ServeError::CommandFailed(stderr));
     }

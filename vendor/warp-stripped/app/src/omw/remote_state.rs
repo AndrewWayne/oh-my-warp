@@ -26,12 +26,22 @@ use tokio::runtime::Builder;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
-/// Default loopback bind for the embedded daemon.
-const DEFAULT_BIND: &str = "127.0.0.1:8787";
+/// Default bind for the embedded daemon. We listen on all interfaces so a
+/// phone on the same tailnet can reach us by either the tailnet hostname
+/// (`https://<host>.<tailnet>.ts.net` via `tailscale serve`, when enabled) or
+/// the tailnet IPv4 directly (`http://100.x.x.x:8787` fallback). LAN exposure
+/// is gated by per-route auth: HTTP endpoints require a signed pair/capability
+/// token; WS upgrades require Origin to match `pinned_origins`.
+const DEFAULT_BIND: &str = "0.0.0.0:8787";
 
-/// Pinned origin matching `DEFAULT_BIND` (per BYORC §8.1, the daemon rejects
-/// any WS upgrade whose `Origin` header doesn't match).
+/// Pinned origin for loopback access (the auto-copied URL when no Tailscale
+/// is detected). Always present in `pinned_origins`. Tailnet-derived origins
+/// are appended at runtime in [`bring_up_daemon`].
 const DEFAULT_PINNED_ORIGIN: &str = "http://127.0.0.1:8787";
+
+/// Daemon listening port. Used by [`bring_up_daemon`] to assemble the URL,
+/// pin origins, and request `tailscale serve --bg <port>`.
+const DAEMON_PORT: u16 = 8787;
 
 /// Pair token TTL when the user clicks "Remote Control" (BYORC default: 10 min).
 const PAIR_TTL: Duration = Duration::from_secs(10 * 60);
@@ -280,12 +290,9 @@ impl OmwRemoteState {
             g.pty_registry = None;
             g.serve_task.take()
         };
-        // Best-effort: if Gap 4's auto-bootstrap brought up `tailscale serve
-        // --https=8787`, tell tailscale to forget that mapping before we kill
-        // the serve task. Ignore errors: if Tailscale isn't installed, isn't
-        // running, or no serve was registered, this is a no-op anyway, and
-        // we'd rather stop the daemon than block on `tailscale unserve` here.
-        let _ = super::tailscale::unserve(8787);
+        // (No tailscale unserve call — `bring_up_daemon` no longer registers
+        // a `tailscale serve` mapping. If we re-enable Serve behind an env
+        // var in the future, restore the unserve call here.)
         if let Some(task) = task {
             task.abort();
         }
@@ -398,22 +405,29 @@ async fn bring_up_daemon(
         .parse()
         .map_err(|e| format!("parsing bind addr {DEFAULT_BIND}: {e}"))?;
 
-    // Probe Tailscale (Gap 4). On a running install with a DNSName, register
-    // a serve mapping and prefer the tailnet URL for the pair link.
+    // Probe Tailscale and prefer the tailnet IPv4 origin when available.
+    // We deliberately do NOT call `tailscale serve` here:
+    //   - Serve requires the user to enable it on their tailnet first
+    //     (https://login.tailscale.com/f/serve). Extra friction.
+    //   - Plain HTTP over the tailnet IP works for the primary pairing flow
+    //     (phone OS camera -> browser -> /pair?t=...) and for xterm.js +
+    //     signed WS. The only thing we'd gain from HTTPS is browser
+    //     `getUserMedia` for the camera-paste-fallback flow, which is not
+    //     v0.4-thin's primary path.
+    //   - The daemon binds on 0.0.0.0:8787, so any tailnet peer can reach
+    //     us directly. WS Origin pinning still gates the upgrade.
+    // If you want HTTPS later, see `super::tailscale::serve_https` (kept
+    // available behind that helper) and re-enable here gated behind an env
+    // var like `OMW_TAILSCALE_SERVE=1`.
     let mut pinned_origins = vec![DEFAULT_PINNED_ORIGIN.to_string()];
     let mut pair_origin = DEFAULT_PINNED_ORIGIN.to_string();
-    let mut tailscale_serving = false;
+    let tailscale_serving = false;
     let ts = super::tailscale::detect_status();
-    if ts.installed && ts.running && ts.local_hostname.is_some() {
-        match super::tailscale::serve_https(8787) {
-            Ok(url) => {
-                pinned_origins.push(url.clone());
-                pair_origin = url;
-                tailscale_serving = true;
-            }
-            Err(e) => {
-                eprintln!("omw-remote: tailscale serve bootstrap failed: {e} (loopback-only)");
-            }
+    if ts.installed && ts.running {
+        if let Some(ipv4) = ts.tailnet_ipv4.as_deref() {
+            let ip_origin = format!("http://{ipv4}:{DAEMON_PORT}");
+            pinned_origins.push(ip_origin.clone());
+            pair_origin = ip_origin;
         }
     }
     let pair_url = format!("{pair_origin}/pair?t={}", token.to_base32());

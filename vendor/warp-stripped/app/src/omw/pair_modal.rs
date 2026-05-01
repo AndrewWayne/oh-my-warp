@@ -151,6 +151,7 @@ mod tests {
             running: true,
             local_hostname: Some("laptop.tail-abc.ts.net".to_string()),
             tailnet: Some("tail-abc.ts.net".to_string()),
+            tailnet_ipv4: Some("100.64.0.1".to_string()),
         }
     }
 
@@ -160,6 +161,7 @@ mod tests {
             running: false,
             local_hostname: None,
             tailnet: None,
+            tailnet_ipv4: None,
         }
     }
 

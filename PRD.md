@@ -750,6 +750,19 @@ This phase delivers the **transport and pairing layer** of BYORC plus the Web Co
 
 **Exit:** I pair a host (laptop or phone) via QR over Tailscale Serve, the Web Controller opens a terminal of my laptop's shell, I run shell commands and see output. No agent integration, no approval prompts, no audit attribution.
 
+**Status as of 2026-05-01:** components landed (~206 tests passing across the slice), end-to-end Rust integration test green, warp-stripped Remote Control button shipped. Four functional gaps remain before this is a real demo — see v0.4-thin-polish.
+
+### v0.4-thin-polish — Close the four wiring gaps
+
+Bridges v0.4-thin's "shipped components" to "real demo." Tracked in detail at [`docs/v0.4-thin-functional-gaps.md`](./docs/v0.4-thin-functional-gaps.md).
+
+- **Gap 1: phone attaches to the Warp pane, not a sibling shell.** Extend `omw-server::SessionRegistry` with an external-source variant; tap `PtyController` I/O channels in warp-stripped; per-pane "Share this pane" control.
+- **Gap 2: pair URL surfaces in a modal with QR.** Replace stderr `eprintln!` with a Warp dialog containing the URL, a QR rendering, Copy button, paired-device count, Tailscale status line.
+- **Gap 3: button label tracks daemon state reactively.** `tokio::sync::watch::Sender` on `OmwRemoteState`; render-time state read; subscribe-to-change.
+- **Gap 4: Tailscale Serve auto-bootstrap.** New `omw/tailscale.rs` module: detect via `tailscale status --json`, auto `serve_https`/`unserve`; `pinned_origin: String` → `Vec<String>` for loopback + tailnet origins; bind address configurable.
+
+**Exit:** the v0.4-thin exit criterion is *seamlessly* demonstrable — click button in warp-oss, pair phone via QR scanned from a modal, phone sees the active Warp terminal pane in real time. Tailscale Serve auto-runs. No manual stderr fishing, no manual `tailscale serve` command, no fresh-shell confusion.
+
 ### v0.4-cleanup — Agent integration + audit + approvals (post-v0.3)
 
 Sequenced after v0.2 (policy + audit) and v0.3 (stripped GUI + omw-server) land. Closes the original v0.4 exit criteria.
@@ -760,7 +773,7 @@ Sequenced after v0.2 (policy + audit) and v0.3 (stripped GUI + omw-server) land.
 - Web Controller diff view.
 - Web Controller settings page (read-only providers, device info, permissions).
 - Audit "Activity" view in the stripped client (depends on `omw-audit` from v0.2).
-- `omw-remote` migrates from direct-spawn shell PTY to subscribing to `omw-server`'s session registry (so the user attaches to the *Warp terminal pane* PTY they're already looking at, not a sibling shell).
+- *(The "Warp pane PTY attachment" item that was originally listed here moved to v0.4-thin-polish Gap 1 — it doesn't depend on pi-agent and is achievable in the polish pass.)*
 
 **Gate.** `specs/byorc-protocol.md` external review must be merged before v0.4-cleanup begins, OR v0.4-cleanup reconciles any reviewer-driven changes from the v0.4-thin transport layer.
 

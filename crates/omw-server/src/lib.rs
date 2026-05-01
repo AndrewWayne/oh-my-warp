@@ -16,7 +16,9 @@ pub mod handlers;
 pub mod registry;
 
 pub use error::{Error, Result};
-pub use registry::{Session, SessionId, SessionMeta, SessionRegistry, SessionSpec};
+pub use registry::{
+    ExternalSessionSpec, Session, SessionId, SessionMeta, SessionRegistry, SessionSpec,
+};
 
 use std::sync::Arc;
 

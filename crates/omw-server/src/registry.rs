@@ -15,11 +15,12 @@ use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 
-use omw_pty::{Pty, PtyCommand, PtyWriter};
+use omw_pty::{Pty, PtyCommand, PtySize, PtyWriter};
 
 use crate::{Error, Result};
 
@@ -54,6 +55,28 @@ pub struct SessionSpec {
     pub rows: Option<u16>,
 }
 
+/// Description of an externally-owned session — one whose I/O is provided as
+/// channels rather than a `Pty` the registry spawns and owns.
+///
+/// Used by callers that already manage the underlying transport (e.g. a
+/// remote-control bridge) but want the session surfaced through the same
+/// `SessionRegistry` lookup/subscribe/write/kill API as owned-Pty sessions.
+pub struct ExternalSessionSpec {
+    /// Human-readable name. Surfaced in the session list.
+    pub name: String,
+    /// Sender side of the input mpsc the registry forwards `write_input`
+    /// bytes to. The receiver is held by the caller.
+    pub input_tx: mpsc::Sender<Vec<u8>>,
+    /// Broadcast sender the registry hands out `subscribe()` receivers from.
+    /// The caller pushes output chunks into this Sender.
+    pub output_tx: broadcast::Sender<Bytes>,
+    /// Closure invoked on `kill(id)`. Called at most once.
+    pub kill: Box<dyn Fn() + Send + Sync>,
+    /// Initial PTY size — recorded for future resize support; v0.4-thin does
+    /// NOT plumb resize for external sessions.
+    pub initial_size: PtySize,
+}
+
 /// Public metadata for a session — what `GET /sessions` and `GET /sessions/:id`
 /// surface. Does NOT include the PTY handles or output broadcast channel.
 #[derive(Debug, Clone, Serialize)]
@@ -81,37 +104,77 @@ pub struct Session {
     _impl: (),
 }
 
-/// Internal state for one live session.
+/// Internal state for one live session, regardless of source.
 struct SessionEntry {
     name: String,
     created_at: DateTime<Utc>,
-    /// Broadcast channel carrying PTY output chunks to any number of
-    /// subscribers (WS clients, registry tests).
+    /// Broadcast channel carrying output chunks to any number of subscribers
+    /// (WS clients, tests). For owned sessions this is the registry-created
+    /// Sender. For external sessions this is the spec-provided Sender.
     output_tx: broadcast::Sender<Bytes>,
-    /// Set to `false` when the watcher reaps the child.
+    /// Set to `false` when the child is reaped (owned) or `kill` is invoked
+    /// (external).
     alive: Arc<AtomicBool>,
-    /// PTY writer, behind a mutex so concurrent `write_input` calls serialize.
-    writer: Arc<AsyncMutex<Option<PtyWriter>>>,
-    /// One-shot channel to ask the watcher task to kill the child. Taken on
-    /// the first kill request (subsequent kills find `None`).
-    kill_tx: Option<oneshot::Sender<()>>,
-    /// Watcher task — owns the `Pty`, waits for exit, handles kill requests.
-    /// Aborted on registry drop.
-    watcher: JoinHandle<()>,
-    /// Output pump task — read PTY -> broadcast.
-    output_pump: JoinHandle<()>,
+    /// Per-source state.
+    source: SessionSource,
+}
+
+/// Source-specific state for a session entry.
+enum SessionSource {
+    /// Registry spawned and owns the underlying PTY.
+    Owned {
+        /// PTY writer, behind a mutex so concurrent `write_input` calls
+        /// serialize.
+        writer: Arc<AsyncMutex<Option<PtyWriter>>>,
+        /// One-shot channel to ask the watcher task to kill the child. Taken
+        /// on the first kill request (subsequent kills find `None`).
+        kill_tx: Option<oneshot::Sender<()>>,
+        /// Watcher task — owns the `Pty`, waits for exit, handles kill
+        /// requests. Aborted on registry drop.
+        watcher: JoinHandle<()>,
+        /// Output pump task — read PTY -> broadcast.
+        output_pump: JoinHandle<()>,
+    },
+    /// Caller owns the underlying transport; registry only routes through
+    /// the channels.
+    External {
+        /// Input bytes from `write_input` are forwarded here.
+        input_tx: mpsc::Sender<Vec<u8>>,
+        /// Closure invoked on first `kill(id)`. `take()`'d to fire-once.
+        kill: Option<Box<dyn Fn() + Send + Sync>>,
+        /// Recorded for future resize support; not used in v0.4-thin.
+        #[allow(dead_code)]
+        initial_size: PtySize,
+    },
 }
 
 impl Drop for SessionEntry {
     fn drop(&mut self) {
-        // Best-effort: ask the watcher to kill the child if we still have the
-        // signal channel (kill() may have already fired it). Either way, abort
-        // both background tasks so they don't outlive the entry.
-        if let Some(tx) = self.kill_tx.take() {
-            let _ = tx.send(());
+        match &mut self.source {
+            SessionSource::Owned {
+                kill_tx,
+                watcher,
+                output_pump,
+                ..
+            } => {
+                // Best-effort: ask the watcher to kill the child if we still
+                // have the signal channel (kill() may have already fired it).
+                // Either way, abort both background tasks so they don't
+                // outlive the entry.
+                if let Some(tx) = kill_tx.take() {
+                    let _ = tx.send(());
+                }
+                watcher.abort();
+                output_pump.abort();
+            }
+            SessionSource::External { kill, .. } => {
+                // The closure may already have been invoked by kill(); only
+                // fire it if it hasn't been taken.
+                if let Some(k) = kill.take() {
+                    k();
+                }
+            }
         }
-        self.watcher.abort();
-        self.output_pump.abort();
     }
 }
 
@@ -203,10 +266,40 @@ impl SessionRegistry {
             created_at,
             output_tx,
             alive,
-            writer: Arc::new(AsyncMutex::new(Some(writer))),
-            kill_tx: Some(kill_tx),
-            watcher,
-            output_pump,
+            source: SessionSource::Owned {
+                writer: Arc::new(AsyncMutex::new(Some(writer))),
+                kill_tx: Some(kill_tx),
+                watcher,
+                output_pump,
+            },
+        };
+
+        self.sessions
+            .lock()
+            .expect("registry mutex poisoned")
+            .insert(id, entry);
+
+        Ok(id)
+    }
+
+    /// Register an externally-owned session — one whose I/O is provided as
+    /// channels and whose lifecycle is driven by a caller-supplied `kill`
+    /// closure rather than a `Pty` the registry owns.
+    pub async fn register_external(&self, spec: ExternalSessionSpec) -> Result<SessionId> {
+        let id: SessionId = uuid::Uuid::new_v4();
+        let created_at = Utc::now();
+        let alive = Arc::new(AtomicBool::new(true));
+
+        let entry = SessionEntry {
+            name: spec.name,
+            created_at,
+            output_tx: spec.output_tx,
+            alive,
+            source: SessionSource::External {
+                input_tx: spec.input_tx,
+                kill: Some(spec.kill),
+                initial_size: spec.initial_size,
+            },
         };
 
         self.sessions
@@ -242,19 +335,42 @@ impl SessionRegistry {
         })
     }
 
-    /// Write `bytes` to the session's PTY input. Returns
-    /// [`crate::Error::NotFound`] if the id is unknown.
+    /// Write `bytes` to the session's input. For owned sessions this writes
+    /// to the PTY writer; for external sessions this forwards to the
+    /// spec-provided mpsc Sender. Returns [`crate::Error::NotFound`] if the
+    /// id is unknown.
     pub async fn write_input(&self, id: SessionId, bytes: &[u8]) -> Result<()> {
-        let writer = {
+        // Two-phase: extract the per-source handle under the sync mutex,
+        // then perform the await outside the lock.
+        enum InputHandle {
+            Owned(Arc<AsyncMutex<Option<PtyWriter>>>),
+            External(mpsc::Sender<Vec<u8>>),
+        }
+
+        let handle = {
             let map = self.sessions.lock().expect("registry mutex poisoned");
             let entry = map.get(&id).ok_or(Error::NotFound(id))?;
-            entry.writer.clone()
+            match &entry.source {
+                SessionSource::Owned { writer, .. } => InputHandle::Owned(writer.clone()),
+                SessionSource::External { input_tx, .. } => {
+                    InputHandle::External(input_tx.clone())
+                }
+            }
         };
-        let mut guard = writer.lock().await;
-        let w = guard
-            .as_mut()
-            .ok_or_else(|| Error::Io("pty writer already closed".into()))?;
-        w.write_all(bytes).await.map_err(Error::from)
+
+        match handle {
+            InputHandle::Owned(writer) => {
+                let mut guard = writer.lock().await;
+                let w = guard
+                    .as_mut()
+                    .ok_or_else(|| Error::Io("pty writer already closed".into()))?;
+                w.write_all(bytes).await.map_err(Error::from)
+            }
+            InputHandle::External(input_tx) => input_tx
+                .send(bytes.to_vec())
+                .await
+                .map_err(|_| Error::Io("external session input channel closed".into())),
+        }
     }
 
     /// Subscribe to the session's output stream. Returns `None` if the id is
@@ -264,7 +380,9 @@ impl SessionRegistry {
         map.get(&id).map(|e| e.output_tx.subscribe())
     }
 
-    /// Kill the session's child and remove it from the registry.
+    /// Kill the session and remove it from the registry. For owned sessions
+    /// this signals the watcher to kill+reap the child; for external
+    /// sessions this invokes the spec-provided `kill` closure.
     /// Idempotent: killing an already-removed id returns
     /// [`crate::Error::NotFound`].
     pub async fn kill(&self, id: SessionId) -> Result<()> {
@@ -273,18 +391,27 @@ impl SessionRegistry {
             map.remove(&id).ok_or(Error::NotFound(id))?
         };
 
-        // Signal the watcher to kill+reap the child. If the watcher has
-        // already finished (natural exit), the send is a no-op.
-        if let Some(tx) = entry.kill_tx.take() {
-            let _ = tx.send(());
+        match &mut entry.source {
+            SessionSource::Owned { kill_tx, .. } => {
+                // Signal the watcher to kill+reap the child. If the watcher
+                // has already finished (natural exit), the send is a no-op.
+                if let Some(tx) = kill_tx.take() {
+                    let _ = tx.send(());
+                }
+            }
+            SessionSource::External { kill, .. } => {
+                // Fire the caller-supplied closure exactly once.
+                if let Some(k) = kill.take() {
+                    k();
+                }
+            }
         }
 
         // Mark dead immediately so racing GETs see alive=false.
         entry.alive.store(false, Ordering::SeqCst);
 
-        // Drop the entry. SessionEntry::Drop aborts both tasks. The watcher
-        // owns the Pty; its abort drops Pty, which kills the child if still
-        // alive (Pty::Drop) and joins the underlying threads.
+        // Drop the entry. SessionEntry::Drop handles task abort (owned) or
+        // is a no-op for external since `kill` was already taken above.
         drop(entry);
         Ok(())
     }

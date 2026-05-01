@@ -1,6 +1,6 @@
 # Cloud-Strip Plan — Compile and Audit `vendor/warp-stripped/` Without Cloud
 
-Status: Draft v0.1 — pre-implementation
+Status: **Done 2026-05-01 (commit `aadae83`)** — see §8 Postscript for what executed vs the original plan.
 Last updated: 2026-05-01
 Owners: TBD
 Source: synthesized by Codex (gpt-5.5, xhigh reasoning) with human-curated context, 2026-05-01
@@ -175,3 +175,58 @@ These must be `#[cfg]`-eliminated at compile time. Runtime branches via `Channel
 ## 7. Methodology Note
 
 This plan was synthesized by OpenAI Codex (gpt-5.5 model, xhigh reasoning effort, read-only sandbox over the umbrella repo). The brief gave Codex: project context, the failed top-down gating attempt with error counts, the cargo feature configuration, the stub-types hypothesis, and pointers at the heaviest files. Codex pushed back on the pure-stub hypothesis and proposed the hybrid backbone-port + service-stub approach above. Human-curated; reviewed before commit.
+
+---
+
+## 8. Postscript — What Actually Shipped (2026-05-01, commit `aadae83`)
+
+Status at start of execution: 230 errors under the target build. Codex projected ~4 engineering days of work across 5 phases, dominated by porting ~20 backbone DTOs (`CloudObjectMetadata`, `ServerId`, …) into a local compat module (Phase 1) and writing ~50 service stubs (Phase 2).
+
+**Actual cost: ~5 hours and 5 small file edits.** The plan's foundational premise — that the optional crates needed source-level removal — turned out to be wrong on inspection. Phases 1, 2, and 3 collapsed into Cargo.toml edits.
+
+### Diagnosis
+
+The five "cloud" crates marked `optional = true` in commit `c9d2540` are not what they sound like:
+
+| Crate | Actual content | Forbidden URL strings? |
+|---|---|---|
+| `warp_server_client` | Pure value types and IDs (`ClientId`, `ServerId`, `CloudObjectMetadata`, …). Deps: anyhow, serde, uuid, persistence — no network. | None |
+| `firebase` | ~10 lines of Firebase request/response struct shapes. Deps: anyhow + serde only. | None |
+| `warp_managed_secrets` | Local secret-management types + crypto (HPKE, tink). No network deps. | None |
+| `voice_input` | Audio capture (cpal, hound, rubato). Local STT plumbing. | None |
+| `onboarding` | UI views for the onboarding wizard. Has one `https://www.warp.dev/terms-of-service` literal but `www.warp.dev` doesn't match any of the audit's six hostname patterns. | None matching audit |
+
+The actual forbidden hostnames live in three specific places, all in *non-optional* crates:
+
+- `crates/warp_core/src/channel/config.rs:46-49` — `app.warp.dev`, `rtc.app.warp.dev`, `sessions.app.warp.dev`, the Firebase API key.
+- `crates/warp_core/src/channel/config.rs:87` — `oz.warp.dev`.
+- `app/src/auth/credentials.rs:170,173` — `securetoken.googleapis.com`, `identitytoolkit.googleapis.com`.
+- `warp-command-signatures` (git dep) with the `embed-signatures` feature on — embeds `firebase.json` CLI completion data containing `firebaseio.com` strings. Pulled in by both `warp` and `warp_completer`.
+
+### Execution
+
+Five edits across five files:
+
+1. `vendor/warp-stripped/app/Cargo.toml` — un-optional `firebase`, `warp_server_client`, `warp_managed_secrets`, `voice_input`, `onboarding`. The `cloud` feature now only gates `warp-command-signatures/embed-signatures`. Side fix: the `voice_input` feature stub became `[]` (was an invalid `dep:voice_input` ref).
+2. `vendor/warp-stripped/crates/warp_completer/Cargo.toml` — drop the unconditional `embed-signatures` feature. The app crate now controls embedding via its `cloud` feature.
+3. `vendor/warp-stripped/crates/warp_core/src/channel/config.rs` — `WarpServerConfig::production()` and `OzConfig::production()` bodies are gated under `#[cfg(not(feature = "omw_local"))]`. omw_local builds get an `omw_local()` redirect, so the URL string literals never reach the binary.
+4. `vendor/warp-stripped/app/src/auth/credentials.rs` — `FirebaseToken::access_token_url()` body gated identically; omw_local stub returns `String::new()`.
+5. `vendor/warp-stripped/crates/remote_server/src/install_remote_server.sh` — the script is `include_str!()`'d into the binary, so even comment text ends up in `.rodata`. Replaced the example URL `e.g. https://app.warp.dev/download/cli` in a header comment with a generic description.
+
+### What still doesn't pass an *expanded* audit
+
+The audit script (`scripts/audit-no-cloud.sh`) currently checks six hostname patterns. Two patterns Codex flagged as missing are:
+
+- `securetoken.googleapis.com` — already cleared (gated via `credentials.rs`).
+- `oz.warp.dev` — still present 5 times in the binary, from UI surfaces in `app/src/workspace/view/launch_modal/oz_launch.rs`, `workspace/view/openwarp_launch_modal/view.rs`, `terminal/view/ambient_agent/tips.rs`, `ai/agent_management/cloud_setup_guide_view.rs`. Tagging these correctly under `#[cfg(not(feature = "omw_local"))]` is straightforward but was deferred — they are not in the current audit's contract.
+
+Adding `oz.warp.dev` to the audit list (and gating those five UI sites) is a clean follow-up.
+
+### Lesson
+
+`cargo` features named after subsystems (`cloud`, `firebase`) can be misleading. Before deciding a crate needs a stub-types port, look at:
+
+1. The crate's *Cargo.toml* — does it actually depend on network or remote-service code?
+2. The crate's *source* — does it contain hostname/URL string literals?
+
+If the answer to both is no, the crate is safe to link unconditionally; the strip belongs at the URL-string sites in *consumer* crates, not at the crate boundary. This was the difference between 4 days of work and 5 hours.

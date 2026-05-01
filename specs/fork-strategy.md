@@ -138,7 +138,7 @@ Before v0.3 closes:
 
 - [x] `vendor/warp-stripped/` exists and builds with `--features omw_local` (cloud feature still default-on).
 - [x] `omw_local` feature gates AI/cloud UI surfaces at the dispatcher level; cloud-only crates are marked `optional = true` and grouped under a `cloud` Cargo feature.
-- [ ] **Cloud-strip cascade complete:** `cargo build -p warp --bin warp-oss --no-default-features --features omw_local` compiles cleanly; `scripts/audit-no-cloud.sh` reports zero forbidden hostnames in the resulting binary. Plan: [`specs/cloud-strip-plan.md`](./cloud-strip-plan.md).
+- [x] **Cloud-strip cascade complete:** `cargo build -p warp --bin warp-oss --no-default-features --features omw_local` compiles cleanly; `scripts/audit-no-cloud.sh` reports zero forbidden hostnames in the resulting binary. Default cloud build (`cargo build -p warp --bin warp-oss`) still passes. Done 2026-05-01 in commit `aadae83` — see [`specs/cloud-strip-plan.md`](./cloud-strip-plan.md) for the executed plan and a postscript on what differed from the original Codex synthesis.
 - [ ] First branding pass landed (binary rename, splash, color palette).
 - [ ] `omw-server` minimal surface boots the client.
 - [ ] Agent panel routed through `omw-server` → `omw-agent`.

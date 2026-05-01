@@ -209,7 +209,9 @@ Only the local/core app surface is intended to remain for later `omw` integratio
 Deltas from the Windows path above. The Cargo invocation itself is identical:
 `cargo build -p warp --bin warp-oss --no-default-features --features omw_local` from `vendor/warp-stripped/`.
 
-Note: `--no-default-features` is required so the `cloud` feature (which is in `default`) is excluded; otherwise the cloud crates (firebase, warp_server_client, etc.) would still be linked into the omw_local binary.
+Note: `--no-default-features` is required to keep the binary clean for `scripts/audit-no-cloud.sh`. The `omw_local` feature alone gates the forbidden URL string literals in `crates/warp_core/src/channel/config.rs` and `app/src/auth/credentials.rs` via `#[cfg]`. The `cloud` feature (in `default`) additionally embeds `warp-command-signatures/embed-signatures`, which pulls in `firebase.json` CLI completion data containing `firebaseio.com` strings — `--no-default-features` excludes that. The cloud-related crates (firebase, warp_server_client, warp_managed_secrets, onboarding, voice_input) remain linked because they have no forbidden strings of their own; their UI surfaces are gated at the dispatcher level by earlier strip commits.
+
+After a fresh build, `scripts/audit-no-cloud.sh target/debug/warp-oss` should report all six patterns at zero hits.
 
 ### Prerequisites
 

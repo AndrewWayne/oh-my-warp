@@ -263,6 +263,10 @@ impl AIAssistantPanelView {
     }
 
     /// Returns a placeholder panel that displays an omw-local message instead of upstream AI UI.
+    // NOTE (omw_local): we delegate to `new()` which allocates child views,
+    // subscriptions, and a recurring 60-second timer — all unused under the
+    // placeholder. Acceptable v0.1 debt; v0.3 will replace this entire path
+    // when the agent panel is rewired through omw-server. See PRD §13.
     #[cfg(feature = "omw_local")]
     pub fn new_omw_placeholder(
         server_api: Arc<ServerApi>,
@@ -1094,6 +1098,10 @@ impl View for AIAssistantPanelView {
     }
 
     fn on_focus(&mut self, focus_ctx: &FocusContext, ctx: &mut ViewContext<Self>) {
+        if self.is_omw_placeholder {
+            // Placeholder has no focusable children. Don't redirect focus into hidden child views.
+            return;
+        }
         if focus_ctx.is_self_focused() {
             match &self.focus_state {
                 PanelFocusState::Editor => {
@@ -1114,14 +1122,25 @@ impl View for AIAssistantPanelView {
         if self.is_omw_placeholder {
             const OMW_PLACEHOLDER_TEXT: &str = "AI is unavailable in this build. Configure providers via `omw provider add` in your terminal \u{2014} full omw integration is coming in v0.3.";
             let theme = appearance.theme();
-            let text_color = blended_colors::text_sub(theme, theme.surface_2());
             return Align::new(
-                Text::new_inline(
-                    OMW_PLACEHOLDER_TEXT,
-                    appearance.ui_font_family(),
-                    BODY_FONT_SIZE,
+                Container::new(
+                    Shrinkable::new(
+                        1.,
+                        appearance
+                            .ui_builder()
+                            .wrappable_text(OMW_PLACEHOLDER_TEXT.to_string(), true)
+                            .with_style(UiComponentStyles {
+                                font_family_id: Some(appearance.ui_font_family()),
+                                font_size: Some(BODY_FONT_SIZE),
+                                font_color: Some(theme.nonactive_ui_text_color().into()),
+                                ..Default::default()
+                            })
+                            .build()
+                            .finish(),
+                    )
+                    .finish(),
                 )
-                .with_color(text_color)
+                .with_uniform_padding(EDITOR_MARGIN)
                 .finish(),
             )
             .finish();

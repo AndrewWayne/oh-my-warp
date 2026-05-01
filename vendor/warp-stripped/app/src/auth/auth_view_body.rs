@@ -615,14 +615,23 @@ impl AuthViewBody {
         };
 
         let text = match self.variant {
-            AuthViewVariant::RequireLoginCloseable  => {
-                "In order to use Warp’s AI features or collaborate with others, please create an account."
+            AuthViewVariant::RequireLoginCloseable => {
+                #[cfg(feature = "omw_local")]
+                { "" }
+                #[cfg(not(feature = "omw_local"))]
+                { "In order to use Warp’s AI features or collaborate with others, please create an account." }
             }
             AuthViewVariant::HitDriveObjectLimitCloseable => {
-                "In order to create more objects in Warp Drive, please create an account."
+                #[cfg(feature = "omw_local")]
+                { "" }
+                #[cfg(not(feature = "omw_local"))]
+                { "In order to create more objects in Warp Drive, please create an account." }
             }
             AuthViewVariant::ShareRequirementCloseable => {
-                "In order to share, please create an account."
+                #[cfg(feature = "omw_local")]
+                { "" }
+                #[cfg(not(feature = "omw_local"))]
+                { "In order to share, please create an account." }
             }
             _ => "",
         };
@@ -647,6 +656,9 @@ impl AuthViewBody {
             ..Default::default()
         };
 
+        #[cfg(feature = "omw_local")]
+        let text = "";
+        #[cfg(not(feature = "omw_local"))]
         let text = match self.variant {
             AuthViewVariant::Initial => "Welcome to Warp!",
             AuthViewVariant::RequireLoginCloseable
@@ -1005,8 +1017,12 @@ impl View for AuthViewBody {
     }
 
     fn accessibility_contents(&self, _: &AppContext) -> Option<AccessibilityContent> {
+        #[cfg(feature = "omw_local")]
+        let a11y_title = "";
+        #[cfg(not(feature = "omw_local"))]
+        let a11y_title = "Welcome to Warp!";
         Some(AccessibilityContent::new(
-            "Welcome to Warp!",
+            a11y_title,
             "Press enter to open your browser to Sign Up or Sign In.",
             WarpA11yRole::HelpRole,
         ))

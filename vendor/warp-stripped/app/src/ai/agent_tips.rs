@@ -80,6 +80,10 @@ pub enum AgentTipKind {
     Code,
 }
 
+#[cfg(feature = "omw_local")]
+static DEFAULT_TIPS: LazyLock<Vec<AgentTip>> = LazyLock::new(|| Vec::new());
+
+#[cfg(not(feature = "omw_local"))]
 static DEFAULT_TIPS: LazyLock<Vec<AgentTip>> = LazyLock::new(|| {
     vec![
         AgentTip {

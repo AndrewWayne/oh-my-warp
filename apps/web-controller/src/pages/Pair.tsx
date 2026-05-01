@@ -8,6 +8,7 @@ import {
 } from "../lib/pairing";
 import { startQrScan, type QrScanner } from "../lib/qr-scan";
 import { savePairing } from "../lib/storage/idb";
+import { createDefaultSession } from "../lib/sessions";
 
 // Camera scan needs `navigator.mediaDevices.getUserMedia`, which browsers
 // gate behind a secure context (HTTPS, localhost, or file://). On plain
@@ -166,7 +167,7 @@ export default function Pair() {
     setRedeeming(true);
     try {
       const result = await redeemPairing(pairUrl, deviceName.trim(), platform);
-      await savePairing({
+      const pairingRecord = {
         hostId: result.hostId,
         hostUrl: result.hostUrl,
         hostPubkey: result.hostPubkey,
@@ -175,15 +176,27 @@ export default function Pair() {
         capabilityTokenB64: result.capabilityTokenB64,
         pairedAt: new Date().toISOString(),
         capabilities: result.capabilities,
-      });
-      // Go straight to a terminal. omw-remote spawns a shell on first WS
-      // connect for an unknown session id, so "main" is fine as a stable
-      // identifier — reconnects from the same device land on the same
-      // session as long as the daemon keeps it. Without this jump, the
-      // /pair flow would land on Home, which is a stub with just a
-      // "Pair a host" link → users would think nothing happened.
+      };
+      await savePairing(pairingRecord);
+
+      // Spawn a default shell session so the Terminal page has a real UUID
+      // to connect to. Without this, /ws/v1/pty/<anything> 404s because
+      // omw-remote requires the path's session_id to (a) parse as UUID
+      // and (b) be registered in the registry.
+      let sessionId: string;
+      try {
+        sessionId = await createDefaultSession(pairingRecord, "main");
+      } catch (e) {
+        setErrorMsg(
+          `Paired, but couldn't open a terminal session on the host: ${
+            e instanceof Error ? e.message : String(e)
+          }. Try again from the home page.`,
+        );
+        return;
+      }
+
       navigate(
-        `/terminal/${encodeURIComponent(result.hostId)}/main`,
+        `/terminal/${encodeURIComponent(result.hostId)}/${encodeURIComponent(sessionId)}`,
       );
     } catch (e) {
       if (e instanceof PairError) {

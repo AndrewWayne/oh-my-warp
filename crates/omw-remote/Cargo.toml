@@ -7,6 +7,15 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 description = "GUI-anchored PTY bridge + remote API + pairing daemon. Phase 0 placeholder."
+build = "build.rs"
+
+[features]
+default = ["embedded-web-controller"]
+# Embeds `apps/web-controller/dist/` into the binary via `include_dir!` and
+# wires a static-asset fallback into the router. Build script (`build.rs`)
+# runs `npm install` + `npm run build` to populate dist/. Disable with
+# `--no-default-features` on hosts without Node.
+embedded-web-controller = ["dep:include_dir", "dep:mime_guess"]
 
 [dependencies]
 ed25519-dalek = { version = "2", features = ["pkcs8", "rand_core"] }
@@ -30,6 +39,8 @@ omw-pty = { path = "../omw-pty" }
 omw-server = { path = "../omw-server" }
 bytes = "1"
 futures-util = "0.3"
+include_dir = { version = "0.7", optional = true }
+mime_guess = { version = "2", optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

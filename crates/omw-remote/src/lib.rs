@@ -20,6 +20,7 @@ pub mod replay;
 pub mod request_log;
 pub mod revocations;
 pub mod server;
+pub mod web_assets;
 pub mod ws;
 
 pub use auth::{AuthError, CanonicalRequest, DeviceId, Signer, Verifier};

@@ -15,6 +15,12 @@ target/
 node_modules/
 dist/
 build/
+*.tsbuildinfo
+# tsc -b emits .d.ts/.js next to .ts config files (vite.config.*, tailwind.config.*, etc.).
+apps/web-controller/vite.config.d.ts
+apps/web-controller/vite.config.js
+apps/web-controller/tailwind.config.d.ts
+apps/web-controller/tailwind.config.js
 
 # TRD coordination state (per-run, not committed)
 .tmp/

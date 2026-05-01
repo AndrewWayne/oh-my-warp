@@ -109,6 +109,7 @@ pub fn make_router(config: ServerConfig) -> axum::Router {
         )
         .route("/api/v1/sessions/:id", delete(http::sessions::delete))
         .route("/ws/v1/pty/:session_id", get(ws_handler))
+        .fallback(crate::web_assets::serve_static)
         .with_state(state)
 }
 

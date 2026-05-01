@@ -89,13 +89,13 @@ Set-Location "C:\Users\andre\oh-my-warp\oh-my-warp\vendor\warp-stripped"
 Validate the stripped target:
 
 ```powershell
-cargo check -p warp --bin warp-oss --features omw_local
+cargo check -p warp --bin warp-oss --no-default-features --features omw_local
 ```
 
 Build the executable:
 
 ```powershell
-cargo build -p warp --bin warp-oss --features omw_local
+cargo build -p warp --bin warp-oss --no-default-features --features omw_local
 ```
 
 Expected output binary:
@@ -109,7 +109,7 @@ vendor/warp-stripped/target/debug/warp-oss.exe
 Run through Cargo:
 
 ```powershell
-cargo run -p warp --bin warp-oss --features omw_local
+cargo run -p warp --bin warp-oss --no-default-features --features omw_local
 ```
 
 This is the preferred command when you want Cargo to rebuild automatically after code changes.
@@ -134,7 +134,7 @@ If you want one sequence that sets up the environment and starts the stripped bu
 $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 $env:PROTOC = "C:\Users\andre\oh-my-warp\oh-my-warp\.tmp\tools\protoc-29.3\bin\protoc.exe"
 Set-Location "C:\Users\andre\oh-my-warp\oh-my-warp\vendor\warp-stripped"
-cargo run -p warp --bin warp-oss --features omw_local
+cargo run -p warp --bin warp-oss --no-default-features --features omw_local
 ```
 
 ## Helper Script
@@ -207,7 +207,9 @@ Only the local/core app surface is intended to remain for later `omw` integratio
 ## macOS
 
 Deltas from the Windows path above. The Cargo invocation itself is identical:
-`cargo build -p warp --bin warp-oss --features omw_local` from `vendor/warp-stripped/`.
+`cargo build -p warp --bin warp-oss --no-default-features --features omw_local` from `vendor/warp-stripped/`.
+
+Note: `--no-default-features` is required so the `cloud` feature (which is in `default`) is excluded; otherwise the cloud crates (firebase, warp_server_client, etc.) would still be linked into the omw_local binary.
 
 ### Prerequisites
 
@@ -243,7 +245,7 @@ xcrun --find metal
 ```bash
 export PROTOC=/opt/homebrew/bin/protoc        # /usr/local/bin/protoc on Intel Macs
 cd vendor/warp-stripped
-cargo build -p warp --bin warp-oss --features omw_local
+cargo build -p warp --bin warp-oss --no-default-features --features omw_local
 ```
 
 Output binary:

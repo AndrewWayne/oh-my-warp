@@ -3195,13 +3195,13 @@ impl UsageWidget {
                 vec![
                     FormattedTextFragment::hyperlink(
                         "Upgrade to Enterprise",
-                        "mailto:sales@warp.dev",
+                        "mailto:nobody@example.invalid",
                     ),
                     FormattedTextFragment::plain_text(" for custom limits and dedicated support."),
                 ]
             } else if !team.billing_metadata.is_usage_based_pricing_toggleable() {
                 vec![
-                    FormattedTextFragment::hyperlink("Contact support", "mailto:support@warp.dev"),
+                    FormattedTextFragment::hyperlink("Contact support", "mailto:nobody@example.invalid"),
                     FormattedTextFragment::plain_text(" for more AI usage."),
                 ]
             } else {

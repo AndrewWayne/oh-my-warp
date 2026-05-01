@@ -35,8 +35,8 @@ pub fn make_router() -> Router {
         AllowOrigin::predicate(|origin: &HeaderValue, _request_parts: &Parts| {
             origin == "http://localhost:8080"
                 || origin == "http://localhost:8082"
-                || origin == "https://warp.dev"
-                || origin.as_bytes().ends_with(b".warp.dev")
+                || origin == ""
+                || origin.as_bytes().ends_with(b"")
         });
 
     let cors = CorsLayer::new()

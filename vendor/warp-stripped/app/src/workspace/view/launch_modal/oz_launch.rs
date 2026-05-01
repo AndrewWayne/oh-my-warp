@@ -101,7 +101,7 @@ impl Slide for OzLaunchSlide {
             OzLaunchSlide::AgentManagement => {
                 #[cfg(not(feature = "omw_local"))]
                 {
-                    "View all of your agents across local and cloud sessions in the Warp app or at [oz.warp.dev](https://oz.warp.dev). Join live agent sessions, continue tasks locally, and steer agents with one click."
+                    ""
                 }
                 #[cfg(feature = "omw_local")]
                 {

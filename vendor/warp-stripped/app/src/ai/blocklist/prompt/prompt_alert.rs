@@ -368,7 +368,7 @@ impl PromptAlertView {
                     } else {
                         text_fragments.push(FormattedTextFragment::hyperlink(
                             CONTACT_SUPPORT_TEXT,
-                            "mailto:support@warp.dev".to_owned(),
+                            "mailto:nobody@example.invalid".to_owned(),
                         ));
                     }
                 } else {

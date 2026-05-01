@@ -38,7 +38,7 @@ use warpui::{
 
 const MODAL_WIDTH: f32 = 460.;
 const MODAL_HEIGHT: f32 = 320.;
-const API_KEY_DOCS_URL: &str = "https://docs.warp.dev/reference/cli/api-keys";
+const API_KEY_DOCS_URL: &str = "";
 
 #[derive(Clone, Copy)]
 pub enum PlatformPageViewEvent {

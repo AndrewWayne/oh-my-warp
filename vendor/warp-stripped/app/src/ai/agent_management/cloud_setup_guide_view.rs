@@ -29,11 +29,11 @@ use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use warpui::ViewHandle;
 use warpui::{AppContext, Entity, SingletonEntity, TypedActionView, View, ViewContext};
 
-const DOCS_URL: &str = "https://docs.warp.dev/agent-platform/cloud-agents/overview";
+const DOCS_URL: &str = "";
 const ENV_DOCS_URL: &str =
-    "https://docs.warp.dev/reference/cli/integration-setup#creating-an-environment";
+    "";
 #[cfg(not(feature = "omw_local"))]
-const OZ_URL: &str = "https://oz.warp.dev";
+const OZ_URL: &str = "";
 #[cfg(feature = "omw_local")]
 const OZ_URL: &str = "";
 
@@ -216,7 +216,7 @@ impl CloudSetupGuideView {
         let font_size = 16.;
 
         #[cfg(not(feature = "omw_local"))]
-        let banner_text = "Quick start: Visit oz.warp.dev for a UI-based setup experience.";
+        let banner_text = "";
         #[cfg(feature = "omw_local")]
         let banner_text = "Quick start: Cloud agent setup is unavailable in this build.";
 

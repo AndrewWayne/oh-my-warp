@@ -21,11 +21,19 @@ use crate::terminal::view::block_banner::WarpificationMode;
 
 /// Footer view rendered for detected subshell/SSH commands, offering Warpify and,
 /// when official cloud services are enabled, an agent handoff button.
+///
+/// Wiring 5 also threads an "Remote Control" button through this view,
+/// gated on the `omw_local` feature, that toggles the embedded `omw-remote`
+/// daemon. We dock it on warpify_footer for the wiring pass because the
+/// upstream agent_input_footer toolbar is configurable and adding a new kind
+/// there would require touching files outside the wiring scope.
 pub(super) struct WarpifyFooterView {
     terminal_model: Arc<FairMutex<TerminalModel>>,
     warpify_button: ViewHandle<ActionButton>,
     use_agent_button: ViewHandle<ActionButton>,
     dismiss_button: ViewHandle<ActionButton>,
+    #[cfg(feature = "omw_local")]
+    omw_pair_button: ViewHandle<ActionButton>,
     mode: Option<WarpificationMode>,
 }
 
@@ -64,11 +72,27 @@ impl WarpifyFooterView {
                 })
         });
 
+        #[cfg(feature = "omw_local")]
+        let omw_pair_button = ctx.add_typed_action_view(|_ctx| {
+            // Initial label/tooltip; we re-resolve them on every render so the
+            // button reflects the current daemon state.
+            ActionButton::new("Remote Control", AgentFooterButtonTheme::new(None))
+                .with_icon(Icon::Phone)
+                .with_size(button_size)
+                .with_tooltip("Start phone pairing")
+                .with_tooltip_alignment(TooltipAlignment::Left)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(WarpifyFooterViewAction::ToggleOmwPair);
+                })
+        });
+
         Self {
             terminal_model,
             warpify_button,
             use_agent_button,
             dismiss_button,
+            #[cfg(feature = "omw_local")]
+            omw_pair_button,
             mode: None,
         }
     }
@@ -109,12 +133,19 @@ pub enum WarpifyFooterViewAction {
     Warpify,
     UseAgent,
     Dismiss,
+    /// Toggle the embedded `omw-remote` daemon (Wiring 5).
+    #[cfg(feature = "omw_local")]
+    ToggleOmwPair,
 }
 
 pub enum WarpifyFooterViewEvent {
     Warpify { mode: WarpificationMode },
     UseAgent,
     Dismiss,
+    /// Re-emitted when the user clicks the Remote Control button. The parent
+    /// `UseAgentToolbar` translates this into `UseAgentToolbarEvent::ToggleOmwPair`.
+    #[cfg(feature = "omw_local")]
+    ToggleOmwPair,
 }
 
 impl Entity for WarpifyFooterView {
@@ -136,6 +167,10 @@ impl View for WarpifyFooterView {
             .with_child(ChildView::new(&self.warpify_button).finish());
         if ChannelState::official_cloud_services_enabled() {
             button_row = button_row.with_child(ChildView::new(&self.use_agent_button).finish());
+        }
+        #[cfg(feature = "omw_local")]
+        {
+            button_row = button_row.with_child(ChildView::new(&self.omw_pair_button).finish());
         }
         let button_row = button_row
             .with_child(Expanded::new(1., Empty::new().finish()).finish())
@@ -176,6 +211,10 @@ impl TypedActionView for WarpifyFooterView {
             WarpifyFooterViewAction::Dismiss => {
                 self.clear_mode(ctx);
                 ctx.emit(WarpifyFooterViewEvent::Dismiss);
+            }
+            #[cfg(feature = "omw_local")]
+            WarpifyFooterViewAction::ToggleOmwPair => {
+                ctx.emit(WarpifyFooterViewEvent::ToggleOmwPair);
             }
         }
     }

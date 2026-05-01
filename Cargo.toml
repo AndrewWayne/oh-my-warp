@@ -37,5 +37,5 @@ assert_cmd = "2"
 clap = { version = "4", features = ["derive"] }
 toml_edit = "0.22"
 anyhow = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.35", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }

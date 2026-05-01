@@ -29,6 +29,7 @@ axum = { version = "0.7", default-features = false, features = ["tokio", "http1"
 omw-config = { path = "../omw-config" }
 omw-keychain = { path = "../omw-keychain" }
 omw-remote = { path = "../omw-remote" }
+omw-server = { path = "../omw-server" }
 
 [dev-dependencies]
 assert_cmd.workspace = true

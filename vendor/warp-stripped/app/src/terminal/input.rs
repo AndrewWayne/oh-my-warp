@@ -2211,6 +2211,10 @@ impl Input {
                 | AgentInputFooterEvent::InsertIntoCLIRichInput(_)
                 | AgentInputFooterEvent::ToggleCodeReviewPane(_)
                 | AgentInputFooterEvent::ToggleFileExplorer(_) => {}
+                #[cfg(feature = "omw_local")]
+                AgentInputFooterEvent::ToggleOmwPair => {
+                    // Handled by UseAgentToolbar's subscription, not here.
+                }
                 AgentInputFooterEvent::ToggledChipMenu { open } => {
                     me.handle_prompt_event(&PromptDisplayEvent::ToggleMenu { open: *open }, ctx);
                 }

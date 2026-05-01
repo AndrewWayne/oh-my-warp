@@ -277,6 +277,16 @@ impl TerminalView {
                 self.hide_use_agent_footer_in_blocklist(ctx);
                 self.handle_action(&TerminalAction::SetInputModeAgent, ctx);
             }
+            #[cfg(feature = "omw_local")]
+            UseAgentToolbarEvent::ToggleOmwPair => {
+                let state = crate::omw::OmwRemoteState::shared();
+                let new_status = state.toggle();
+                log::info!("omw-remote toggle -> {new_status:?}");
+                // Re-render so the button label/tooltip reflects the new state.
+                self.use_agent_footer.update(ctx, |footer, ctx| {
+                    footer.notify_and_notify_children(ctx);
+                });
+            }
         }
     }
 
@@ -1074,6 +1084,10 @@ impl UseAgentToolbar {
             AgentInputFooterEvent::ToggleFileExplorer(agent) => {
                 ctx.emit(UseAgentToolbarEvent::ToggleFileExplorer(*agent));
             }
+            #[cfg(feature = "omw_local")]
+            AgentInputFooterEvent::ToggleOmwPair => {
+                ctx.emit(UseAgentToolbarEvent::ToggleOmwPair);
+            }
             AgentInputFooterEvent::StartRemoteControl => {
                 let scrollback_type = if self.cli_agent(ctx).is_some() {
                     SharedSessionScrollbackType::None
@@ -1110,6 +1124,10 @@ impl UseAgentToolbar {
             }
             WarpifyFooterViewEvent::Dismiss => {
                 ctx.emit(UseAgentToolbarEvent::Dismiss);
+            }
+            #[cfg(feature = "omw_local")]
+            WarpifyFooterViewEvent::ToggleOmwPair => {
+                ctx.emit(UseAgentToolbarEvent::ToggleOmwPair);
             }
         }
     }
@@ -1196,6 +1214,11 @@ pub enum UseAgentToolbarEvent {
     Warpify { mode: WarpificationMode },
     /// User chose to use the agent.
     UseAgent,
+    /// Toggle the embedded `omw-remote` daemon (Wiring 5). Distinct from
+    /// `StartRemoteControl`/`StopRemoteControl` above, which are upstream
+    /// Warp's "share session" feature.
+    #[cfg(feature = "omw_local")]
+    ToggleOmwPair,
 }
 
 impl Entity for UseAgentToolbar {

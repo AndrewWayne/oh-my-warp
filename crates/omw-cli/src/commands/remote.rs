@@ -138,6 +138,8 @@ pub(crate) fn start(
         nonce_store: NonceStore::new(Duration::from_secs(60)),
         pairings: Some(Arc::new(Pairings::new(db))),
         shell: ShellSpec::default_for_host(),
+        pty_registry: omw_server::SessionRegistry::new(),
+        host_id: "omw-host".to_string(),
     };
 
     let signal_name = args.shutdown_signal.clone();

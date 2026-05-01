@@ -250,6 +250,14 @@ warp_isolation_platform.workspace = true
 warp_ripgrep.workspace = true
 warp_managed_secrets.workspace = true
 
+# omw integration (Wiring 5). `default-features = false` on omw-remote disables
+# the embedded-web-controller feature so warp-stripped builds don't trigger an
+# `npm install + npm run build` in `crates/omw-remote/build.rs`. The Web
+# Controller is only meaningfully embedded when omw-remote is run as a
+# standalone daemon via the omw-cli binary.
+omw_server = { path = "../../../crates/omw-server", package = "omw-server", optional = true }
+omw_remote = { path = "../../../crates/omw-remote", package = "omw-remote", default-features = false, optional = true }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 block.workspace = true
 cocoa.workspace = true
@@ -716,7 +724,12 @@ mcp_server = []
 mcp_oauth = []
 mcp_debugging_ids = []
 notebook_parameter = []
-omw_local = ["skip_firebase_anonymous_user", "warp_core/omw_local"]
+omw_local = [
+    "skip_firebase_anonymous_user",
+    "warp_core/omw_local",
+    "dep:omw_server",
+    "dep:omw_remote",
+]
 oz_changelog_updates = []
 personal_cloud_objects = []
 # Remote-backed tty that connects to a PTY-like interface via a server.

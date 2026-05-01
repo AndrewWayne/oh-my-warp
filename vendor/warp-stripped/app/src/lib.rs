@@ -51,6 +51,8 @@ mod modal;
 mod network;
 mod notebooks;
 mod notification;
+#[cfg(feature = "omw_local")]
+mod omw;
 mod palette;
 mod persistence;
 mod platform;

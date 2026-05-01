@@ -209,6 +209,10 @@ pub struct AgentInputFooter {
 
     // CLI agent-specific buttons (rendered when a CLI agent session is active).
     file_explorer_button: ViewHandle<ActionButton>,
+    /// Wiring 5: omw-remote (phone pairing) toggle button, rendered next to
+    /// the File Explorer button. Gated on the `omw_local` feature.
+    #[cfg(feature = "omw_local")]
+    omw_pair_button: ViewHandle<ActionButton>,
     rich_input_button: ViewHandle<ActionButton>,
     settings_button: ViewHandle<ActionButton>,
     install_plugin_button: ViewHandle<ActionButton>,
@@ -362,6 +366,20 @@ impl AgentInputFooter {
                 .with_compact_keybinding(true)
                 .on_click(|ctx| {
                     ctx.dispatch_typed_action(AgentInputFooterAction::ToggleFileExplorer);
+                })
+        });
+        // Wiring 5: omw-remote (phone pairing) toggle button, rendered as a
+        // sibling of the File Explorer button so users can start/stop the
+        // embedded daemon from the CLI agent footer. Gated on `omw_local`.
+        #[cfg(feature = "omw_local")]
+        let omw_pair_button = ctx.add_typed_action_view(|_ctx| {
+            ActionButton::new("Remote Control", AgentInputButtonTheme)
+                .with_icon(Icon::Phone)
+                .with_tooltip("Toggle phone pairing")
+                .with_size(cli_button_size)
+                .with_tooltip_alignment(TooltipAlignment::Left)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(AgentInputFooterAction::ToggleOmwPair);
                 })
         });
         let rich_input_button = ctx.add_typed_action_view(|ctx| {
@@ -725,6 +743,8 @@ impl AgentInputFooter {
             mic_button,
             file_button,
             file_explorer_button,
+            #[cfg(feature = "omw_local")]
+            omw_pair_button,
             rich_input_button,
             settings_button,
             start_remote_control_button,
@@ -1279,7 +1299,24 @@ impl AgentInputFooter {
                 self.cli_display_chip(chip_kind.clone(), app)
             }
             AgentToolbarItemKind::FileExplorer => {
-                Some(ChildView::new(&self.file_explorer_button).finish())
+                // Wiring 5: when `omw_local` is enabled, render the omw
+                // Remote Control button immediately to the right of the
+                // File Explorer button so they live as visual siblings in
+                // the CLI footer toolbar.
+                #[cfg(feature = "omw_local")]
+                {
+                    let row = Flex::row()
+                        .with_spacing(4.)
+                        .with_main_axis_size(MainAxisSize::Min)
+                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                        .with_child(ChildView::new(&self.file_explorer_button).finish())
+                        .with_child(ChildView::new(&self.omw_pair_button).finish());
+                    Some(row.finish())
+                }
+                #[cfg(not(feature = "omw_local"))]
+                {
+                    Some(ChildView::new(&self.file_explorer_button).finish())
+                }
             }
             AgentToolbarItemKind::RichInput => FeatureFlag::CLIAgentRichInput
                 .is_enabled()
@@ -2136,6 +2173,10 @@ pub enum AgentInputFooterAction {
     InsertFilePath(String),
     ToggleCodeReview,
     ToggleFileExplorer,
+    /// Wiring 5: toggle the embedded `omw-remote` daemon. Forwarded to
+    /// `UseAgentToolbar` via `AgentInputFooterEvent::ToggleOmwPair`.
+    #[cfg(feature = "omw_local")]
+    ToggleOmwPair,
     ToggleRichInput,
     ToggleAutodetectionSetting,
     DismissFtuModelCallout,
@@ -2206,6 +2247,10 @@ impl TypedActionView for AgentInputFooter {
                 if let Some(agent) = self.cli_agent(ctx) {
                     ctx.emit(AgentInputFooterEvent::ToggleFileExplorer(agent));
                 }
+            }
+            #[cfg(feature = "omw_local")]
+            AgentInputFooterAction::ToggleOmwPair => {
+                ctx.emit(AgentInputFooterEvent::ToggleOmwPair);
             }
             AgentInputFooterAction::ToggleRichInput => {
                 if self.has_active_cli_agent_input_session(ctx) {
@@ -2361,6 +2406,11 @@ pub enum AgentInputFooterEvent {
     InsertIntoCLIRichInput(String),
     ToggleCodeReviewPane(CLIAgent),
     ToggleFileExplorer(CLIAgent),
+    /// Wiring 5: user clicked the omw Remote Control button in the CLI
+    /// footer. Re-emitted by `UseAgentToolbar` as
+    /// `UseAgentToolbarEvent::ToggleOmwPair`.
+    #[cfg(feature = "omw_local")]
+    ToggleOmwPair,
     StartRemoteControl,
     StopRemoteControl,
     OpenRichInput,

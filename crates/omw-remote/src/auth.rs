@@ -81,12 +81,22 @@ pub struct Verifier {
 }
 
 impl Verifier {
-    /// New verifier with the spec-default 30-second skew window.
+    /// New verifier with a 300-second (5-minute) skew window.
+    ///
+    /// The spec defaults to 30 s, which is too tight for real-world clients:
+    /// mobile browsers can sit on a signed bundle for tens of seconds when
+    /// the tab is backgrounded; consumer phones routinely drift 1-2 minutes
+    /// off true UTC if NTP isn't aggressive. Anti-replay protection comes
+    /// primarily from the nonce store's 60 s dedup window plus the
+    /// capability-token TTL — the ts skew is a coarser guard.
+    ///
+    /// The connect-token verifier (`server::verify_connect_token`) uses the
+    /// same 300 s value via its `ts_skew_seconds` argument.
     pub fn new(host_pubkey: [u8; 32], nonce_store: Arc<NonceStore>) -> Self {
         Self {
             host_pubkey,
             nonce_store,
-            ts_skew_seconds: 30,
+            ts_skew_seconds: 300,
         }
     }
 

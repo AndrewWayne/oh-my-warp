@@ -135,14 +135,25 @@ async fn ws_handler(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> axum::response::Response {
-    // 1. Origin pinning (§8.2). Mismatch -> 403. Applies to both auth paths.
-    //    The Origin header must match ANY entry in `pinned_origins`. An empty
-    //    list rejects every upgrade — never accidentally accept all.
     let origin = headers
         .get("origin")
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
+    let host_hdr = headers
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+    eprintln!(
+        "[omw-debug] ws_handler entry: session_id={session_id} origin={origin:?} host={host_hdr:?} has_query={} pinned={:?}",
+        raw_query.is_some(),
+        state.pinned_origins,
+    );
+
+    // 1. Origin pinning (§8.2). Mismatch -> 403. Applies to both auth paths.
+    //    The Origin header must match ANY entry in `pinned_origins`. An empty
+    //    list rejects every upgrade — never accidentally accept all.
     if !state.pinned_origins.iter().any(|o| o == origin) {
+        eprintln!("[omw-debug] ws_handler -> 403 origin_mismatch (origin={origin:?})");
         return (StatusCode::FORBIDDEN, "origin_mismatch").into_response();
     }
 
@@ -157,6 +168,13 @@ async fn ws_handler(
         .map(|s| s.to_string());
 
     let (device_id, cap_token) = if let Some(ct) = raw_ct {
+        // 300 s skew window: the spec default of 30 s assumes both endpoints
+        // run NTP-tight clocks, but mobile browsers can sit on a stale
+        // connect-token bundle for tens of seconds when the tab is backgrounded
+        // or the WS upgrade gets queued behind page-load work, and consumer
+        // phones routinely drift 1-2 minutes off true UTC. Anti-replay is
+        // still bounded — `nonce_store` dedups within its 60 s window, and
+        // the capability-token TTL caps the long horizon.
         match verify_connect_token(
             &ct,
             &request_path,
@@ -164,20 +182,29 @@ async fn ws_handler(
             &state.nonce_store,
             &state.revocations,
             Capability::PtyWrite,
-            30,
+            300,
             now,
         ) {
             Ok(pair) => pair,
-            Err(e) => return e.into_response(),
+            Err(e) => {
+                eprintln!("[omw-debug] ws_handler -> ct verify FAILED ({:?})", e);
+                return e.into_response();
+            }
         }
     } else {
+        eprintln!("[omw-debug] ws_handler -> falling back to header auth (no ?ct=)");
         match authenticate_with_headers(&state, &headers, &session_id, now) {
             Ok(pair) => pair,
-            Err(resp) => return resp,
+            Err(resp) => {
+                eprintln!("[omw-debug] ws_handler -> header auth FAILED");
+                return resp;
+            }
         }
     };
+    eprintln!("[omw-debug] ws_handler -> auth ok device_id={device_id}");
 
     if state.revocations.is_revoked(&device_id) {
+        eprintln!("[omw-debug] ws_handler -> 401 device_revoked");
         return (StatusCode::UNAUTHORIZED, "device_revoked").into_response();
     }
 
@@ -185,12 +212,19 @@ async fn ws_handler(
     //    not registered, reject the upgrade with 404.
     let session_uuid = match Uuid::parse_str(&session_id) {
         Ok(u) => u,
-        Err(_) => return (StatusCode::NOT_FOUND, "session_not_found").into_response(),
+        Err(_) => {
+            eprintln!("[omw-debug] ws_handler -> 404 session_id not a uuid");
+            return (StatusCode::NOT_FOUND, "session_not_found").into_response();
+        }
     };
     let output_rx = match state.pty_registry.subscribe(session_uuid) {
         Some(rx) => rx,
-        None => return (StatusCode::NOT_FOUND, "session_not_found").into_response(),
+        None => {
+            eprintln!("[omw-debug] ws_handler -> 404 session not in registry: {session_uuid}");
+            return (StatusCode::NOT_FOUND, "session_not_found").into_response();
+        }
     };
+    eprintln!("[omw-debug] ws_handler -> registry hit, upgrading");
 
     // 4. Accept upgrade.
     let cap_for_session = cap_token.clone();

@@ -221,19 +221,20 @@ fn replayed_nonce_rejects_second_attempt() {
 }
 
 #[test]
-fn ts_more_than_30s_in_past_rejects_with_ts_skew() {
+fn ts_outside_skew_window_rejects_with_ts_skew() {
     let f = fixture_with_caps(vec![Capability::PtyWrite]);
     let body = b"x";
-    // Sign with a stale ts.
-    let stale = Utc::now() - ChronoDuration::seconds(120);
+    // Verifier::new uses a 300 s skew window (see auth.rs::Verifier::new
+    // for the rationale — mobile clients drift). Sign with a ts well past
+    // that window.
+    let stale = Utc::now() - ChronoDuration::seconds(600);
     let req = build_canonical(body, &f.device_id, stale, "nonce-stale");
     let sig = sign_canonical(&f.device, &req);
 
-    // Verifier sees "now" two minutes after the signed ts.
     let err = f
         .verifier
         .verify(&req, &sig, &f.cap_token_b64, Capability::PtyWrite, Utc::now())
-        .expect_err("ts > 30 s in the past must be rejected");
+        .expect_err("ts outside skew window must be rejected");
     assert_eq!(err, AuthError::TsSkew);
 }
 

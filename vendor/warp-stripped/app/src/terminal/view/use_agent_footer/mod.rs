@@ -282,6 +282,15 @@ impl TerminalView {
                 let state = crate::omw::OmwRemoteState::shared();
                 let new_status = state.toggle();
                 log::info!("omw-remote toggle -> {new_status:?}");
+                // TODO(omw/wiring, gap-1c): auto-share the active pane here by
+                // calling `crate::omw::pane_share::share_pane` with the pane's
+                // `event_loop_tx` / `pty_reads_tx` and the registry from
+                // `state.pty_registry()`. Deferred because reaching the
+                // concrete `local_tty::TerminalManager` from this
+                // manager-agnostic `TerminalView` callsite requires plumbing
+                // through `pane_stack` -> `PaneView::child_data()` and then
+                // downcasting `Box<dyn TerminalManager>`. Until that lands,
+                // the daemon spawns a sibling shell on phone connect.
                 // Re-render so the button label/tooltip reflects the new state.
                 self.use_agent_footer.update(ctx, |footer, ctx| {
                     footer.notify_and_notify_children(ctx);

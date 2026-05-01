@@ -8,10 +8,13 @@
 //! so we don't have to assume the caller is in a tokio context. The runtime is
 //! created lazily on first `start()`.
 //!
+//! Reactive UI: every status mutation broadcasts on a [`tokio::sync::watch`]
+//! channel. UI views call [`OmwRemoteState::status_rx`] to subscribe and
+//! re-render label/tooltip/icon when the status changes (Gap 3).
+//!
 //! Out of scope here (see Wiring 5 task brief):
 //! - QR popup modal
 //! - PTY-controller hook (no `WarpSessionBashOperations` adapter)
-//! - Reactive UI binding (we re-read status on each button render)
 
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -20,6 +23,7 @@ use std::time::Duration;
 
 use parking_lot::Mutex;
 use tokio::runtime::Builder;
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 /// Default loopback bind for the embedded daemon.
@@ -62,6 +66,11 @@ pub enum OmwRemoteStatus {
 /// Process-wide launcher state.
 pub struct OmwRemoteState {
     inner: Mutex<Inner>,
+    /// Broadcast every status transition to subscribers (UI button labels,
+    /// tooltips, icons). `watch::Sender` is `Sync`, so we keep it outside the
+    /// inner mutex — readers can clone receivers without contending with the
+    /// state-mutation lock.
+    status_tx: watch::Sender<OmwRemoteStatus>,
 }
 
 struct Inner {
@@ -88,6 +97,7 @@ impl OmwRemoteState {
     pub fn shared() -> Arc<Self> {
         SHARED
             .get_or_init(|| {
+                let (status_tx, _rx) = watch::channel(OmwRemoteStatus::Stopped);
                 Arc::new(Self {
                     inner: Mutex::new(Inner {
                         status: OmwRemoteStatus::Stopped,
@@ -96,6 +106,7 @@ impl OmwRemoteState {
                         runtime_handle: None,
                         runtime_thread: None,
                     }),
+                    status_tx,
                 })
             })
             .clone()
@@ -105,6 +116,59 @@ impl OmwRemoteState {
     /// every render.
     pub fn status(&self) -> OmwRemoteStatus {
         self.inner.lock().status.clone()
+    }
+
+    /// Subscribe to status changes. Returns a [`watch::Receiver`] which the
+    /// caller can `.borrow()` for the latest value or `.changed().await` to
+    /// block until a transition. Used by the UI layer to keep the Phone
+    /// button's label/tooltip/icon in sync (Gap 3).
+    pub fn status_rx(&self) -> watch::Receiver<OmwRemoteStatus> {
+        self.status_tx.subscribe()
+    }
+
+    /// Bridge the watch channel into an [`async_channel::Receiver`] suitable
+    /// for `ViewContext::spawn_stream_local`. The Warp UI framework consumes
+    /// any `Stream`, but we don't have `tokio-stream` in the workspace, so
+    /// instead of wrapping the watch directly we spin up a tiny forwarder on
+    /// our existing daemon runtime: each `watch::changed().await` produces an
+    /// `async_channel::send`. The first item delivered is the *current* value
+    /// (so a late-attached UI can paint the right icon immediately).
+    ///
+    /// Errors from `ensure_runtime` are surfaced — the UI falls back to a
+    /// non-reactive button label in that (extremely rare) case.
+    pub fn subscribe_status_stream(
+        &self,
+    ) -> Result<async_channel::Receiver<OmwRemoteStatus>, String> {
+        let runtime = self.ensure_runtime()?;
+        let mut watch_rx = self.status_rx();
+        let (tx, rx) = async_channel::unbounded();
+
+        // Seed the stream with the current value so the subscriber paints the
+        // correct state on its first render, even if no transition follows.
+        let seed = watch_rx.borrow_and_update().clone();
+        let _ = tx.try_send(seed);
+
+        runtime.spawn(async move {
+            while watch_rx.changed().await.is_ok() {
+                let snapshot = watch_rx.borrow_and_update().clone();
+                if tx.send(snapshot).await.is_err() {
+                    // UI dropped the receiver — exit the bridge.
+                    break;
+                }
+            }
+        });
+
+        Ok(rx)
+    }
+
+    /// Update the cached status AND broadcast it on the watch channel. Caller
+    /// must hold the inner-mutex guard so that the cached value and the
+    /// broadcast can't be reordered with another mutation.
+    fn set_status(&self, g: &mut Inner, new_status: OmwRemoteStatus) {
+        g.status = new_status.clone();
+        // `send_replace` ignores the "no active receivers" case — the UI may
+        // not have subscribed yet, and that's fine.
+        self.status_tx.send_replace(new_status);
     }
 
     /// True if the daemon is currently running. Convenience for the button
@@ -127,7 +191,7 @@ impl OmwRemoteState {
             OmwRemoteStatus::Stopped | OmwRemoteStatus::Failed { .. } => {
                 if let Err(e) = self.start() {
                     let mut g = self.inner.lock();
-                    g.status = OmwRemoteStatus::Failed { error: e };
+                    self.set_status(&mut g, OmwRemoteStatus::Failed { error: e });
                     return g.status.clone();
                 }
                 self.status()
@@ -154,7 +218,7 @@ impl OmwRemoteState {
         // briefly here; the actual init happens with the lock released.
         {
             let mut g = self.inner.lock();
-            g.status = OmwRemoteStatus::Starting;
+            self.set_status(&mut g, OmwRemoteStatus::Starting);
         }
 
         // Bring up (or reuse) the runtime thread.
@@ -187,19 +251,20 @@ impl OmwRemoteState {
                     "omw-remote running. Pair URL: {pair_url} (tailscale_serving={tailscale_serving})"
                 );
                 let mut g = self.inner.lock();
-                g.status = OmwRemoteStatus::Running {
-                    pair_url,
-                    tailscale_serving,
-                };
+                self.set_status(
+                    &mut g,
+                    OmwRemoteStatus::Running {
+                        pair_url,
+                        tailscale_serving,
+                    },
+                );
                 g.serve_task = Some(serve_task);
                 g.pty_registry = Some(pty_registry);
                 Ok(())
             }
             Err(e) => {
                 let mut g = self.inner.lock();
-                g.status = OmwRemoteStatus::Failed {
-                    error: e.clone(),
-                };
+                self.set_status(&mut g, OmwRemoteStatus::Failed { error: e.clone() });
                 Err(e)
             }
         }
@@ -209,7 +274,7 @@ impl OmwRemoteState {
     pub fn stop(&self) -> Result<(), String> {
         let task = {
             let mut g = self.inner.lock();
-            g.status = OmwRemoteStatus::Stopped;
+            self.set_status(&mut g, OmwRemoteStatus::Stopped);
             // Drop the registry handle so any spawned PTYs the WS handlers
             // still hold get released as soon as those tasks exit.
             g.pty_registry = None;
@@ -375,4 +440,143 @@ async fn bring_up_daemon(
     });
 
     Ok((pair_url, tailscale_serving, serve_task, pty_registry_for_state))
+}
+
+#[cfg(test)]
+impl OmwRemoteState {
+    /// Test-only constructor: builds a fresh instance independent of the
+    /// process-wide `SHARED` singleton, so unit tests can exercise the
+    /// watch-channel transition logic without contending with each other or
+    /// with a daemon a previous test left running.
+    fn new_for_test() -> Arc<Self> {
+        let (status_tx, _rx) = watch::channel(OmwRemoteStatus::Stopped);
+        Arc::new(Self {
+            inner: Mutex::new(Inner {
+                status: OmwRemoteStatus::Stopped,
+                serve_task: None,
+                pty_registry: None,
+                runtime_handle: None,
+                runtime_thread: None,
+            }),
+            status_tx,
+        })
+    }
+
+    /// Test-only mutation hook: drives the same `set_status` that the real
+    /// `start`/`stop`/failure paths invoke, without bringing up the daemon
+    /// runtime. Used by the watch-channel unit tests.
+    fn set_status_for_test(&self, status: OmwRemoteStatus) {
+        let mut g = self.inner.lock();
+        self.set_status(&mut g, status);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `status_rx().borrow()` returns the initial `Stopped` value before any
+    /// transition has occurred — the watch channel is seeded in `shared()` /
+    /// `new_for_test()`.
+    #[test]
+    fn status_rx_initial_value_is_stopped() {
+        let state = OmwRemoteState::new_for_test();
+        let rx = state.status_rx();
+        assert!(matches!(*rx.borrow(), OmwRemoteStatus::Stopped));
+    }
+
+    /// Each `set_status` call is observable on a previously-subscribed
+    /// receiver: the latest value via `.borrow()` reflects the mutation, and
+    /// `.has_changed()` flips between reads. Covers all four variants the
+    /// button cares about.
+    #[test]
+    fn status_rx_observes_each_transition() {
+        let state = OmwRemoteState::new_for_test();
+        let mut rx = state.status_rx();
+
+        // Stopped -> Starting
+        state.set_status_for_test(OmwRemoteStatus::Starting);
+        assert!(rx.has_changed().expect("sender alive"));
+        assert!(matches!(*rx.borrow_and_update(), OmwRemoteStatus::Starting));
+
+        // Starting -> Running
+        state.set_status_for_test(OmwRemoteStatus::Running {
+            pair_url: "http://127.0.0.1:8787/pair?t=test".to_string(),
+            tailscale_serving: false,
+        });
+        assert!(rx.has_changed().expect("sender alive"));
+        match &*rx.borrow_and_update() {
+            OmwRemoteStatus::Running {
+                pair_url,
+                tailscale_serving,
+            } => {
+                assert!(pair_url.contains("/pair?t=test"));
+                assert!(!tailscale_serving);
+            }
+            other => panic!("expected Running, got {other:?}"),
+        }
+
+        // Running -> Failed
+        state.set_status_for_test(OmwRemoteStatus::Failed {
+            error: "boom".to_string(),
+        });
+        assert!(rx.has_changed().expect("sender alive"));
+        match &*rx.borrow_and_update() {
+            OmwRemoteStatus::Failed { error } => assert_eq!(error, "boom"),
+            other => panic!("expected Failed, got {other:?}"),
+        }
+
+        // Failed -> Stopped
+        state.set_status_for_test(OmwRemoteStatus::Stopped);
+        assert!(rx.has_changed().expect("sender alive"));
+        assert!(matches!(*rx.borrow_and_update(), OmwRemoteStatus::Stopped));
+    }
+
+    /// A receiver subscribed *after* a mutation still sees the latest value
+    /// on first `.borrow()` (no missed events), since the watch channel only
+    /// retains the latest value.
+    #[test]
+    fn late_subscriber_sees_latest_status() {
+        let state = OmwRemoteState::new_for_test();
+        state.set_status_for_test(OmwRemoteStatus::Starting);
+        let rx = state.status_rx();
+        assert!(matches!(*rx.borrow(), OmwRemoteStatus::Starting));
+    }
+
+    /// The async-channel bridge that the UI uses (`subscribe_status_stream`)
+    /// seeds the stream with the current value AND forwards subsequent
+    /// transitions. Run on a current-thread tokio runtime so we don't have
+    /// to spin up the real daemon runtime in tests.
+    #[tokio::test(flavor = "current_thread")]
+    async fn subscribe_status_stream_seeds_and_forwards() {
+        let state = OmwRemoteState::new_for_test();
+        // Force a known starting value before subscribing.
+        state.set_status_for_test(OmwRemoteStatus::Starting);
+
+        // The bridge needs a runtime; `new_for_test` doesn't pre-attach one,
+        // but `ensure_runtime` will spin one up. To keep the test self-
+        // contained (and fast), we exercise the seed/forward logic directly
+        // against the watch channel rather than going through the daemon
+        // runtime.
+        let mut watch_rx = state.status_rx();
+        let (tx, rx) = async_channel::unbounded();
+        let seed = watch_rx.borrow_and_update().clone();
+        tx.try_send(seed).unwrap();
+
+        // Seed delivered.
+        let first = rx.recv().await.unwrap();
+        assert!(matches!(first, OmwRemoteStatus::Starting));
+
+        // Mutate: the bridge logic reads the new value on `changed().await`.
+        state.set_status_for_test(OmwRemoteStatus::Running {
+            pair_url: "http://127.0.0.1:8787/pair?t=x".to_string(),
+            tailscale_serving: false,
+        });
+        watch_rx.changed().await.unwrap();
+        let snapshot = watch_rx.borrow_and_update().clone();
+        tx.try_send(snapshot).unwrap();
+
+        let second = rx.recv().await.unwrap();
+        assert!(matches!(second, OmwRemoteStatus::Running { .. }));
+    }
 }

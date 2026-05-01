@@ -13,4 +13,4 @@ pub mod tailscale;
 
 #[allow(unused_imports)]
 pub use pane_share::{share_pane, PaneShareHandle, ShareError};
-pub use remote_state::OmwRemoteState;
+pub use remote_state::{OmwRemoteState, OmwRemoteStatus};

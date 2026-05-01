@@ -130,6 +130,38 @@ const FAST_FORWARD_OFF_TOOLTIP: &str = "Auto-approve all agent actions for this 
 const START_REMOTE_CONTROL_TOOLTIP: &str = "Start remote control";
 const START_REMOTE_CONTROL_LOGIN_REQUIRED_TOOLTIP: &str = "Log in to use /remote-control";
 
+// Gap 3: omw Phone-button label and tooltip strings, keyed by `OmwRemoteStatus`.
+#[cfg(feature = "omw_local")]
+const OMW_PAIR_LABEL_REMOTE_CONTROL: &str = "Remote Control";
+#[cfg(feature = "omw_local")]
+const OMW_PAIR_LABEL_STARTING: &str = "Starting...";
+#[cfg(feature = "omw_local")]
+const OMW_PAIR_LABEL_STOP: &str = "Stop pairing";
+#[cfg(feature = "omw_local")]
+const OMW_PAIR_LABEL_RETRY: &str = "Retry pairing";
+#[cfg(feature = "omw_local")]
+const OMW_PAIR_TOOLTIP_STOPPED: &str = "Start phone pairing";
+#[cfg(feature = "omw_local")]
+const OMW_PAIR_TOOLTIP_STARTING: &str = "Starting...";
+#[cfg(feature = "omw_local")]
+const OMW_PAIR_TOOLTIP_RUNNING: &str = "Stop phone pairing";
+#[cfg(feature = "omw_local")]
+const OMW_PAIR_TOOLTIP_FAILED: &str = "Pairing failed — click to retry";
+
+/// Map an [`OmwRemoteStatus`] to the (label, tooltip) pair displayed on the
+/// agent footer Phone button. Pure function so it's trivially unit-testable
+/// and shared between initial-paint and reactive-update sites.
+#[cfg(feature = "omw_local")]
+fn omw_pair_button_text(status: &crate::omw::OmwRemoteStatus) -> (&'static str, &'static str) {
+    use crate::omw::OmwRemoteStatus;
+    match status {
+        OmwRemoteStatus::Stopped => (OMW_PAIR_LABEL_REMOTE_CONTROL, OMW_PAIR_TOOLTIP_STOPPED),
+        OmwRemoteStatus::Starting => (OMW_PAIR_LABEL_STARTING, OMW_PAIR_TOOLTIP_STARTING),
+        OmwRemoteStatus::Running { .. } => (OMW_PAIR_LABEL_STOP, OMW_PAIR_TOOLTIP_RUNNING),
+        OmwRemoteStatus::Failed { .. } => (OMW_PAIR_LABEL_RETRY, OMW_PAIR_TOOLTIP_FAILED),
+    }
+}
+
 const CLOUD_MODE_V2_FOOTER_GAP: f32 = 4.;
 
 /// Voice input state for the CLI agent footer. Unlike the editor-based voice
@@ -371,17 +403,34 @@ impl AgentInputFooter {
         // Wiring 5: omw-remote (phone pairing) toggle button, rendered as a
         // sibling of the File Explorer button so users can start/stop the
         // embedded daemon from the CLI agent footer. Gated on `omw_local`.
+        // Gap 3: tooltip + label reflect `OmwRemoteState`'s current status.
+        // The initial values are derived from the live status snapshot so a
+        // button created mid-session (e.g. after a hot-reload) shows the
+        // correct text on first paint; transitions after construction are
+        // delivered via the watch-channel stream subscribed below.
         #[cfg(feature = "omw_local")]
         let omw_pair_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("Remote Control", AgentInputButtonTheme)
+            let initial_status = crate::omw::OmwRemoteState::shared().status();
+            let (label, tooltip) = omw_pair_button_text(&initial_status);
+            ActionButton::new(label, AgentInputButtonTheme)
                 .with_icon(Icon::Phone)
-                .with_tooltip("Toggle phone pairing")
+                .with_tooltip(tooltip)
                 .with_size(cli_button_size)
                 .with_tooltip_alignment(TooltipAlignment::Left)
                 .on_click(|ctx| {
                     ctx.dispatch_typed_action(AgentInputFooterAction::ToggleOmwPair);
                 })
         });
+        // Gap 3: subscribe to status transitions so the button's
+        // label/tooltip stay in sync without relying on the click handler's
+        // explicit re-render. The bridge runs on the omw-remote daemon's
+        // tokio runtime; if it fails to spin up (extremely rare), we fall
+        // back to the static label/tooltip set above — the click handler
+        // still calls `notify_and_notify_children` which catches direct
+        // user-initiated transitions.
+        #[cfg(feature = "omw_local")]
+        let omw_status_stream =
+            crate::omw::OmwRemoteState::shared().subscribe_status_stream();
         let rich_input_button = ctx.add_typed_action_view(|ctx| {
             ActionButton::new("Rich Input", AgentInputButtonTheme)
                 .with_icon(Icon::TextInput)
@@ -786,6 +835,29 @@ impl AgentInputFooter {
         me.update_context_window_button(ctx);
         me.update_display_chips(&prompt, ctx);
         me.update_ftu_callout_render_state(ctx);
+
+        // Gap 3: drive the omw Phone button's label/tooltip from the watch
+        // channel. The first stream item carries the current status, so this
+        // also covers the initial paint (matching the snapshot the button was
+        // constructed with).
+        #[cfg(feature = "omw_local")]
+        match omw_status_stream {
+            Ok(stream) => {
+                ctx.spawn_stream_local(
+                    stream,
+                    |me, status: crate::omw::OmwRemoteStatus, ctx| {
+                        me.sync_omw_pair_button(&status, ctx);
+                    },
+                    |_, _| {},
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    "omw-remote: failed to subscribe Phone button to status stream: {e}"
+                );
+            }
+        }
+
         me
     }
 
@@ -1821,6 +1893,27 @@ impl AgentInputFooter {
             button.set_icon(Some(icon), ctx);
             button.set_tooltip(Some(tooltip), ctx);
             button.set_active(is_active, ctx);
+        });
+    }
+
+    /// Gap 3: refresh the omw Phone button's label and tooltip from the
+    /// supplied status. Called for every item delivered on the watch-channel
+    /// stream subscribed at view-creation time.
+    #[cfg(feature = "omw_local")]
+    fn sync_omw_pair_button(
+        &self,
+        status: &crate::omw::OmwRemoteStatus,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if let crate::omw::OmwRemoteStatus::Failed { error } = status {
+            log::debug!("omw-remote: Phone button reflecting Failed state: {error}");
+        }
+        let (label, tooltip) = omw_pair_button_text(status);
+        let is_running = matches!(status, crate::omw::OmwRemoteStatus::Running { .. });
+        self.omw_pair_button.update(ctx, |button, ctx| {
+            button.set_label(label, ctx);
+            button.set_tooltip(Some(tooltip), ctx);
+            button.set_active(is_running, ctx);
         });
     }
 

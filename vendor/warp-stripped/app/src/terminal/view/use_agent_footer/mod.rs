@@ -291,7 +291,12 @@ impl TerminalView {
                 // through `pane_stack` -> `PaneView::child_data()` and then
                 // downcasting `Box<dyn TerminalManager>`. Until that lands,
                 // the daemon spawns a sibling shell on phone connect.
-                // Re-render so the button label/tooltip reflects the new state.
+                // Belt-and-suspenders re-render. Gap 3 wired the Phone
+                // button's label/tooltip/icon to `OmwRemoteState`'s watch
+                // channel, so the toolbar updates itself on every status
+                // transition. We keep the explicit notify here so any sibling
+                // chips that depend on the toolbar layout still re-paint when
+                // the user clicks toggle.
                 self.use_agent_footer.update(ctx, |footer, ctx| {
                     footer.notify_and_notify_children(ctx);
                 });

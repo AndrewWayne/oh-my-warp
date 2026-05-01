@@ -19529,6 +19529,9 @@ impl Workspace {
     }
 
     fn redirect_to_sign_in(&mut self) {
+        #[cfg(feature = "omw_local")]
+        return;
+
         #[cfg(target_family = "wasm")]
         if let Some(current_url) = parse_current_url() {
             update_browser_url(

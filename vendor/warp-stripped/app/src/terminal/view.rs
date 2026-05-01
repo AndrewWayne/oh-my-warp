@@ -13028,11 +13028,17 @@ fn fork_label_for_query(query: &str) -> String {
 }
 
 impl TerminalView {
+    #[allow(unreachable_code)]
     fn start_agent_onboarding_tutorial(
         &mut self,
         version: AgentOnboardingVersion,
         ctx: &mut ViewContext<Self>,
     ) {
+        #[cfg(feature = "omw_local")]
+        {
+            let _ = (version, ctx);
+            return;
+        }
         // If we are already showing the onboarding callout, do nothing.
         if self.onboarding_callout_view.is_some() {
             log::warn!("Attempted to start onboarding tutorial when one is already active.");

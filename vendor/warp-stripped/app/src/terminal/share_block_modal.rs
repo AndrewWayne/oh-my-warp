@@ -8,7 +8,6 @@ use crate::{
         telemetry::TelemetryEvent,
     },
     settings::{EnforceMinimumContrast, FontSettings, FontSettingsChangedEvent, PrivacySettings},
-    settings_view::SettingsSection,
     terminal::{
         grid_renderer::{self},
         ligature_settings::{should_use_ligature_rendering, LigatureSettings},
@@ -20,8 +19,11 @@ use crate::{
     ui_components::icons::Icon,
     util::bindings::CustomAction,
     view_components::ToastFlavor,
-    workspace::WorkspaceAction,
 };
+#[cfg(not(feature = "omw_local"))]
+use crate::settings_view::SettingsSection;
+#[cfg(not(feature = "omw_local"))]
+use crate::workspace::WorkspaceAction;
 
 use super::grid_renderer::CellGlyphCache;
 use super::model::grid::RespectDisplayedOutput;
@@ -779,6 +781,7 @@ impl ShareBlockModal {
             .build()
             .on_click(|ctx, _, _| {
                 ctx.dispatch_typed_action(ShareBlockModalAction::Close);
+                #[cfg(not(feature = "omw_local"))]
                 ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPage(
                     SettingsSection::SharedBlocks,
                 ));

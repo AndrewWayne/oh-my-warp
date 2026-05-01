@@ -18,7 +18,7 @@ This repo ships with project-local Claude Code hooks under [`.claude/hooks/`](./
 
 | Event | Script | What it does |
 |---|---|---|
-| `PreToolUse` (Write/Edit) | `guard-vendor-and-brand.sh` | Blocks writes to `vendor/warp-fork/`. Warns on `Warp` in product source. |
+| `PreToolUse` (Write/Edit) | `guard-vendor-and-brand.sh` | Warns on `Warp` (capitalized) in product-surface source. |
 | `PreToolUse` (Bash) | `guard-bash.sh` | Blocks `rm -rf vendor/` and `rm -rf .git`. |
 | `PostToolUse` (Edit/Write) | `spec-touch-reminder.sh` | Reminds you to run `/spec-consistency` after editing planning docs. |
 | `Stop` | `todo-reminder.sh` | Reminds you to update TODO.md when phase status changes. |
@@ -53,7 +53,6 @@ Project-local slash commands live under [`.claude/skills/`](./.claude/skills/). 
 | `/check-scope` | Verifying a branch stays inside PRD §3.1 Committed Scope. |
 | `/spec-consistency` | After editing PRD or any spec; cross-checks PRD ↔ TODO ↔ specs. |
 | `/refresh-cassette <provider>` | Refreshing test cassettes for one provider (gated on `OMW_CASSETTE_REFRESH=1`). |
-| `/triage-rebase` | When a nightly upstream rebase fails. |
 | `/release-checklist <version>` | Walking the pre-release checklist for a tag. |
 | `/byorc-protocol-check` | Reviewing a PR that touches `crates/omw-remote/` or `specs/byorc-protocol.md`. |
 

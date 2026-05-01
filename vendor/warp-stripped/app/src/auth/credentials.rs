@@ -162,6 +162,7 @@ pub enum FirebaseToken {
 
 impl FirebaseToken {
     /// Returns the url for trading this long lived token into an access token.
+    #[cfg(not(feature = "omw_local"))]
     pub fn access_token_url(&self, api_key: &str) -> String {
         // See https://firebase.google.com/docs/reference/rest/auth for info on these
         // authentication endpoints.
@@ -173,6 +174,15 @@ impl FirebaseToken {
                 format!("https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key={api_key}")
             }
         }
+    }
+
+    /// In `omw_local` builds the firebase token-exchange surface is disabled.
+    /// This stub keeps the API shape but never returns the official URLs so the
+    /// `audit-no-cloud.sh` binary scan stays clean. Callers that hit this path
+    /// should already be UI-gated; if not, the empty URL surfaces a benign error.
+    #[cfg(feature = "omw_local")]
+    pub fn access_token_url(&self, _api_key: &str) -> String {
+        String::new()
     }
 
     /// Returns the POST body for to include when trading this long lived token into an access token.

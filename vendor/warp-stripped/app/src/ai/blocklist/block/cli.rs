@@ -62,6 +62,9 @@ use crate::terminal::input::SET_INPUT_MODE_TERMINAL_ACTION_NAME;
 use crate::terminal::model::block::BlockId;
 use crate::terminal::{ShellLaunchData, TerminalModel};
 use crate::view_components::DismissibleToast;
+#[cfg(not(feature = "omw_local"))]
+use crate::settings_view::SettingsSection;
+#[cfg(not(feature = "omw_local"))]
 use crate::workspace::WorkspaceAction;
 use crate::ToastStack;
 use crate::{
@@ -80,7 +83,6 @@ use crate::{
     code::{editor::view::CodeEditorView, editor_management::CodeSource},
     editor::InteractionState,
     menu::{Event as MenuEvent, Menu, MenuVariant},
-    settings_view::SettingsSection,
     terminal::safe_mode_settings::get_secret_obfuscation_mode,
     ui_components::{blended_colors, icons::Icon},
     view_components::{
@@ -1522,7 +1524,7 @@ impl TypedActionView for CLISubagentView {
                     .write(ClipboardContent::plain_text(debug_id.clone()));
             }
             CLISubagentAction::OpenFeedbackDocs => {
-                ctx.open_url("https://docs.warp.dev/support-and-billing/sending-us-feedback");
+                ctx.open_url("");
             }
         }
     }
@@ -1840,8 +1842,9 @@ fn render_permissions_speedbump(
         props.ai_settings_link.clone(),
     )
     .with_hyperlink_font_color(blended_colors::accent_fg_strong(theme).into())
-    .register_default_click_handlers(|_, ctx, _| {
-        ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPage(
+    .register_default_click_handlers(|_, _ctx, _| {
+        #[cfg(not(feature = "omw_local"))]
+        _ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPage(
             SettingsSection::WarpAgent,
         ));
     })

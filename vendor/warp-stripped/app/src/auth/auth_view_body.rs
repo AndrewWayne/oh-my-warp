@@ -44,7 +44,7 @@ use super::{
     AuthStateProvider,
 };
 
-const TOS_URL: &str = "https://www.warp.dev/terms-of-service";
+const TOS_URL: &str = "";
 
 const COMMON_BODY_UI_FONT_SIZE: f32 = 12.;
 const AUTH_MODAL_GAP: f32 = 16.;
@@ -81,6 +81,7 @@ pub fn init(app: &mut AppContext) {
 
 #[derive(Default)]
 struct MouseStateHandles {
+    #[allow(dead_code)]
     login_link_mouse_state_handle: MouseStateHandle,
     enter_login_later_mouse_state_handle: MouseStateHandle,
     confirm_login_later_mouse_state_handle: MouseStateHandle,
@@ -127,6 +128,7 @@ pub enum AuthStep {
 
 #[derive(Clone, Copy, Debug)]
 pub enum AuthViewBodyAction {
+    #[allow(dead_code)]
     Login,
     InitiateLoginLater,
     LoginLater,
@@ -487,6 +489,12 @@ impl AuthViewBody {
     }
 
     fn render_sign_in_row(&self, ui_builder: &UiBuilder) -> Box<dyn Element> {
+        #[cfg(feature = "omw_local")]
+        {
+            let _ = ui_builder;
+            return warpui::elements::Empty::new().finish();
+        }
+        #[cfg(not(feature = "omw_local"))]
         Flex::row()
             .with_child(
                 ui_builder

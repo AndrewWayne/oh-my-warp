@@ -682,7 +682,10 @@ impl BillingAndUsagePageView {
 
 impl SettingsPageMeta for BillingAndUsagePageView {
     fn section() -> SettingsSection {
-        SettingsSection::BillingAndUsage
+        #[cfg(not(feature = "omw_local"))]
+        return SettingsSection::BillingAndUsage;
+        #[cfg(feature = "omw_local")]
+        SettingsSection::About // placeholder; excluded from nav under omw_local
     }
 
     fn should_render(&self, ctx: &AppContext) -> bool {
@@ -1001,6 +1004,7 @@ impl TypedActionView for BillingAndUsagePageView {
                 ctx.notify();
             }
             BillingAndUsagePageAction::NavigateToByokSettings => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.dispatch_typed_action_deferred(WorkspaceAction::ShowSettingsPageWithSearch {
                     search_query: "api".to_string(),
                     section: Some(SettingsSection::WarpAgent),
@@ -3191,13 +3195,13 @@ impl UsageWidget {
                 vec![
                     FormattedTextFragment::hyperlink(
                         "Upgrade to Enterprise",
-                        "mailto:sales@warp.dev",
+                        "mailto:nobody@example.invalid",
                     ),
                     FormattedTextFragment::plain_text(" for custom limits and dedicated support."),
                 ]
             } else if !team.billing_metadata.is_usage_based_pricing_toggleable() {
                 vec![
-                    FormattedTextFragment::hyperlink("Contact support", "mailto:support@warp.dev"),
+                    FormattedTextFragment::hyperlink("Contact support", "mailto:nobody@example.invalid"),
                     FormattedTextFragment::plain_text(" for more AI usage."),
                 ]
             } else {

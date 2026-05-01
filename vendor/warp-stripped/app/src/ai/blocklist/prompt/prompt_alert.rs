@@ -14,11 +14,12 @@ use crate::{
     network::NetworkStatus,
     server::ids::ServerId,
     settings::PrivacySettings,
-    settings_view::SettingsSection,
     ui_components::icons::Icon,
     workspace::WorkspaceAction,
     workspaces::user_workspaces::UserWorkspaces,
 };
+#[cfg(not(feature = "omw_local"))]
+use crate::settings_view::SettingsSection;
 use ai::api_keys::ApiKeyManager;
 
 const ANONYMOUS_USER_REQUEST_LIMIT_SOFT_GATE_PERCENTAGE: f32 = 0.5;
@@ -367,7 +368,7 @@ impl PromptAlertView {
                     } else {
                         text_fragments.push(FormattedTextFragment::hyperlink(
                             CONTACT_SUPPORT_TEXT,
-                            "mailto:support@warp.dev".to_owned(),
+                            "mailto:nobody@example.invalid".to_owned(),
                         ));
                     }
                 } else {
@@ -387,6 +388,7 @@ impl PromptAlertView {
                 }
                 if UserWorkspaces::as_ref(app).is_byo_api_key_enabled() {
                     text_fragments.push(FormattedTextFragment::plain_text(" or "));
+                    #[cfg(not(feature = "omw_local"))]
                     text_fragments.push(FormattedTextFragment::hyperlink_action(
                         "use your own API keys",
                         WorkspaceAction::ShowSettingsPageWithSearch {
@@ -452,6 +454,7 @@ impl View for PromptAlertView {
 
         if suggest_buy_credits {
             text_fragments.push(FormattedTextFragment::plain_text("  "));
+            #[cfg(not(feature = "omw_local"))]
             text_fragments.push(FormattedTextFragment::hyperlink_action(
                 "Add credits",
                 WorkspaceAction::ShowSettingsPage(SettingsSection::BillingAndUsage),

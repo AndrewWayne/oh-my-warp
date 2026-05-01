@@ -610,7 +610,10 @@ impl View for ShowBlocksView {
 
 impl SettingsPageMeta for ShowBlocksView {
     fn section() -> SettingsSection {
-        SettingsSection::SharedBlocks
+        #[cfg(not(feature = "omw_local"))]
+        return SettingsSection::SharedBlocks;
+        #[cfg(feature = "omw_local")]
+        SettingsSection::About // placeholder; excluded from nav under omw_local
     }
 
     fn should_render(&self, ctx: &AppContext) -> bool {

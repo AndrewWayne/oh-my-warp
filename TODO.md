@@ -11,16 +11,16 @@ Brand: **omw** (product) · Repo codename: **oh-my-warp**.
 Phase 0 is *only* about getting decisions and specs written down. No application code starts until Phase 0 closes.
 
 - [x] Brand decision (omw + oh-my-warp codename)
-- [x] Initiate legal review (AGPL/MIT boundary, trademark posture, Homebrew distribution)
+- [x] Initiate legal review (AGPL compliance, trademark posture, Homebrew distribution)
 - [x] Write `specs/threat-model.md` — actors, surfaces, invariants
 - [x] Write `specs/byorc-protocol.md` — auth, signing, replay, capability scopes (used in v0.4)
-- [x] Write `specs/fork-strategy.md` — branching, patch series, nightly upstream-tracking CI
+- [x] Write `specs/fork-strategy.md` — in-tree fork policy, manual upstream sync, AGPL compliance (rewritten 2026-05-01)
 - [x] Write `specs/test-plan.md` — trust tiers, property/fuzz catalog, cassette strategy
 - [x] Component ownership map (already in PRD §8.3 — confirm with engineering leads)
 - [x] Repo skeleton: Cargo workspace with empty `omw-*` crates
 - [x] Add `LICENSE-AGPL` file referencing combined-distribution terms
 - [x] CI: build, fmt, clippy, test
-- [x] CI: nightly `upstream-rebase.yml` workflow rebasing `omw/main` onto `warpdotdev/master` (scaffold; activates when `oh-my-warp/warp-fork` is created in v0.3)
+- [x] ~~CI: nightly `upstream-rebase.yml` workflow~~ — removed 2026-05-01 with the sibling-fork plan; upstream sync is manual (see `specs/fork-strategy.md` §2)
 
 **Exit criteria:** all listed specs merged; CI green; license boundaries documented; legal review at least initiated.
 
@@ -62,9 +62,10 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 
 ## v0.3 — Forked client + local mode
 
-- [ ] Fork Warp into `oh-my-warp/warp-fork`; first rebase against `warpdotdev/master`
-- [ ] Add `omw_local` Cargo feature
-- [ ] Branding patch series: rename binary to `omw`, swap icon, change palette (no "Warp" wordmark anywhere)
+- [x] Maintain Warp source in-tree at `vendor/warp-stripped/` (initial tree added 2026-04-30)
+- [x] Add `omw_local` Cargo feature (initial scaffolding pre-existing; expanded 2026-05-01 to gate AI/cloud UI surfaces and exclude cloud-only crates from the binary)
+- [x] **Cloud-strip cascade** — `--no-default-features --features omw_local` compiles cleanly; `audit-no-cloud.sh` reports zero hits on all six patterns. Default cloud build still passes. Plan: [`specs/cloud-strip-plan.md`](./specs/cloud-strip-plan.md). Completed 2026-05-01 in ~5 hours rather than the projected 4 days — see commit `aadae83`. The cloud crates were misclassified as needing source-level removal; in fact they are pure-types/local-utility crates with no forbidden strings.
+- [ ] Branding: rename binary to `omw`, swap icon, change palette (no "Warp" wordmark anywhere)
 - [ ] `omw-server` (axum): identity, providers, agent sessions, settings endpoints
 - [ ] `omw-server`: single audit-writer endpoint (`POST /api/v1/audit/append`)
 - [ ] `omw-server`: minimum GraphQL surface needed to boot the client (instrument the fork to discover required queries)
@@ -154,4 +155,4 @@ See PRD §15. Highlights:
 - [ ] (v0.4) Single device identity per host vs reused across hosts (current default: per-host)
 - [ ] (Beyond v1) Cloudflare Tunnel as documented fallback — yes or hard non-goal?
 - [ ] (Beyond v1) Plugin system stake-in-the-ground for v1.x
-- [ ] (Phase 0) Umbrella repo license — keep MIT or relicense AGPL
+- [x] ~~(Phase 0) Umbrella repo license — keep MIT or relicense AGPL~~ → AGPL-3.0 (closed 2026-05-01; see PRD §15 #9)

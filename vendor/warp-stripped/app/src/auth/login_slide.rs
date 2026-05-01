@@ -40,7 +40,7 @@ use std::cell::Cell;
 use pathfinder_geometry::vector::vec2f;
 use warpui::elements::{ChildAnchor, ParentAnchor, ParentOffsetBounds};
 
-const TOS_URL: &str = "https://www.warp.dev/terms-of-service";
+const TOS_URL: &str = "";
 
 // ---------------------------------------------------------------------------
 // Init (keybindings)

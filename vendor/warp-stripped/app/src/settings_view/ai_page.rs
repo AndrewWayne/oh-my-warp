@@ -90,6 +90,7 @@ use super::{
 /// Identifies which subpage of the AI settings the user is viewing.
 /// When `None`, the page shows all widgets (legacy/full view).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "omw_local", allow(dead_code))]
 pub enum AISubpage {
     /// The main "WarpAgent" page: global AI toggle + Active AI + Input + Other sections.
     WarpAgent,
@@ -104,9 +105,13 @@ pub enum AISubpage {
 impl AISubpage {
     pub fn from_section(section: SettingsSection) -> Option<Self> {
         match section {
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::WarpAgent => Some(Self::WarpAgent),
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::AgentProfiles => Some(Self::Profiles),
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::Knowledge => Some(Self::Knowledge),
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::ThirdPartyCLIAgents => Some(Self::ThirdPartyCLIAgents),
             // AgentMCPServers renders the standalone MCPServers page, not an AI subpage.
             _ => None,
@@ -2846,7 +2851,10 @@ impl TypedActionView for AISettingsPageView {
 
 impl SettingsPageMeta for AISettingsPageView {
     fn section() -> SettingsSection {
-        SettingsSection::AI
+        #[cfg(not(feature = "omw_local"))]
+        return SettingsSection::AI;
+        #[cfg(feature = "omw_local")]
+        SettingsSection::About // placeholder; AI page excluded from nav under omw_local
     }
 
     fn should_render(&self, _ctx: &AppContext) -> bool {
@@ -3431,7 +3439,7 @@ impl SettingsWidget for UsageWidget {
                 }
             } else {
                 vec![
-                    FormattedTextFragment::hyperlink("Contact support", "mailto:support@warp.dev"),
+                    FormattedTextFragment::hyperlink("Contact support", "mailto:nobody@example.invalid"),
                     FormattedTextFragment::plain_text(" for more AI usage."),
                 ]
             }
@@ -4365,7 +4373,7 @@ impl AgentsWidget {
             ),
             FormattedTextFragment::hyperlink(
                 "Learn more",
-                "https://docs.warp.dev/agent-platform/capabilities/codebase-context",
+                "",
             ),
         ];
         let description = Container::new(
@@ -4443,7 +4451,7 @@ impl AgentsWidget {
                 FormattedTextFragment::plain_text(" or "),
                 FormattedTextFragment::hyperlink(
                     "learn more about MCPs.",
-                    "https://docs.warp.dev/agent-platform/capabilities/mcp",
+                    "",
                 ),
             ];
 
@@ -4907,7 +4915,7 @@ impl SettingsWidget for MCPServersWidget {
             ),
             FormattedTextFragment::hyperlink(
                 "Learn more",
-                "https://docs.warp.dev/agent-platform/capabilities/mcp",
+                "",
             ),
         ];
 
@@ -4953,7 +4961,7 @@ impl SettingsWidget for MCPServersWidget {
                                 ),
                                 FormattedTextFragment::hyperlink(
                                     "See supported providers.",
-                                    "https://docs.warp.dev/agent-platform/capabilities/mcp#file-based-mcp-servers",
+                                    "",
                                 ),
                             ]
                         });
@@ -5038,7 +5046,7 @@ impl AIFactWidget {
             ),
             FormattedTextFragment::hyperlink(
                 "Learn more",
-                "https://docs.warp.dev/agent-platform/capabilities/rules",
+                "",
             ),
         ];
         let description = Container::new(
@@ -5433,7 +5441,7 @@ impl SettingsWidget for OtherAIWidget {
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
+#[cfg(all(not(target_family = "wasm"), not(feature = "omw_local")))]
 pub(crate) fn cli_agent_settings_widget_id() -> &'static str {
     CLIAgentWidget::static_widget_id()
 }
@@ -6176,7 +6184,7 @@ impl ApiKeysWidget {
                 // to sales to enable BYOK on their existing plan.
                 if team.billing_metadata.customer_type == CustomerType::Enterprise {
                     vec![
-                        FormattedTextFragment::hyperlink("Contact sales", "mailto:sales@warp.dev"),
+                        FormattedTextFragment::hyperlink("Contact sales", "mailto:nobody@example.invalid"),
                         FormattedTextFragment::plain_text(
                             " to enable bringing your own API keys on your Enterprise plan.",
                         ),

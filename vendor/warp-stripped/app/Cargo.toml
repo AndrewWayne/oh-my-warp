@@ -223,7 +223,7 @@ warp_js = { workspace = true, optional = true }
 warp_server_client.workspace = true
 warp_util.workspace = true
 warpui = { workspace = true, features = ["schema_gen", "settings_value"] }
-voice_input = { workspace = true, optional = true }
+voice_input.workspace = true
 warpui_extras = { workspace = true, features = ["default", "user_preferences-toml"] }
 syntax_tree.workspace = true
 languages.workspace = true
@@ -301,7 +301,7 @@ rquickjs = { workspace = true, optional = true }
 rustls.workspace = true
 syntect = "5.0"
 sysinfo.workspace = true
-warp-command-signatures = { workspace = true, features = ["embed-signatures"] }
+warp-command-signatures.workspace = true
 is_executable = "1.0.1"
 gethostname = "1.1.0"
 watcher.workspace = true
@@ -456,7 +456,15 @@ crash_reporting = [
 creating_shared_sessions = []
 cross_repo_context = []
 codebase_index_persistence = ["full_source_code_embedding"]
-default = [
+default = ["omw_default", "cloud"]
+
+# All non-cloud "default" UI / agent / settings feature flags. Both the default
+# cloud build and the omw_local build need these enabled — when they're absent,
+# menu items reference unregistered feature-gated actions and the binary panics
+# at startup with `debug_assert!(false, "action should have a name: ...")` from
+# app/src/app_menus.rs::default_name. Cloud-specific flags stay outside this
+# list (they live in `cloud` only).
+omw_default = [
     "agent_mode",
     "viewing_shared_sessions",
     "render_continuous_block_selections_with_single_border",
@@ -716,7 +724,8 @@ mcp_server = []
 mcp_oauth = []
 mcp_debugging_ids = []
 notebook_parameter = []
-omw_local = ["skip_firebase_anonymous_user", "warp_core/omw_local"]
+cloud = ["warp-command-signatures/embed-signatures"]
+omw_local = ["omw_default", "warp_core/omw_local"]
 oz_changelog_updates = []
 personal_cloud_objects = []
 # Remote-backed tty that connects to a PTY-like interface via a server.
@@ -757,7 +766,7 @@ skip_login = []
 # This feature should only be enabled when building a self-contained binary with the bundle script.
 standalone = []
 prompt_suggestions_via_maa = []
-voice_input = ["dep:voice_input"]
+voice_input = []
 system_theme = []
 tab_close_button_on_left = []
 team_features_override = []

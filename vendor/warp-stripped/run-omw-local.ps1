@@ -88,11 +88,11 @@ try {
     }
 
     if ($BuildOnly) {
-        & cargo build -p warp --bin warp-oss --features omw_local
+        & cargo build -p warp --bin warp-oss --no-default-features --features omw_local
         return
     }
 
-    & cargo run -p warp --bin warp-oss --features omw_local
+    & cargo run -p warp --bin warp-oss --no-default-features --features omw_local
 }
 finally {
     Pop-Location

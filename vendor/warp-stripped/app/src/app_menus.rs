@@ -3,6 +3,7 @@ use std::fs::File;
 use std::path::PathBuf;
 
 use crate::ai::persisted_workspace::PersistedWorkspace;
+#[cfg(not(feature = "omw_local"))]
 use crate::auth::AuthStateProvider;
 use crate::default_terminal::DefaultTerminal;
 use crate::features::{runtime_flags_menu_items, FeatureFlag};
@@ -19,14 +20,18 @@ use crate::user_config::WarpConfig;
 use crate::util::bindings::{self, trigger_to_keystroke, CustomAction};
 use crate::util::links;
 use crate::workspace::sync_inputs::SyncedInputState;
-use crate::{auth, report_if_error};
+use crate::report_if_error;
+#[cfg(not(feature = "omw_local"))]
+use crate::auth;
 use ai::workspace::WorkspaceMetadata;
 use csv::Writer;
 use enclose::enclose;
 use itertools::Itertools;
 use settings::manager::SettingsManager;
 use settings::Setting as _;
-use warp_core::{channel::ChannelState, context_flag::ContextFlag};
+use warp_core::channel::ChannelState;
+#[cfg(not(feature = "omw_local"))]
+use warp_core::context_flag::ContextFlag;
 use warp_util::path::user_friendly_path;
 use warpui::actions::StandardAction;
 use warpui::keymap::{Keystroke, Trigger};
@@ -971,6 +976,7 @@ fn feedback_menu_item() -> MenuItem {
 }
 
 fn make_new_help_menu() -> Menu {
+    #[cfg_attr(feature = "omw_local", allow(unused_mut))]
     let mut items = vec![
         link_menu_item("Warp Documentation...", links::USER_DOCS_URL.into()),
         link_menu_item("GitHub Issues...", links::GITHUB_ISSUES_URL.into()),

@@ -14,11 +14,12 @@ use crate::{
     network::NetworkStatus,
     server::ids::ServerId,
     settings::PrivacySettings,
-    settings_view::SettingsSection,
     ui_components::icons::Icon,
     workspace::WorkspaceAction,
     workspaces::user_workspaces::UserWorkspaces,
 };
+#[cfg(not(feature = "omw_local"))]
+use crate::settings_view::SettingsSection;
 use ai::api_keys::ApiKeyManager;
 
 const ANONYMOUS_USER_REQUEST_LIMIT_SOFT_GATE_PERCENTAGE: f32 = 0.5;

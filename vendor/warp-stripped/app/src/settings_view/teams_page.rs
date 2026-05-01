@@ -445,6 +445,7 @@ pub struct TeamsPageView {
     delete_or_leave_team_confirmation_dialog: ViewHandle<CloudActionConfirmationDialog>,
     show_delete_or_leave_team_confirmation_dialog: bool,
     transfer_ownership_modal_state: ModalViewState<Modal<TransferOwnershipConfirmationModal>>,
+    #[cfg_attr(feature = "omw_local", allow(dead_code))]
     clipped_scroll_state: ClippedScrollStateHandle,
     discoverable_teams_states: Vec<DiscoverableTeamState>,
     rename_team_editor: ViewHandle<ClickableTextInput>,
@@ -1017,6 +1018,7 @@ impl TeamsPageView {
 
     /// Scroll to the team membership settings. If an email is provided, it's prepopulated in the
     /// invite editor.
+    #[cfg_attr(feature = "omw_local", allow(dead_code))]
     pub fn open_team_members(&mut self, email: Option<&String>, ctx: &mut ViewContext<Self>) {
         if let Some(email) = email {
             self.email_invites_block_editor.update(

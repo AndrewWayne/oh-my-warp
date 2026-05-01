@@ -90,6 +90,7 @@ use super::{
 /// Identifies which subpage of the AI settings the user is viewing.
 /// When `None`, the page shows all widgets (legacy/full view).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "omw_local", allow(dead_code))]
 pub enum AISubpage {
     /// The main "WarpAgent" page: global AI toggle + Active AI + Input + Other sections.
     WarpAgent,
@@ -5440,7 +5441,7 @@ impl SettingsWidget for OtherAIWidget {
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
+#[cfg(all(not(target_family = "wasm"), not(feature = "omw_local")))]
 pub(crate) fn cli_agent_settings_widget_id() -> &'static str {
     CLIAgentWidget::static_widget_id()
 }

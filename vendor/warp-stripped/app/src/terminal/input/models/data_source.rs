@@ -27,6 +27,7 @@ use crate::search::data_source::{Query, QueryFilter, QueryResult};
 use crate::search::mixer::DataSourceRunErrorWrapper;
 use crate::search::result_renderer::ItemHighlightState;
 use crate::search::{SearchItem, SyncDataSource};
+#[cfg(not(feature = "omw_local"))]
 use crate::settings_view::SettingsSection;
 use crate::terminal::input::inline_menu::{
     default_navigation_message_items, InlineMenuAction, InlineMenuMessageArgs, InlineMenuType,
@@ -445,9 +446,9 @@ impl SearchItem for ModelSearchItem {
                 })
                 .with_cursor(Some(Cursor::PointingHand))
                 .build()
-                .on_click(|ctx, _, _| {
+                .on_click(|_ctx, _, _| {
                     #[cfg(not(feature = "omw_local"))]
-                    ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPageWithSearch {
+                    _ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPageWithSearch {
                         search_query: "api".to_string(),
                         section: Some(SettingsSection::WarpAgent),
                     });

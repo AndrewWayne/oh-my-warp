@@ -2886,11 +2886,11 @@ impl RootView {
 
     pub fn open_team_settings_page(&mut self, _: &(), ctx: &mut ViewContext<Self>) -> bool {
         let window_id = ctx.window_id();
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
+        if let AuthOnboardingState::Terminal(_handle) = &self.auth_onboarding_state {
             #[cfg(not(feature = "omw_local"))]
             ctx.dispatch_typed_action_for_view(
                 window_id,
-                handle.id(),
+                _handle.id(),
                 &WorkspaceAction::ShowSettingsPage(SettingsSection::Teams),
             );
             ctx.windows().show_window_and_focus_app(window_id);

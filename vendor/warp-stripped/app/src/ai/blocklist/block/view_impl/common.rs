@@ -96,7 +96,6 @@ use crate::{
     },
     code::{editor::view::CodeEditorView, editor_management::CodeSource},
     notebooks::editor::{markdown_table_appearance, rich_text_styles},
-    settings_view::SettingsSection,
     terminal::{
         find::TerminalFindModel, safe_mode_settings::get_secret_obfuscation_mode,
         view::TerminalAction, ShellLaunchData,
@@ -120,6 +119,9 @@ use warp_editor::content::{
 use warp_util::path::to_relative_path;
 use warpui::elements::shimmering_text::ShimmeringTextStateHandle;
 use warpui::elements::{Highlight, HighlightedRange};
+
+#[cfg(not(feature = "omw_local"))]
+use crate::settings_view::SettingsSection;
 
 pub const STATUS_ICON_SIZE_DELTA: f32 = 4.;
 pub const STATUS_FOOTER_VERTICAL_PADDING: f32 = 4.;
@@ -3118,9 +3120,9 @@ fn render_invalid_api_key_error(
         .with_text_label("Edit API Keys".to_string())
         .with_cursor(Some(Cursor::PointingHand))
         .build()
-        .on_click(move |ctx, _, _| {
+        .on_click(move |_ctx, _, _| {
             #[cfg(not(feature = "omw_local"))]
-            ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPageWithSearch {
+            _ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPageWithSearch {
                 search_query: "api keys".to_string(),
                 section: Some(SettingsSection::WarpAgent),
             });

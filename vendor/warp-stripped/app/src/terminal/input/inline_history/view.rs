@@ -13,6 +13,7 @@ use crate::ai::blocklist::agent_view::{AgentViewController, AgentViewControllerE
 use crate::features::FeatureFlag;
 use crate::search::data_source::{Query, QueryFilter};
 use crate::search::mixer::{SearchMixer, SearchMixerEvent};
+#[cfg(not(feature = "omw_local"))]
 use crate::settings_view::SettingsSection;
 use crate::terminal::history::LinkedWorkflowData;
 use crate::terminal::input::buffer_model::InputBufferModel;
@@ -29,6 +30,7 @@ use crate::terminal::input::suggestions_mode_model::{
 use crate::terminal::model::session::active_session::ActiveSession;
 use crate::ui_components::icons::Icon;
 use crate::view_components::action_button::{ActionButton, ActionButtonTheme, ButtonSize};
+#[cfg(not(feature = "omw_local"))]
 use crate::workspace::WorkspaceAction;
 
 #[derive(Debug, Clone)]
@@ -264,9 +266,9 @@ impl InlineHistoryMenuView {
                 ActionButton::new("Configure", ConfigureButtonTheme)
                     .with_icon(Icon::Settings)
                     .with_size(ButtonSize::Small)
-                    .on_click(|ctx| {
+                    .on_click(|_ctx| {
                         #[cfg(not(feature = "omw_local"))]
-                        ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPageWithSearch {
+                        _ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPageWithSearch {
                             search_query: "commands history".into(),
                             section: Some(SettingsSection::WarpAgent),
                         });

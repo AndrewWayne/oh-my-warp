@@ -8460,12 +8460,12 @@ impl TerminalView {
     fn handle_ssh_success_block_events(
         &mut self,
         event: &WarpifySuccessBlockEvent,
-        ctx: &mut ViewContext<Self>,
+        _ctx: &mut ViewContext<Self>,
     ) {
         match event {
             WarpifySuccessBlockEvent::OpenWarpifySettings => {
                 #[cfg(not(feature = "omw_local"))]
-                ctx.emit(Event::OpenSettings(SettingsSection::Warpify));
+                _ctx.emit(Event::OpenSettings(SettingsSection::Warpify));
             }
         }
     }

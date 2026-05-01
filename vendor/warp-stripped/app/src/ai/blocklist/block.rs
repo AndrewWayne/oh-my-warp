@@ -175,6 +175,7 @@ use crate::auth::AuthStateProvider;
 use crate::code::editor::view::{CodeEditorEvent, CodeEditorView};
 use crate::notebooks::editor::model::FileLinkResolutionContext;
 use crate::notebooks::editor::view::{EditorViewEvent, RichTextEditorView};
+#[cfg(not(feature = "omw_local"))]
 use crate::settings_view::SettingsSection;
 use crate::terminal::model::session::active_session::{ActiveSession, ActiveSessionEvent};
 use crate::terminal::{ShellLaunchData, TerminalView};

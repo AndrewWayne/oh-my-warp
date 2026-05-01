@@ -363,9 +363,9 @@ impl UriHost {
                             // Open settings page unless auth was initiated from cloud setup
                             // (cloud setup users should stay on their current page)
                             let source = query_string.get("source").map(|s| s.as_ref());
-                            let skip_settings = source == Some(CLOUD_SETUP_SOURCE);
+                            let _skip_settings = source == Some(CLOUD_SETUP_SOURCE);
                             #[cfg(not(feature = "omw_local"))]
-                            if !skip_settings {
+                            if !_skip_settings {
                                 dispatch_action_in_new_or_existing_window(
                                     primary_window_id,
                                     "root_view:open_settings_page_in_existing_window",

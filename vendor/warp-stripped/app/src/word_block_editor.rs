@@ -191,6 +191,7 @@ impl WordBlockEditorView {
         ctx.notify();
     }
 
+    #[cfg_attr(feature = "omw_local", allow(dead_code))]
     pub fn add_word(&mut self, word: &String, ctx: &mut ViewContext<Self>) {
         self.list_of_words.push(Word {
             text: word.to_owned(),

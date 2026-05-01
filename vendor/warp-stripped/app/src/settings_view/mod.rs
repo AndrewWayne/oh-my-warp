@@ -1,3 +1,4 @@
+#[cfg(not(feature = "omw_local"))]
 use self::telemetry::SettingsTelemetryEvent;
 use crate::pane_group::focus_state::PaneFocusHandle;
 use crate::server::telemetry::MCPServerCollectionPaneEntrypoint;
@@ -109,7 +110,7 @@ pub mod update_environment_form;
 mod warp_drive_page;
 mod warpify_page;
 
-#[cfg(not(target_family = "wasm"))]
+#[cfg(all(not(target_family = "wasm"), not(feature = "omw_local")))]
 pub(crate) use ai_page::cli_agent_settings_widget_id;
 pub use billing_and_usage_page::create_discount_badge;
 pub use code_page::CodeSettingsPageView;
@@ -1072,6 +1073,7 @@ pub struct SettingsView {
     clipped_scroll_state: ClippedScrollStateHandle,
     context_menu: ViewHandle<Menu<SettingsAction>>,
     context_menu_state: Option<Vector2F>,
+    #[cfg_attr(feature = "omw_local", allow(dead_code))]
     environments_page_handle: ViewHandle<EnvironmentsPageView>,
     /// Sidebar navigation items (pages + umbrellas).
     nav_items: Vec<SettingsNavItem>,
@@ -1982,6 +1984,7 @@ impl SettingsView {
     ) {
         // Map internal backing-page sections to their default subpage.
         // External callers should use subpage variants directly.
+        #[cfg_attr(feature = "omw_local", allow(unused_mut))]
         let mut section = match section {
             #[cfg(not(feature = "omw_local"))]
             SettingsSection::AI => SettingsSection::WarpAgent,
@@ -1998,6 +2001,7 @@ impl SettingsView {
         if self.settings_page(page_section).is_none() {
             return;
         }
+        #[cfg_attr(feature = "omw_local", allow(unused_variables))]
         let previous_section = self.current_settings_page;
 
         ctx.enable_key_bindings_dispatching();
@@ -2128,7 +2132,10 @@ impl SettingsView {
             }
         }
         #[cfg(feature = "omw_local")]
-        let _ = email;
+        {
+            let _ = email;
+            let _ = ctx;
+        }
     }
 
     /// Open the MCP servers page, optionally to list page or edit page.

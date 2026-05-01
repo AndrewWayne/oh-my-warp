@@ -101,13 +101,15 @@ use crate::{
     },
     appearance::Appearance,
     code::diff_viewer::DisplayMode,
-    settings_view::SettingsSection,
     terminal::ShellLaunchData,
     ui_components::{blended_colors, buttons::icon_button, icons::Icon},
     view_components::action_button::ActionButton,
-    workspace::WorkspaceAction,
     FeatureFlag,
 };
+#[cfg(not(feature = "omw_local"))]
+use crate::settings_view::SettingsSection;
+#[cfg(not(feature = "omw_local"))]
+use crate::workspace::WorkspaceAction;
 use itertools::Itertools;
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use warp_core::channel::ChannelState;
@@ -1289,9 +1291,9 @@ fn render_search_codebase(
                                     .link(
                                         "Manage AI Autonomy permissions".into(),
                                         None,
-                                        Some(Box::new(move |ctx| {
+                                        Some(Box::new(move |_ctx| {
                                             #[cfg(not(feature = "omw_local"))]
-                                            ctx.dispatch_typed_action(
+                                            _ctx.dispatch_typed_action(
                                                 WorkspaceAction::ShowSettingsPageWithSearch {
                                                     search_query: "Autonomy".to_string(),
                                                     section: Some(SettingsSection::WarpAgent),

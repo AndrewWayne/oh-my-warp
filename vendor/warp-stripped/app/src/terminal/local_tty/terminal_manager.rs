@@ -170,6 +170,13 @@ pub struct TerminalManager {
     #[allow(dead_code)]
     inactive_pty_reads_rx: InactiveReceiver<Arc<Vec<u8>>>,
 
+    /// Clone of the PTY-read broadcast sender. Held so external bridges
+    /// (e.g. the omw-remote pane-share path) can call `.new_receiver()` on it
+    /// to subscribe to the same hot-path PTY-output stream that
+    /// [`ChannelEventListener::send_pty_read_event`] feeds.
+    #[allow(dead_code)]
+    pty_reads_tx: async_broadcast::Sender<Arc<Vec<u8>>>,
+
     /// The model responsible for implementing the sharer's side of the
     /// session sharing protocol. Only [`Some`] when there is a shared session
     /// connection ongoing.
@@ -184,6 +191,22 @@ impl Drop for TerminalManager {
 }
 
 impl TerminalManager {
+    /// Clone of the pane's event-loop sender. Used by external bridges
+    /// (omw-remote pane-share) to feed `Message::Input` into the same loop
+    /// the local PTY listens on.
+    #[allow(dead_code)]
+    pub fn event_loop_tx(&self) -> Arc<Mutex<mio_channel::Sender<Message>>> {
+        self.event_loop_tx.clone()
+    }
+
+    /// Clone of the PTY-read broadcast sender. Callers `.new_receiver()` it
+    /// to observe every chunk emitted by `send_pty_read_event` — the same
+    /// post-parse stream subscribers like the throughput recorder consume.
+    #[allow(dead_code)]
+    pub fn pty_reads_tx(&self) -> async_broadcast::Sender<Arc<Vec<u8>>> {
+        self.pty_reads_tx.clone()
+    }
+
     /// Sends a shutdown message to the PTY event loop and waits for it to
     /// process that event.
     fn shutdown_event_loop(&mut self) {
@@ -240,6 +263,10 @@ impl TerminalManager {
         let (pty_reads_tx, pty_reads_rx) =
             async_broadcast::broadcast(PTY_READS_BROADCAST_CHANNEL_SIZE);
         let inactive_pty_reads_rx = pty_reads_rx.deactivate();
+
+        // Keep a clone of the PTY-read broadcast sender on the manager so
+        // external bridges (omw-remote pane-share) can `.new_receiver()` it.
+        let pty_reads_tx_for_manager = pty_reads_tx.clone();
 
         let channel_event_proxy = ChannelEventListener::new(wakeups_tx, events_tx, pty_reads_tx);
 
@@ -745,6 +772,7 @@ impl TerminalManager {
             pid: None,
 
             inactive_pty_reads_rx,
+            pty_reads_tx: pty_reads_tx_for_manager,
             session_sharer,
         };
 

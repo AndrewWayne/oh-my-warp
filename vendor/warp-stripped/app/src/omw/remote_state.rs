@@ -62,6 +62,10 @@ struct Inner {
     /// daemon is running. We abort it to stop, since omw-remote's `serve()`
     /// has no graceful-shutdown hook in this version of the API.
     serve_task: Option<JoinHandle<()>>,
+    /// Live PTY-session registry shared with the running daemon. `Some` while
+    /// the daemon is running; cleared on stop. `share_pane` callers grab a
+    /// clone of this `Arc` to register the pane as an external session.
+    pty_registry: Option<Arc<omw_server::SessionRegistry>>,
     /// Handle to the dedicated runtime thread. Created lazily; reused across
     /// start/stop cycles. We keep it warm rather than tearing it down on stop
     /// so the second start doesn't have to spin up a new runtime.
@@ -80,6 +84,7 @@ impl OmwRemoteState {
                     inner: Mutex::new(Inner {
                         status: OmwRemoteStatus::Stopped,
                         serve_task: None,
+                        pty_registry: None,
                         runtime_handle: None,
                         runtime_thread: None,
                     }),
@@ -149,8 +154,15 @@ impl OmwRemoteState {
 
         // Block on init from the calling thread. The init future returns the
         // pair URL on success and a string error on failure.
-        let (init_tx, init_rx) =
-            std::sync::mpsc::sync_channel::<Result<(String, JoinHandle<()>), String>>(1);
+        type InitResult = Result<
+            (
+                String,
+                JoinHandle<()>,
+                Arc<omw_server::SessionRegistry>,
+            ),
+            String,
+        >;
+        let (init_tx, init_rx) = std::sync::mpsc::sync_channel::<InitResult>(1);
         let runtime_handle = handle.clone();
         handle.spawn(async move {
             let result = bring_up_daemon(runtime_handle).await;
@@ -161,11 +173,12 @@ impl OmwRemoteState {
             .recv()
             .map_err(|e| format!("init channel closed: {e}"))?
         {
-            Ok((pair_url, serve_task)) => {
+            Ok((pair_url, serve_task, pty_registry)) => {
                 eprintln!("omw-remote running. Pair URL: {pair_url}");
                 let mut g = self.inner.lock();
                 g.status = OmwRemoteStatus::Running { pair_url };
                 g.serve_task = Some(serve_task);
+                g.pty_registry = Some(pty_registry);
                 Ok(())
             }
             Err(e) => {
@@ -183,12 +196,21 @@ impl OmwRemoteState {
         let task = {
             let mut g = self.inner.lock();
             g.status = OmwRemoteStatus::Stopped;
+            g.pty_registry = None;
             g.serve_task.take()
         };
         if let Some(task) = task {
             task.abort();
         }
         Ok(())
+    }
+
+    /// Returns the live PTY session registry, when the daemon is running.
+    /// Used by the pane-share path so the UI can register a Warp pane as an
+    /// external session under the same registry the WS handlers consult.
+    #[allow(dead_code)]
+    pub fn pty_registry(&self) -> Option<Arc<omw_server::SessionRegistry>> {
+        self.inner.lock().pty_registry.clone()
     }
 
     /// Spin up (or return) the dedicated runtime thread.
@@ -250,12 +272,15 @@ fn data_dir() -> Result<PathBuf, String> {
     Ok(home.join(".local").join("share").join("omw"))
 }
 
-/// Bring the daemon up. Returns the pair URL and a join handle for the spawned
-/// serve task. Caller `.abort()`s the handle to stop the daemon — `omw-remote`
-/// doesn't expose a graceful-shutdown hook in this version of the API.
+/// Bring the daemon up. Returns the pair URL, a join handle for the spawned
+/// serve task, and a clone of the live PTY-session registry. Caller
+/// `.abort()`s the handle to stop the daemon — `omw-remote` doesn't expose a
+/// graceful-shutdown hook in this version of the API. The registry clone is
+/// surfaced so the UI can call `share_pane` against the same registry the
+/// daemon's WS handlers consult.
 async fn bring_up_daemon(
     runtime_handle: tokio::runtime::Handle,
-) -> Result<(String, JoinHandle<()>), String> {
+) -> Result<(String, JoinHandle<()>, Arc<omw_server::SessionRegistry>), String> {
     let dir = data_dir()?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
 
@@ -280,6 +305,7 @@ async fn bring_up_daemon(
         .map_err(|e| format!("parsing bind addr {DEFAULT_BIND}: {e}"))?;
 
     let pty_registry = omw_server::SessionRegistry::new();
+    let pty_registry_for_state = pty_registry.clone();
     let config = omw_remote::ServerConfig {
         bind,
         host_key: Arc::new(host_key),
@@ -299,5 +325,5 @@ async fn bring_up_daemon(
         }
     });
 
-    Ok((pair_url, serve_task))
+    Ok((pair_url, serve_task, pty_registry_for_state))
 }

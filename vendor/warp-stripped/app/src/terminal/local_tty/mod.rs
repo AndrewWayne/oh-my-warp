@@ -2,7 +2,7 @@
 
 pub mod docker_sandbox;
 pub mod event_loop;
-mod mio_channel;
+pub(crate) mod mio_channel;
 pub mod recorder;
 #[cfg(unix)]
 pub mod server;

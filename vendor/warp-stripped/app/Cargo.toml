@@ -257,6 +257,7 @@ warp_managed_secrets.workspace = true
 # standalone daemon via the omw-cli binary.
 omw_server = { path = "../../../crates/omw-server", package = "omw-server", optional = true }
 omw_remote = { path = "../../../crates/omw-remote", package = "omw-remote", default-features = false, optional = true }
+omw_pty = { path = "../../../crates/omw-pty", package = "omw-pty", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block.workspace = true
@@ -729,6 +730,7 @@ omw_local = [
     "warp_core/omw_local",
     "dep:omw_server",
     "dep:omw_remote",
+    "dep:omw_pty",
 ]
 oz_changelog_updates = []
 personal_cloud_objects = []

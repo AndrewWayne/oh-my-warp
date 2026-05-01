@@ -7,6 +7,9 @@
 //! Gated behind the `omw_local` feature so non-omw_local builds (if any) stay
 //! clean. See `vendor/warp-stripped/OMW_LOCAL_BUILD.md`.
 
+pub mod pane_share;
 pub mod remote_state;
 
+#[allow(unused_imports)]
+pub use pane_share::{share_pane, PaneShareHandle, ShareError};
 pub use remote_state::OmwRemoteState;

@@ -110,7 +110,10 @@ Transport, pairing, and Web Controller surfaces only — agent integration, appr
 
 Bridges v0.4-thin's "shipped components" to "real overnight-demo-able" experience. Detailed gap analysis with fix steps + acceptance criteria: [`docs/v0.4-thin-functional-gaps.md`](./docs/v0.4-thin-functional-gaps.md). Total scope ~6-8 hours = one Claude-Code overnight session.
 
-- [ ] **Gap 1**: `omw-server::SessionRegistry` external-source variant + `PtyController` I/O tap in warp-stripped + per-pane "Share this pane" UI. (~2-3 hours.)
+- [~] **Gap 1**: `omw-server::SessionRegistry` external-source variant + `PtyController` I/O tap in warp-stripped + per-pane "Share this pane" UI. (~2-3 hours.)
+  - [x] Part A — `register_external` + `ExternalSessionSpec` on `SessionRegistry` (commits 01c5594, 8a62ba0; 9 + 12 omw-server tests green).
+  - [x] Part B — `omw::pane_share::share_pane` bridge with input/output pumps; `OmwRemoteState::pty_registry()` accessor; `local_tty::TerminalManager::{event_loop_tx,pty_reads_tx}()` accessors (commit 444e815; 5 unit tests green).
+  - [ ] Part C — auto-share-on-Phone-click wiring. Deferred (commit f7513e2 has a TODO marker explaining why): the click handler lives in manager-agnostic `TerminalView`, and reaching the concrete `local_tty::TerminalManager` requires plumbing through `pane_stack → PaneView::child_data() → downcast Box<dyn TerminalManager>`, which is not a surgical change.
 - [ ] **Gap 2**: pair modal in warp-stripped with QR rendering, Copy button, paired-device count, Tailscale status line. (~1-2 hours, depends on Gap 3 + Gap 4.)
 - [ ] **Gap 3**: `tokio::sync::watch` channel on `OmwRemoteState`; reactive button label/icon. (~30-60 min.)
 - [ ] **Gap 4**: `omw/tailscale.rs` module — detect status, auto serve_https/unserve, multi-origin pinning. (~1.5-2 hours.)

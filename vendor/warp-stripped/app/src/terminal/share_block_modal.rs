@@ -779,6 +779,7 @@ impl ShareBlockModal {
             .build()
             .on_click(|ctx, _, _| {
                 ctx.dispatch_typed_action(ShareBlockModalAction::Close);
+                #[cfg(not(feature = "omw_local"))]
                 ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPage(
                     SettingsSection::SharedBlocks,
                 ));

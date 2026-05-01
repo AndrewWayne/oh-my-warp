@@ -682,7 +682,10 @@ impl BillingAndUsagePageView {
 
 impl SettingsPageMeta for BillingAndUsagePageView {
     fn section() -> SettingsSection {
-        SettingsSection::BillingAndUsage
+        #[cfg(not(feature = "omw_local"))]
+        return SettingsSection::BillingAndUsage;
+        #[cfg(feature = "omw_local")]
+        SettingsSection::About // placeholder; excluded from nav under omw_local
     }
 
     fn should_render(&self, ctx: &AppContext) -> bool {
@@ -1001,6 +1004,7 @@ impl TypedActionView for BillingAndUsagePageView {
                 ctx.notify();
             }
             BillingAndUsagePageAction::NavigateToByokSettings => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.dispatch_typed_action_deferred(WorkspaceAction::ShowSettingsPageWithSearch {
                     search_query: "api".to_string(),
                     section: Some(SettingsSection::WarpAgent),

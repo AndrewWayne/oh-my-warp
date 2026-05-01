@@ -84,7 +84,10 @@ impl View for WarpDriveSettingsPageView {
 
 impl SettingsPageMeta for WarpDriveSettingsPageView {
     fn section() -> SettingsSection {
-        SettingsSection::WarpDrive
+        #[cfg(not(feature = "omw_local"))]
+        return SettingsSection::WarpDrive;
+        #[cfg(feature = "omw_local")]
+        SettingsSection::About // placeholder; excluded from nav under omw_local
     }
 
     fn should_render(&self, _ctx: &AppContext) -> bool {

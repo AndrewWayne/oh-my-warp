@@ -345,6 +345,7 @@ impl UriHost {
                             );
                         }
                         "billing_and_usage" => {
+                            #[cfg(not(feature = "omw_local"))]
                             dispatch_action_in_new_or_existing_window(
                                 primary_window_id,
                                 "root_view:open_settings_page_in_existing_window",
@@ -363,6 +364,7 @@ impl UriHost {
                             // (cloud setup users should stay on their current page)
                             let source = query_string.get("source").map(|s| s.as_ref());
                             let skip_settings = source == Some(CLOUD_SETUP_SOURCE);
+                            #[cfg(not(feature = "omw_local"))]
                             if !skip_settings {
                                 dispatch_action_in_new_or_existing_window(
                                     primary_window_id,
@@ -388,6 +390,7 @@ impl UriHost {
                             );
                         }
                         "platform" => {
+                            #[cfg(not(feature = "omw_local"))]
                             dispatch_action_in_new_or_existing_window(
                                 primary_window_id,
                                 "root_view:open_settings_page_in_existing_window",
@@ -898,6 +901,7 @@ impl Action {
                     }
                 }
 
+                #[cfg(not(feature = "omw_local"))]
                 dispatch_action_in_new_or_existing_window(
                     primary_window_id,
                     "root_view:open_settings_page_in_existing_window",

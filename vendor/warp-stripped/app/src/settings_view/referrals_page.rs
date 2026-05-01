@@ -407,7 +407,10 @@ impl View for ReferralsPageView {
 
 impl SettingsPageMeta for ReferralsPageView {
     fn section() -> SettingsSection {
-        SettingsSection::Referrals
+        #[cfg(not(feature = "omw_local"))]
+        return SettingsSection::Referrals;
+        #[cfg(feature = "omw_local")]
+        SettingsSection::About // placeholder; excluded from nav under omw_local
     }
 
     fn should_render(&self, _ctx: &AppContext) -> bool {

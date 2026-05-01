@@ -2983,6 +2983,7 @@ impl Workspace {
                     ctx.notify();
                 }
                 SharedObjectsCreationDeniedModalEvent::TeamSettings => {
+                    #[cfg(not(feature = "omw_local"))]
                     me.show_settings_with_section(Some(SettingsSection::Teams), ctx);
                     me.current_workspace_state
                         .is_shared_objects_creation_denied_modal_open = false;
@@ -5600,6 +5601,7 @@ impl Workspace {
     fn handle_ai_fact_view_event(&mut self, event: &AIFactViewEvent, ctx: &mut ViewContext<Self>) {
         match event {
             AIFactViewEvent::OpenSettings => {
+                #[cfg(not(feature = "omw_local"))]
                 self.show_settings_with_section(Some(SettingsSection::WarpAgent), ctx);
             }
             #[allow(unused_variables)]
@@ -8363,6 +8365,7 @@ impl Workspace {
             .map(|workspace| workspace.billing_metadata.is_user_on_paid_plan())
             .unwrap_or(false);
 
+        #[cfg(not(feature = "omw_local"))]
         if is_on_paid_plan {
             items.push(
                 MenuItemFields::new("Billing and usage")
@@ -8371,6 +8374,9 @@ impl Workspace {
                     ))
                     .into_item(),
             );
+        }
+        #[cfg(feature = "omw_local")]
+        if is_on_paid_plan {
         } else {
             items.push(
                 MenuItemFields::new("Upgrade")
@@ -14463,6 +14469,7 @@ impl Workspace {
                 );
             }
             DrivePanelEvent::OpenTeamSettingsPage => {
+                #[cfg(not(feature = "omw_local"))]
                 self.show_settings_with_section(Some(SettingsSection::Teams), ctx);
             }
             DrivePanelEvent::OpenImportModal {
@@ -15507,6 +15514,7 @@ impl Workspace {
         email_invite: Option<&String>,
         ctx: &mut ViewContext<Self>,
     ) {
+        #[cfg(not(feature = "omw_local"))]
         self.show_settings_with_section(Some(SettingsSection::Teams), ctx);
 
         self.settings_pane.update(ctx, |view, ctx| {
@@ -19694,9 +19702,13 @@ impl Entity for Workspace {
     type Event = ();
 }
 
-fn is_omw_local_hidden_settings_section(section: Option<SettingsSection>) -> bool {
+fn is_omw_local_hidden_settings_section(_section: Option<SettingsSection>) -> bool {
+    // Under omw_local, all gated variants are compile-time removed, so none can be hidden.
+    #[cfg(feature = "omw_local")]
+    return false;
+    #[cfg(not(feature = "omw_local"))]
     matches!(
-        section,
+        _section,
         Some(
             SettingsSection::Account
                 | SettingsSection::AI
@@ -20195,6 +20207,7 @@ impl TypedActionView for Workspace {
                 ctx.open_url(&upgrade_url);
             }
             ShowReferralSettingsPage => {
+                #[cfg(not(feature = "omw_local"))]
                 self.show_settings_with_section(Some(SettingsSection::Referrals), ctx);
             }
             JoinSlack => self.join_slack(ctx),

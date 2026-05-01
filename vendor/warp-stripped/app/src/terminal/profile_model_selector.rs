@@ -510,6 +510,7 @@ impl ProfileModelSelector {
                 .with_tooltip("Manage API keys")
                 .with_size(ButtonSize::XSmall)
                 .on_click(|ctx| {
+                    #[cfg(not(feature = "omw_local"))]
                     ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPageWithSearch {
                         search_query: "api".to_string(),
                         section: Some(SettingsSection::WarpAgent),
@@ -1824,6 +1825,7 @@ impl TypedActionView for ProfileModelSelector {
             }
             ProfileModelSelectorAction::ManageProfiles => {
                 self.set_profile_menu_visibility(false, ctx);
+                #[cfg(not(feature = "omw_local"))]
                 ctx.emit(ProfileModelSelectorEvent::OpenSettings(
                     SettingsSection::WarpAgent,
                 ));

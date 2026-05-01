@@ -800,6 +800,7 @@ pub fn render_autonomy_checkbox_setting_speedbump_footer(
                             "Manage AI Autonomy permissions".into(),
                             None,
                             Some(Box::new(move |ctx| {
+                                #[cfg(not(feature = "omw_local"))]
                                 ctx.dispatch_typed_action(
                                     WorkspaceAction::ShowSettingsPageWithSearch {
                                         search_query: "Autonomy".to_string(),

@@ -1698,7 +1698,10 @@ impl TeamsPageView {
 
 impl SettingsPageMeta for TeamsPageView {
     fn section() -> SettingsSection {
-        SettingsSection::Teams
+        #[cfg(not(feature = "omw_local"))]
+        return SettingsSection::Teams;
+        #[cfg(feature = "omw_local")]
+        SettingsSection::About // placeholder; excluded from nav under omw_local
     }
 
     fn on_page_selected(&mut self, allow_steal_focus: bool, ctx: &mut ViewContext<Self>) {

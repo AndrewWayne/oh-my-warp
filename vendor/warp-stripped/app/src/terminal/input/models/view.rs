@@ -146,6 +146,7 @@ impl InlineModelSelectorView {
                     .with_icon(Icon::Settings)
                     .with_size(ButtonSize::Small)
                     .on_click(|ctx| {
+                        #[cfg(not(feature = "omw_local"))]
                         ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPageWithSearch {
                             search_query: String::new(),
                             section: Some(SettingsSection::WarpAgent),

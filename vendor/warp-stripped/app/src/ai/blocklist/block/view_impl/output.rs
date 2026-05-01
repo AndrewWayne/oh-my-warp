@@ -1290,6 +1290,7 @@ fn render_search_codebase(
                                         "Manage AI Autonomy permissions".into(),
                                         None,
                                         Some(Box::new(move |ctx| {
+                                            #[cfg(not(feature = "omw_local"))]
                                             ctx.dispatch_typed_action(
                                                 WorkspaceAction::ShowSettingsPageWithSearch {
                                                     search_query: "Autonomy".to_string(),

@@ -387,6 +387,7 @@ impl PromptAlertView {
                 }
                 if UserWorkspaces::as_ref(app).is_byo_api_key_enabled() {
                     text_fragments.push(FormattedTextFragment::plain_text(" or "));
+                    #[cfg(not(feature = "omw_local"))]
                     text_fragments.push(FormattedTextFragment::hyperlink_action(
                         "use your own API keys",
                         WorkspaceAction::ShowSettingsPageWithSearch {
@@ -452,6 +453,7 @@ impl View for PromptAlertView {
 
         if suggest_buy_credits {
             text_fragments.push(FormattedTextFragment::plain_text("  "));
+            #[cfg(not(feature = "omw_local"))]
             text_fragments.push(FormattedTextFragment::hyperlink_action(
                 "Add credits",
                 WorkspaceAction::ShowSettingsPage(SettingsSection::BillingAndUsage),

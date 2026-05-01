@@ -3119,6 +3119,7 @@ fn render_invalid_api_key_error(
         .with_cursor(Some(Cursor::PointingHand))
         .build()
         .on_click(move |ctx, _, _| {
+            #[cfg(not(feature = "omw_local"))]
             ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPageWithSearch {
                 search_query: "api keys".to_string(),
                 section: Some(SettingsSection::WarpAgent),

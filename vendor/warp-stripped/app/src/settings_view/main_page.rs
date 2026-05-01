@@ -1093,7 +1093,10 @@ impl SettingsWidget for LogoutWidget {
 
 impl SettingsPageMeta for MainSettingsPageView {
     fn section() -> SettingsSection {
-        SettingsSection::Account
+        #[cfg(not(feature = "omw_local"))]
+        return SettingsSection::Account;
+        #[cfg(feature = "omw_local")]
+        SettingsSection::About // placeholder; excluded from nav under omw_local
     }
 
     fn should_render(&self, _ctx: &AppContext) -> bool {

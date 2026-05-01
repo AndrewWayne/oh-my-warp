@@ -497,7 +497,10 @@ impl TypedActionView for WarpifyPageView {
 
 impl SettingsPageMeta for WarpifyPageView {
     fn section() -> SettingsSection {
-        SettingsSection::Warpify
+        #[cfg(not(feature = "omw_local"))]
+        return SettingsSection::Warpify;
+        #[cfg(feature = "omw_local")]
+        SettingsSection::About // placeholder; excluded from nav under omw_local
     }
 
     fn should_render(&self, _ctx: &AppContext) -> bool {

@@ -690,7 +690,10 @@ impl PlatformPageWidget {
 
 impl SettingsPageMeta for PlatformPageView {
     fn section() -> SettingsSection {
-        SettingsSection::OzCloudAPIKeys
+        #[cfg(not(feature = "omw_local"))]
+        return SettingsSection::OzCloudAPIKeys;
+        #[cfg(feature = "omw_local")]
+        SettingsSection::About // placeholder; excluded from nav under omw_local
     }
 
     fn should_render(&self, ctx: &AppContext) -> bool {

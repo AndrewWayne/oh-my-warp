@@ -446,6 +446,7 @@ impl SearchItem for ModelSearchItem {
                 .with_cursor(Some(Cursor::PointingHand))
                 .build()
                 .on_click(|ctx, _, _| {
+                    #[cfg(not(feature = "omw_local"))]
                     ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPageWithSearch {
                         search_query: "api".to_string(),
                         section: Some(SettingsSection::WarpAgent),
@@ -508,6 +509,7 @@ impl SearchItem for ModelSearchItem {
 
             if byok_available {
                 text_fragments.push(FormattedTextFragment::plain_text(" or ".to_string()));
+                #[cfg(not(feature = "omw_local"))]
                 text_fragments.push(FormattedTextFragment::hyperlink_action(
                     "bring your own key",
                     WorkspaceAction::ShowSettingsPageWithSearch {

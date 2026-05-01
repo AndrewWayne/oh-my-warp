@@ -23,6 +23,8 @@ These instructions are written for:
 
 If you move the repo, update the absolute paths in the commands below.
 
+Building on macOS? See the [macOS](#macos) section near the end of this doc for the platform-specific prerequisites and one-time setup. The Cargo build invocation itself is identical on both platforms.
+
 ## Prerequisites
 
 You need:
@@ -201,3 +203,77 @@ That is expected in this stripped build. The local fork intentionally removes or
 - hosted/global Warp workflows
 
 Only the local/core app surface is intended to remain for later `omw` integration.
+
+## macOS
+
+Deltas from the Windows path above. The Cargo invocation itself is identical:
+`cargo build -p warp --bin warp-oss --features omw_local` from `vendor/warp-stripped/`.
+
+### Prerequisites
+
+- **Full Xcode** (Mac App Store), not Command Line Tools alone. The Metal shader
+  compiler `metal` is invoked by `crates/warpui/build.rs` and ships only inside
+  Xcode.
+- Homebrew, with `protobuf` installed: `brew install protobuf`.
+- `rustup`, `cargo`, `rustc`. The pinned toolchain (`1.92.0`, see
+  `rust-toolchain.toml`) auto-installs on the first cargo invocation inside
+  `vendor/warp-stripped/`.
+- macOS native targets (`aarch64-apple-darwin` on Apple Silicon,
+  `x86_64-apple-darwin` on Intel) ship with the toolchain — no
+  `rustup target add` step is needed.
+
+### One-Time Setup
+
+```bash
+# Make sure cargo is on PATH for this shell.
+. "$HOME/.cargo/env"
+
+# Point xcrun at the full Xcode toolchain, not /Library/Developer/CommandLineTools.
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+# Accept the Xcode license. Required before xcrun will run any tool.
+sudo xcodebuild -license accept
+
+# Sanity check: the metal compiler must resolve.
+xcrun --find metal
+```
+
+### Build
+
+```bash
+export PROTOC=/opt/homebrew/bin/protoc        # /usr/local/bin/protoc on Intel Macs
+cd vendor/warp-stripped
+cargo build -p warp --bin warp-oss --features omw_local
+```
+
+Output binary:
+
+```
+vendor/warp-stripped/target/debug/warp-oss
+```
+
+### macOS Troubleshooting
+
+#### `xcrun: error: unable to find utility "metal"`
+
+`xcode-select` is pointing at Command Line Tools instead of full Xcode. Fix:
+
+```bash
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+```
+
+If `/Applications/Xcode.app` is missing, install Xcode from the Mac App Store first.
+
+#### `You have not agreed to the Xcode license agreements`
+
+```bash
+sudo xcodebuild -license accept
+```
+
+#### `Could not find protoc`
+
+Make sure `PROTOC` points at the brew-installed binary for your shell session:
+
+```bash
+export PROTOC=/opt/homebrew/bin/protoc
+```

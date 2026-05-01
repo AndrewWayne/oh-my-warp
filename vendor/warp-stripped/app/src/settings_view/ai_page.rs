@@ -104,9 +104,13 @@ pub enum AISubpage {
 impl AISubpage {
     pub fn from_section(section: SettingsSection) -> Option<Self> {
         match section {
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::WarpAgent => Some(Self::WarpAgent),
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::AgentProfiles => Some(Self::Profiles),
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::Knowledge => Some(Self::Knowledge),
+            #[cfg(not(feature = "omw_local"))]
             SettingsSection::ThirdPartyCLIAgents => Some(Self::ThirdPartyCLIAgents),
             // AgentMCPServers renders the standalone MCPServers page, not an AI subpage.
             _ => None,
@@ -2846,7 +2850,10 @@ impl TypedActionView for AISettingsPageView {
 
 impl SettingsPageMeta for AISettingsPageView {
     fn section() -> SettingsSection {
-        SettingsSection::AI
+        #[cfg(not(feature = "omw_local"))]
+        return SettingsSection::AI;
+        #[cfg(feature = "omw_local")]
+        SettingsSection::About // placeholder; AI page excluded from nav under omw_local
     }
 
     fn should_render(&self, _ctx: &AppContext) -> bool {

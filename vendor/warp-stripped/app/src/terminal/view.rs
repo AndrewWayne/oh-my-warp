@@ -8464,6 +8464,7 @@ impl TerminalView {
     ) {
         match event {
             WarpifySuccessBlockEvent::OpenWarpifySettings => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.emit(Event::OpenSettings(SettingsSection::Warpify));
             }
         }
@@ -11326,6 +11327,7 @@ impl TerminalView {
                 ctx.emit(Event::RemoteServerSkipRequested { session_id });
             }
             SshRemoteServerChoiceViewEvent::OpenWarpifySettings => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.emit(Event::OpenSettings(SettingsSection::Warpify));
             }
         });
@@ -18866,6 +18868,7 @@ impl TerminalView {
                 self.handle_usage_footer_toggled(block.id(), *conversation_id, *is_expanded, ctx);
             }
             AIBlockEvent::OpenSettings => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.emit(Event::OpenSettings(SettingsSection::WarpAgent));
             }
             #[cfg(feature = "local_fs")]
@@ -23232,11 +23235,14 @@ impl TerminalView {
                 ctx.open_url("https://docs.warp.dev/terminal/warpify/ssh-legacy#implementation");
             }
             Settings => {
+                #[cfg(not(feature = "omw_local"))]
                 if FeatureFlag::SSHTmuxWrapper.is_enabled() {
                     ctx.emit(Event::OpenSettings(SettingsSection::Warpify));
                 } else {
                     ctx.emit(Event::OpenSettings(SettingsSection::Features));
                 }
+                #[cfg(feature = "omw_local")]
+                ctx.emit(Event::OpenSettings(SettingsSection::Features));
             }
         }
     }
@@ -25007,6 +25013,7 @@ impl TypedActionView for TerminalView {
                 });
             }
             OpenTeamSettingsPage => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.emit(Event::OpenSettings(SettingsSection::Teams));
             }
             SetMarkedText {
@@ -25029,7 +25036,10 @@ impl TypedActionView for TerminalView {
             LoadAgentModeConversation => {
                 self.load_agent_mode_conversation(ctx);
             }
-            ShowWarpifySettings => ctx.emit(Event::OpenSettings(SettingsSection::Warpify)),
+            ShowWarpifySettings => {
+                #[cfg(not(feature = "omw_local"))]
+                ctx.emit(Event::OpenSettings(SettingsSection::Warpify));
+            }
             DeleteAttachment { index } => {
                 self.ai_context_model.update(ctx, |context_model, ctx| {
                     context_model.remove_pending_attachment(*index, ctx);
@@ -25249,6 +25259,7 @@ impl TypedActionView for TerminalView {
                 });
             }
             OpenBillingAndUsagePane => {
+                #[cfg(not(feature = "omw_local"))]
                 ctx.emit(Event::OpenSettings(SettingsSection::BillingAndUsage));
             }
             OpenAddRulePane => {

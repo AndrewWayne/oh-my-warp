@@ -1841,6 +1841,7 @@ fn render_permissions_speedbump(
     )
     .with_hyperlink_font_color(blended_colors::accent_fg_strong(theme).into())
     .register_default_click_handlers(|_, ctx, _| {
+        #[cfg(not(feature = "omw_local"))]
         ctx.dispatch_typed_action(WorkspaceAction::ShowSettingsPage(
             SettingsSection::WarpAgent,
         ));

@@ -2542,6 +2542,7 @@ impl PaneGroup {
                 if let Some(pane) = self.focused_pane_content(ctx) {
                     pane.focus(ctx);
                 }
+                #[cfg(not(feature = "omw_local"))]
                 ctx.emit(Event::OpenSettings(SettingsSection::Teams));
                 ctx.notify();
 

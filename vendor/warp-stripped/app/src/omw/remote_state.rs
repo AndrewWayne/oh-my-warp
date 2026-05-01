@@ -54,11 +54,10 @@ const NONCE_WINDOW: Duration = Duration::from_secs(60);
 
 /// Public status surface for the button label.
 ///
-/// `pair_url` and `error` are populated for the Debug print that the toggle
-/// handler emits (and for future use); they aren't read by name yet.
-/// `tailscale_serving` is `true` iff Gap 4's auto-bootstrap successfully
-/// brought up `tailscale serve --https=8787` for this run — the pair modal
-/// (Gap 2) reads it to decide whether to surface the tailnet URL.
+/// `tailscale_serving` is `true` iff `tailscale serve --bg <port>` succeeded
+/// for this run. With option D (drop WebCrypto.subtle on the Web Controller
+/// side), phone-side pairing works over plain HTTP via the tailnet IP, so
+/// Serve isn't required for the demo to function.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub enum OmwRemoteStatus {
@@ -367,19 +366,8 @@ fn data_dir() -> Result<PathBuf, String> {
 }
 
 /// Bring the daemon up. Returns the pair URL, whether Tailscale Serve was
-/// successfully bootstrapped, a join handle for the spawned serve task, and
-/// a clone of the live PTY-session registry. Caller `.abort()`s the handle
-/// to stop the daemon — `omw-remote` doesn't expose a graceful-shutdown hook
-/// in this version of the API. The registry clone is surfaced so the UI can
-/// call `share_pane` against the same registry the daemon's WS handlers
-/// consult.
-///
-/// Gap 4 (Tailscale Serve auto-bootstrap): after binding loopback, probe for
-/// a running Tailscale install. If one's there and reports a DNSName, shell
-/// out to `tailscale serve --bg --https=8787 http://127.0.0.1:8787` and add
-/// `https://<DNSName>` to `pinned_origins` so the WS handshake accepts both
-/// the loopback AND the tailnet origin. If anything in that chain fails,
-/// fall back to loopback-only behavior — never a hard error.
+/// bootstrapped, the join handle of the spawned serve task, and a clone of
+/// the live PTY-session registry. Caller `.abort()`s the handle to stop.
 async fn bring_up_daemon(
     runtime_handle: tokio::runtime::Handle,
 ) -> Result<(String, bool, JoinHandle<()>, Arc<omw_server::SessionRegistry>), String> {

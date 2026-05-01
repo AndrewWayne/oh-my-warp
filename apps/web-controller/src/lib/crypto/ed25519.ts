@@ -1,15 +1,26 @@
 // Ed25519 helpers.
 //
-// WebCrypto Ed25519 is not yet supported in jsdom (the Vitest test
-// environment), so we use @noble/ed25519 — a pure-JS implementation that
-// works in browsers, Node, and jsdom uniformly. The public surface keeps
-// CryptoKey-shaped opaque handles so callers don't depend on the impl.
+// We use @noble/ed25519 (pure-JS) for keygen/sign/verify. By default
+// @noble/ed25519 v2 calls WebCrypto's `crypto.subtle.digest('SHA-512', ...)`
+// for its internal hashing step — which only works in a "secure context"
+// (HTTPS or localhost). On a phone hitting the daemon over plain HTTP via a
+// tailnet IP, `crypto.subtle` is undefined and pairing throws
+// "crypto.subtle must be defined".
+//
+// Fix: wire @noble/hashes/sha512 into noble-ed25519's `etc.sha512Async` /
+// `sha512Sync` hook so SHA-512 runs in pure JS, with no secure-context
+// requirement. Bundle cost: ~5 KB. The phone now pairs over plain HTTP.
 
 import * as nobleEd from "@noble/ed25519";
+import { sha512 } from "@noble/hashes/sha512";
 
-// We use only the *Async APIs of @noble/ed25519 v2, which call out to
-// WebCrypto's SHA-512 internally. This avoids pulling in @noble/hashes
-// and keeps the bundle small.
+// Wire pure-JS SHA-512 into noble-ed25519. Both Async and Sync paths are
+// set so that future call-site changes (sign vs signAsync) keep working.
+// `etc.concatBytes` is the documented helper for joining the variadic
+// message chunks noble passes us.
+nobleEd.etc.sha512Async = (...m) =>
+  Promise.resolve(sha512(nobleEd.etc.concatBytes(...m)));
+nobleEd.etc.sha512Sync = (...m) => sha512(nobleEd.etc.concatBytes(...m));
 
 export interface Ed25519PrivateKey {
   readonly type: "ed25519-private";

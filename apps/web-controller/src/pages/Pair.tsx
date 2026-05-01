@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   parsePairUrl,
   redeemPairing,
@@ -8,6 +8,22 @@ import {
 } from "../lib/pairing";
 import { startQrScan, type QrScanner } from "../lib/qr-scan";
 import { savePairing } from "../lib/storage/idb";
+
+// Camera scan needs `navigator.mediaDevices.getUserMedia`, which browsers
+// gate behind a secure context (HTTPS, localhost, or file://). On plain
+// HTTP over a tailnet IP, `getUserMedia` is undefined. We hide the Start
+// scan button in that case and tell the user to use the URL paste below
+// (the primary flow is "phone OS camera scans QR -> opens URL", so the
+// in-app camera scan is a fallback anyway).
+function cameraScanAvailable(): boolean {
+  if (typeof window === "undefined") return false;
+  if (typeof navigator === "undefined") return false;
+  const md = (navigator as Navigator).mediaDevices;
+  if (!md || typeof md.getUserMedia !== "function") return false;
+  // Secure-context check: covers HTTPS, localhost, and file:// per the spec.
+  if (window.isSecureContext === false) return false;
+  return true;
+}
 
 function detectPlatform(ua: string): string {
   if (/iPhone|iPad|iPod/i.test(ua)) return "ios";
@@ -49,9 +65,19 @@ function friendlyError(code: string): string {
 
 export default function Pair() {
   const { t: pathToken } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
 
   const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+
+  // The pair URL the host emits is `<origin>/pair?t=<token>` — the token is
+  // a query param. `useParams()` only reaches `/pair/:t` (path), so we ALSO
+  // pull `?t=` from `useLocation().search` here. Either source works.
+  const queryToken = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get("t") ?? "";
+  }, [location.search]);
+  const urlToken = pathToken || queryToken;
 
   const [pasted, setPasted] = useState<string>("");
   const [scannedUrl, setScannedUrl] = useState<string>("");
@@ -61,26 +87,31 @@ export default function Pair() {
   const [scanning, setScanning] = useState(false);
   const [redeeming, setRedeeming] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const cameraOk = useMemo(cameraScanAvailable, []);
+  // Auto-redeem fires exactly once when we land with a URL token. Subsequent
+  // re-renders shouldn't retry (e.g., after an error the user might edit the
+  // device name). The user can always click Pair manually.
+  const autoTriedRef = useRef(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const scannerRef = useRef<QrScanner | null>(null);
 
   // The textarea reflects either pasted or scanned URL; pre-fill when arriving
-  // via /pair/:t with the path token.
+  // via /pair?t=<token> or /pair/:t.
   const textValue = pasted || scannedUrl;
 
   // Resolve the pair URL from one of: pasted text, scanned text,
-  // or the path-encoded token (synthetic URL using the current origin).
+  // or the URL-encoded token (synthetic URL using the current origin).
   const pairUrl: PairUrl | null = useMemo(() => {
     if (textValue.trim().length > 0) {
       return parsePairUrl(textValue.trim());
     }
-    if (pathToken && typeof window !== "undefined") {
+    if (urlToken && typeof window !== "undefined") {
       const origin = window.location.origin;
-      return parsePairUrl(`${origin}/pair?t=${pathToken}`);
+      return parsePairUrl(`${origin}/pair?t=${urlToken}`);
     }
     return null;
-  }, [textValue, pathToken]);
+  }, [textValue, urlToken]);
 
   useEffect(() => {
     return () => {
@@ -161,48 +192,76 @@ export default function Pair() {
 
   const canPair = !!pairUrl && !redeeming && deviceName.trim().length > 0;
 
+  // Auto-redeem when we landed with a URL token (the user opened
+  // <origin>/pair?t=<token> from the QR code or shared link). Fires once,
+  // when the page is otherwise idle. The default device name is good enough;
+  // the user can rename later from settings.
+  useEffect(() => {
+    if (autoTriedRef.current) return;
+    if (!urlToken) return;
+    if (!pairUrl) return;
+    if (redeeming) return;
+    if (errorMsg) return;
+    autoTriedRef.current = true;
+    void handlePair();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlToken, pairUrl]);
+
   return (
     <section className="max-w-2xl mx-auto space-y-6">
       <h1 className="text-2xl font-semibold">Pair</h1>
 
       <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-4 space-y-4">
-        <div>
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-300">
-            Scan QR
-          </h2>
-          <p className="text-xs text-neutral-500 mt-1">
-            Point your camera at the QR shown by `omw pair qr` on the host.
-          </p>
-          <div className="mt-3 space-y-2">
-            <video
-              ref={videoRef}
-              className={`w-full max-w-sm rounded bg-black ${
-                scanning ? "block" : "hidden"
-              }`}
-              muted
-              playsInline
-            />
-            <div className="flex gap-2">
-              {!scanning ? (
-                <button
-                  type="button"
-                  onClick={handleStartScan}
-                  className="px-3 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-sm"
-                >
-                  Start scan
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleStopScan}
-                  className="px-3 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-sm"
-                >
-                  Stop scan
-                </button>
-              )}
+        {cameraOk ? (
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-300">
+              Scan QR
+            </h2>
+            <p className="text-xs text-neutral-500 mt-1">
+              Point your camera at the QR shown by `omw pair qr` on the host.
+            </p>
+            <div className="mt-3 space-y-2">
+              <video
+                ref={videoRef}
+                className={`w-full max-w-sm rounded bg-black ${
+                  scanning ? "block" : "hidden"
+                }`}
+                muted
+                playsInline
+              />
+              <div className="flex gap-2">
+                {!scanning ? (
+                  <button
+                    type="button"
+                    onClick={handleStartScan}
+                    className="px-3 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-sm"
+                  >
+                    Start scan
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleStopScan}
+                    className="px-3 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-sm"
+                  >
+                    Stop scan
+                  </button>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        ) : (
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-300">
+              In-app QR scan unavailable
+            </h2>
+            <p className="text-xs text-neutral-500 mt-1">
+              Your browser only allows camera access on a secure origin
+              (HTTPS). Open the host&apos;s pair URL directly (the page
+              auto-pairs from <code>?t=</code>), or paste the URL below.
+            </p>
+          </div>
+        )}
 
         <div className="border-t border-neutral-800 pt-4">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-300">

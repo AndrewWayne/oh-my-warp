@@ -98,21 +98,19 @@ pub struct TailscaleStatus {
     pub tailnet_ipv4: Option<String>,
 }
 
-/// Failure modes for [`serve_https`] / [`unserve`]. We don't try to
-/// distinguish e.g. "permission denied" from "wrong CLI version" — Gap 4
-/// just falls back to loopback-only when serve fails.
+/// Failure modes for [`serve_https`] / [`unserve`]. Kept available for a
+/// future env-var-gated HTTPS path; not on the v0.4-thin demo flow (we ship
+/// option D — pure-JS Ed25519 in the Web Controller, plain HTTP over the
+/// tailnet IP — so Tailscale Serve is no longer required).
 #[derive(Debug)]
 pub enum ServeError {
     /// `tailscale` CLI not on PATH.
     NotInstalled,
-    /// `tailscale serve ...` exited non-zero. Carries the captured stderr so
-    /// the orchestration layer can log it once and move on.
+    /// `tailscale serve ...` exited non-zero. Carries captured stderr.
     CommandFailed(String),
     /// We couldn't even spawn the child process.
     Spawn(std::io::Error),
-    /// `tailscale serve` succeeded but we have no DNSName to build a URL
-    /// from (e.g., node isn't logged in). Caller should treat this as
-    /// loopback-only.
+    /// `tailscale serve` succeeded but we have no DNSName to build a URL.
     NoLocalHostname,
 }
 
@@ -368,4 +366,5 @@ mod tests {
         assert!(s.local_hostname.is_none());
         assert!(s.tailnet.is_none());
     }
+
 }

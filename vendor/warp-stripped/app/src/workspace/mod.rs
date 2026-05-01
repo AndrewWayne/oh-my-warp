@@ -1153,6 +1153,9 @@ pub fn init(app: &mut AppContext) {
         .with_custom_action(CustomAction::NewAgentModePane),
         EditableBinding::new(
             "workspace:toggle_ai_assistant",
+            #[cfg(feature = "omw_local")]
+            "Toggle AI Assistant",
+            #[cfg(not(feature = "omw_local"))]
             "Toggle Warp AI",
             WorkspaceAction::ToggleAIAssistant,
         )

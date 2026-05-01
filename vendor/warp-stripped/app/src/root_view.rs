@@ -1759,6 +1759,9 @@ impl RootView {
             cfg_if! {
                 if #[cfg(target_family = "wasm")] {
                     AuthOnboardingState::WebImport(AuthOnboardingTarget::Workspace(workspace_args.into()))
+                } else if #[cfg(feature = "omw_local")] {
+                    // omw_local: no signup, onboarding, or login slides. Go straight to terminal.
+                    AuthOnboardingState::Terminal(workspace_args.create_workspace(ctx))
                 } else {
                     // When OpenWarpNewSettingsModes is enabled, show onboarding before login for
                     // users who haven't completed it yet (tracked via a local UserPreferences key).

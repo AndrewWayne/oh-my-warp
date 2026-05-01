@@ -3,13 +3,26 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use bytes::Bytes;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier as _, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::host_key::HostKey;
 use crate::Signer;
+
+/// Format a timestamp the same way both the wire and the canonical-bytes
+/// signer/verifier consume it. We use millisecond precision + `Z` suffix
+/// (matches JS `Date.prototype.toISOString` byte-for-byte) so a JS client
+/// that signs canonical bytes built from the wire `ts` string verifies
+/// against [`Frame::canonical_bytes`] without a one-byte format drift.
+///
+/// Default `chrono::DateTime<Utc>::to_rfc3339()` uses `+00:00` instead of
+/// `Z`, which would not match JS-side canonical bytes — the cause of an
+/// observed `4401 auth_failed` close on every input frame from the phone.
+fn format_ts(ts: &DateTime<Utc>) -> String {
+    ts.to_rfc3339_opts(SecondsFormat::Millis, true)
+}
 
 /// JSON-encoded WS envelope.
 ///
@@ -93,7 +106,7 @@ impl Frame {
         let kind_json = serde_json::to_string(self.kind.as_wire()).expect("string");
         let payload_b64 = URL_SAFE_NO_PAD.encode(&self.payload);
         let payload_json = serde_json::to_string(&payload_b64).expect("string");
-        let ts_json = serde_json::to_string(&self.ts.to_rfc3339()).expect("string");
+        let ts_json = serde_json::to_string(&format_ts(&self.ts)).expect("string");
         let s = format!(
             "{{\"kind\":{kind_json},\"payload\":{payload_json},\"seq\":{seq},\"ts\":{ts_json},\"v\":{v}}}",
             seq = self.seq,
@@ -130,12 +143,15 @@ impl Frame {
 
     /// Encode as JSON for the wire (sig included, base64url).
     pub fn to_json(&self) -> String {
+        // Wire `ts` MUST use the same format `canonical_bytes` does, otherwise
+        // a server-signed output frame's signature won't verify on the JS
+        // client (which canonicalizes using the wire `ts` string verbatim).
         let wire = WireFrame {
             kind: self.kind.as_wire().to_string(),
             payload: URL_SAFE_NO_PAD.encode(&self.payload),
             seq: self.seq,
             sig: URL_SAFE_NO_PAD.encode(self.sig),
-            ts: self.ts.to_rfc3339(),
+            ts: format_ts(&self.ts),
             v: self.v,
         };
         serde_json::to_string(&wire).expect("wire frame serializes")

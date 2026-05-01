@@ -39,7 +39,13 @@ impl AITip for CloudModeTip {
 /// Returns a collection of tips for the cloud mode loading screen.
 #[cfg(feature = "omw_local")]
 pub fn get_cloud_mode_tips() -> Vec<CloudModeTip> {
-    Vec::new()
+    // AITipModel::new debug_asserts the tip vector is non-empty. The cloud
+    // mode loading screen itself is dispatcher-gated under omw_local so the
+    // user never sees this string, but the model still gets constructed.
+    vec![CloudModeTip::new(
+        "omw runs locally — cloud agent features are disabled in this build.",
+        None::<&str>,
+    )]
 }
 
 /// Returns a collection of tips for the cloud mode loading screen.

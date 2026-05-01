@@ -81,7 +81,18 @@ pub enum AgentTipKind {
 }
 
 #[cfg(feature = "omw_local")]
-static DEFAULT_TIPS: LazyLock<Vec<AgentTip>> = LazyLock::new(|| Vec::new());
+static DEFAULT_TIPS: LazyLock<Vec<AgentTip>> = LazyLock::new(|| {
+    // AITipModel::new debug_asserts the tip vector is non-empty. Provide a
+    // single stub so the invariant holds; the omw_local build doesn't surface
+    // tips elsewhere because get_cloud_mode_tips() also returns empty.
+    vec![AgentTip {
+        description: "Tip: explore omw via the command palette.".to_string(),
+        link: None,
+        binding_name: None,
+        action: None,
+        kind: AgentTipKind::General,
+    }]
+});
 
 #[cfg(not(feature = "omw_local"))]
 static DEFAULT_TIPS: LazyLock<Vec<AgentTip>> = LazyLock::new(|| {

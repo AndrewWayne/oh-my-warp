@@ -132,7 +132,7 @@ pub(crate) fn start(
     let config = ServerConfig {
         bind,
         host_key,
-        pinned_origin,
+        pinned_origins: vec![pinned_origin],
         inactivity_timeout: Duration::from_secs(60),
         revocations: RevocationList::new(),
         nonce_store: NonceStore::new(Duration::from_secs(60)),

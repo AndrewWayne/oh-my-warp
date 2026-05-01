@@ -41,9 +41,12 @@ pub struct ServerConfig {
     /// Long-lived host pairing key. Used to verify capability tokens during
     /// handshake AND to sign outbound WS frames.
     pub host_key: Arc<HostKey>,
-    /// Pinned origin per spec §8.1, e.g. `https://host.tailnet.ts.net` or
-    /// `https://127.0.0.1:8787`. Mismatch -> `403 origin_mismatch`.
-    pub pinned_origin: String,
+    /// Pinned origins per spec §8.1, e.g. `https://host.tailnet.ts.net` and/or
+    /// `http://127.0.0.1:8787`. The request's `Origin` must match one entry
+    /// exactly; otherwise -> `403 origin_mismatch`. An empty list rejects every
+    /// upgrade (no origin can match) — callers should always pass at least one
+    /// allowed origin.
+    pub pinned_origins: Vec<String>,
     /// Tear down a WS session that hasn't sent a frame for this long.
     /// Spec default: 60 s. Tests shrink this to e.g. 2 s.
     pub inactivity_timeout: Duration,
@@ -69,7 +72,7 @@ pub struct ServerConfig {
 pub(crate) struct AppState {
     pub host_key: Arc<HostKey>,
     pub host_pubkey: [u8; 32],
-    pub pinned_origin: String,
+    pub pinned_origins: Vec<String>,
     pub inactivity_timeout: Duration,
     pub revocations: Arc<RevocationList>,
     pub nonce_store: Arc<NonceStore>,
@@ -91,7 +94,7 @@ pub fn make_router(config: ServerConfig) -> axum::Router {
     let state = AppState {
         host_key: config.host_key,
         host_pubkey,
-        pinned_origin: config.pinned_origin,
+        pinned_origins: config.pinned_origins,
         inactivity_timeout: config.inactivity_timeout,
         revocations: config.revocations,
         nonce_store: config.nonce_store,
@@ -133,11 +136,13 @@ async fn ws_handler(
     ws: WebSocketUpgrade,
 ) -> axum::response::Response {
     // 1. Origin pinning (§8.2). Mismatch -> 403. Applies to both auth paths.
+    //    The Origin header must match ANY entry in `pinned_origins`. An empty
+    //    list rejects every upgrade — never accidentally accept all.
     let origin = headers
         .get("origin")
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
-    if origin != state.pinned_origin {
+    if !state.pinned_origins.iter().any(|o| o == origin) {
         return (StatusCode::FORBIDDEN, "origin_mismatch").into_response();
     }
 

@@ -309,7 +309,7 @@ async fn bring_up_daemon(
     let config = omw_remote::ServerConfig {
         bind,
         host_key: Arc::new(host_key),
-        pinned_origin: DEFAULT_PINNED_ORIGIN.to_string(),
+        pinned_origins: vec![DEFAULT_PINNED_ORIGIN.to_string()],
         inactivity_timeout: INACTIVITY_TIMEOUT,
         revocations: omw_remote::RevocationList::new(),
         nonce_store: omw_remote::NonceStore::new(NONCE_WINDOW),

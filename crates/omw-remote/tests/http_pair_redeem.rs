@@ -124,7 +124,7 @@ async fn pair_redeem_expired_410() {
     let cfg = ServerConfig {
         bind: "127.0.0.1:0".parse().unwrap(),
         host_key: host.clone(),
-        pinned_origin: "https://omw.test".to_string(),
+        pinned_origins: vec!["https://omw.test".to_string()],
         inactivity_timeout: Duration::from_secs(60),
         revocations,
         nonce_store,

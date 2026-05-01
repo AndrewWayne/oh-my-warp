@@ -148,7 +148,7 @@ pub async fn spawn_server_with_inactivity(inactivity_timeout: Duration) -> WsFix
     let cfg = ServerConfig {
         bind: "127.0.0.1:0".parse().unwrap(),
         host_key: host.clone(),
-        pinned_origin: pinned_origin.clone(),
+        pinned_origins: vec![pinned_origin.clone()],
         inactivity_timeout,
         revocations: revocations.clone(),
         nonce_store: nonce_store.clone(),

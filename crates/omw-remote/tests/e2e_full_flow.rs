@@ -106,7 +106,7 @@ async fn spawn_e2e_server() -> E2eFixture {
     let cfg = ServerConfig {
         bind: "127.0.0.1:0".parse().unwrap(),
         host_key: host,
-        pinned_origin: pinned_origin.clone(),
+        pinned_origins: vec![pinned_origin.clone()],
         inactivity_timeout: Duration::from_secs(60),
         revocations,
         nonce_store,

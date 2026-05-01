@@ -37,6 +37,13 @@ impl AITip for CloudModeTip {
 }
 
 /// Returns a collection of tips for the cloud mode loading screen.
+#[cfg(feature = "omw_local")]
+pub fn get_cloud_mode_tips() -> Vec<CloudModeTip> {
+    Vec::new()
+}
+
+/// Returns a collection of tips for the cloud mode loading screen.
+#[cfg(not(feature = "omw_local"))]
 pub fn get_cloud_mode_tips() -> Vec<CloudModeTip> {
     vec![
         CloudModeTip::new(

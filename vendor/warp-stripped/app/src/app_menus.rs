@@ -70,7 +70,8 @@ pub fn menu_bar(ctx: &mut AppContext) -> MenuBar {
         make_new_blocks_menu(ctx),
     ];
 
-    if ChannelState::official_cloud_services_enabled() {
+    #[cfg(not(feature = "omw_local"))]
+    {
         menus.push(make_new_ai_menu(ctx));
         menus.push(make_new_drive_menu(ctx));
     }
@@ -148,7 +149,8 @@ fn make_new_app_menu(ctx: &AppContext) -> Menu {
         ctx,
     )];
 
-    if ChannelState::official_cloud_services_enabled() && !FeatureFlag::AvatarInTabBar.is_enabled()
+    #[cfg(not(feature = "omw_local"))]
+    if !FeatureFlag::AvatarInTabBar.is_enabled()
     {
         menu_items.push(updateable_custom_item_without_checkmark(
             CustomAction::ToggleResourceCenter,
@@ -184,7 +186,8 @@ fn make_new_app_menu(ctx: &AppContext) -> Menu {
         preferences_menu_items,
     )));
 
-    if FeatureFlag::Changelog.is_enabled() && ChannelState::official_cloud_services_enabled() {
+    #[cfg(not(feature = "omw_local"))]
+    if FeatureFlag::Changelog.is_enabled() {
         menu_items.push(updateable_custom_item_without_checkmark(
             CustomAction::ViewChangelog,
             ctx,
@@ -196,7 +199,8 @@ fn make_new_app_menu(ctx: &AppContext) -> Menu {
         menu_items.push(MenuItem::Services);
     }
 
-    if ChannelState::official_cloud_services_enabled() {
+    #[cfg(not(feature = "omw_local"))]
+    {
         menu_items.push(MenuItem::Separator);
         menu_items.push(link_menu_item(
             "Privacy Policy...",
@@ -239,7 +243,8 @@ fn make_new_app_menu(ctx: &AppContext) -> Menu {
         },
         None,
     )));
-    if ChannelState::official_cloud_services_enabled() {
+    #[cfg(not(feature = "omw_local"))]
+    {
         menu_items.push(MenuItem::Separator);
         menu_items.push(MenuItem::Custom(CustomMenuItem::new(
             "Log out",
@@ -391,7 +396,8 @@ fn make_new_edit_menu(ctx: &AppContext) -> Menu {
 fn make_new_view_menu(ctx: &AppContext) -> Menu {
     let mut items = vec![];
 
-    if ChannelState::official_cloud_services_enabled() {
+    #[cfg(not(feature = "omw_local"))]
+    {
         items.extend([
             updateable_custom_item_without_checkmark(CustomAction::ToggleWarpDrive, ctx),
             MenuItem::Separator,
@@ -410,7 +416,8 @@ fn make_new_view_menu(ctx: &AppContext) -> Menu {
         updateable_custom_item_without_checkmark(CustomAction::CommandSearch, ctx),
     ]);
 
-    if ChannelState::official_cloud_services_enabled() {
+    #[cfg(not(feature = "omw_local"))]
+    {
         items.extend([
             updateable_custom_item_without_checkmark(CustomAction::ToggleConversationListView, ctx),
             updateable_custom_item_without_checkmark(CustomAction::Workflows, ctx),
@@ -542,6 +549,7 @@ fn make_new_tab_menu(ctx: &AppContext) -> Menu {
     Menu::new("Tab", items)
 }
 
+#[cfg(not(feature = "omw_local"))]
 fn make_new_ai_menu(ctx: &AppContext) -> Menu {
     let mut items = vec![updateable_custom_item_without_checkmark(
         CustomAction::NewAgentModePane,
@@ -624,6 +632,7 @@ fn make_new_blocks_menu(ctx: &AppContext) -> Menu {
     Menu::new("Blocks", items)
 }
 
+#[cfg(not(feature = "omw_local"))]
 fn make_new_drive_menu(ctx: &AppContext) -> Menu {
     let mut items = vec![
         updateable_custom_item_without_checkmark(CustomAction::NewPersonalWorkflow, ctx),
@@ -946,6 +955,7 @@ fn link_menu_item(title: &'static str, link: Cow<'static, str>) -> MenuItem {
     ))
 }
 
+#[cfg(not(feature = "omw_local"))]
 fn feedback_menu_item() -> MenuItem {
     MenuItem::Custom(CustomMenuItem::new(
         "Send Feedback...",
@@ -966,7 +976,8 @@ fn make_new_help_menu() -> Menu {
         link_menu_item("GitHub Issues...", links::GITHUB_ISSUES_URL.into()),
     ];
 
-    if ChannelState::official_cloud_services_enabled() {
+    #[cfg(not(feature = "omw_local"))]
+    {
         items.insert(0, feedback_menu_item());
         items.push(link_menu_item(
             "Warp Slack Community...",
@@ -1054,7 +1065,8 @@ fn make_new_elements_menu_items(ctx: &AppContext) -> Vec<MenuItem> {
         non_updateable_custom_item(CustomAction::NewFile, ctx),
     ];
 
-    if ChannelState::official_cloud_services_enabled() {
+    #[cfg(not(feature = "omw_local"))]
+    {
         new_elements_menu.insert(
             2,
             MenuItem::Custom(CustomMenuItem::new(
@@ -1144,6 +1156,7 @@ fn open_new_default_tab_or_window(ctx: &mut AppContext) {
 
 /// Dispatch events to open an agent tab in the active window
 /// or make a new window if there is no active window.
+#[cfg(not(feature = "omw_local"))]
 fn open_new_agent_tab_or_window(ctx: &mut AppContext) {
     if let Some(wid) = WindowManager::handle(ctx).as_ref(ctx).active_window() {
         ctx.dispatch_custom_action(CustomAction::NewAgentTab, wid)

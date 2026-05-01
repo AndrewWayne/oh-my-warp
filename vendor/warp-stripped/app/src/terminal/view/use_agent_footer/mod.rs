@@ -330,10 +330,28 @@ impl TerminalView {
                 // this on a successful Running transition — copying nothing
                 // (or an error message) would be more confusing than a
                 // silent toast.
+                //
+                // ALSO: open the system default browser to a local HTML page
+                // that displays the QR + URL + a Copy button. This is the
+                // Gap-2-deferred-modal user-visible surface — without it,
+                // users running warp-oss.exe from Explorer have no way to
+                // see the pair URL or scan the QR. The full reactive
+                // `View<>`-backed Warp dialog still supersedes this once it
+                // lands; this module deletes itself then.
                 if let OmwRemoteStatus::Running { pair_url, .. } = &content.status {
                     ctx.clipboard().write(
                         ClipboardContent::plain_text(pair_url.clone()),
                     );
+                    let tailnet_host = content
+                        .tailscale
+                        .local_hostname
+                        .as_deref();
+                    if let Err(e) = crate::omw::pair_browser::open_pair_page(
+                        pair_url,
+                        tailnet_host,
+                    ) {
+                        log::warn!("omw-remote: open_pair_page failed: {e}");
+                    }
                 }
 
                 eprintln!(

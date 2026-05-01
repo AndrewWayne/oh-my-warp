@@ -63,7 +63,8 @@ Phase 0 is *only* about getting decisions and specs written down. No application
 ## v0.3 — Forked client + local mode
 
 - [x] Maintain Warp source in-tree at `vendor/warp-stripped/` (initial tree added 2026-04-30)
-- [x] Add `omw_local` Cargo feature (initial scaffolding pre-existing; expanded 2026-05-01 to gate AI/cloud surfaces and exclude cloud-only crates from the binary)
+- [x] Add `omw_local` Cargo feature (initial scaffolding pre-existing; expanded 2026-05-01 to gate AI/cloud UI surfaces and exclude cloud-only crates from the binary)
+- [ ] **Cloud-strip cascade** — make `--no-default-features --features omw_local` compile cleanly and `audit-no-cloud.sh` go green. Plan: [`specs/cloud-strip-plan.md`](./specs/cloud-strip-plan.md). 5 phases, ~4 engineering days. Deferred from commit `c9d2540` 2026-05-01.
 - [ ] Branding: rename binary to `omw`, swap icon, change palette (no "Warp" wordmark anywhere)
 - [ ] `omw-server` (axum): identity, providers, agent sessions, settings endpoints
 - [ ] `omw-server`: single audit-writer endpoint (`POST /api/v1/audit/append`)

@@ -9,8 +9,70 @@
 //!
 //! All shell-out commands use [`std::process::Command`] with explicit args.
 //! No string interpolation, no `sh -c`, no shell injection surface.
+//!
+//! Every shell-out is wrapped in a hard wall-clock timeout (see
+//! [`run_with_timeout`]) — `tailscale serve --bg` on a freshly-installed node
+//! has been observed to block indefinitely while the LocalAPI provisions
+//! HTTPS certs, which previously hung the Warp UI thread waiting on
+//! `init_rx.recv()`. On timeout we kill the child via PID and treat the
+//! Tailscale path as unavailable, falling back to loopback-only.
 
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
+
+/// Timeout for `tailscale status --json --self`. Status is normally instant;
+/// 3 s leaves enough headroom for a busy LocalAPI without blocking the UI.
+const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Timeout for `tailscale serve --bg ...` and `tailscale serve --bg ... off`.
+/// Cert provisioning on first use can take a few seconds; 5 s caps the
+/// worst-case UI hang and degrades to loopback-only.
+const SERVE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Run `tailscale <args>` with a wall-clock timeout. On timeout, force-kill
+/// the child by PID and return [`std::io::ErrorKind::TimedOut`].
+fn run_with_timeout(args: &[&str], timeout: Duration) -> std::io::Result<Output> {
+    let child = Command::new("tailscale")
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null())
+        .spawn()?;
+    let pid = child.id();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let res = child.wait_with_output();
+        let _ = tx.send(res);
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(e)) => Err(e),
+        Err(_) => {
+            // Child handle moved into the waiter thread, so kill via PID.
+            #[cfg(windows)]
+            {
+                let _ = Command::new("taskkill")
+                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = Command::new("kill")
+                    .args(["-9", &pid.to_string()])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+            Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "tailscale subprocess timed out",
+            ))
+        }
+    }
+}
 
 /// Snapshot of the local Tailscale install. The fields are populated
 /// best-effort from `tailscale status --json --self`; missing or unparseable
@@ -88,12 +150,12 @@ pub fn detect_status() -> TailscaleStatus {
         return TailscaleStatus::default();
     }
 
-    let output = match Command::new("tailscale")
-        .args(["status", "--json", "--self"])
-        .output()
-    {
+    let output = match run_with_timeout(&["status", "--json", "--self"], STATUS_TIMEOUT) {
         Ok(o) => o,
         Err(_) => {
+            // Includes io::Error::TimedOut from run_with_timeout — the LocalAPI
+            // can hang on a freshly-installed node; we degrade to "installed
+            // but not running" so OmwRemoteState falls back to loopback-only.
             return TailscaleStatus {
                 installed: true,
                 ..TailscaleStatus::default()
@@ -174,10 +236,11 @@ pub fn serve_https(port: u16) -> Result<String, ServeError> {
     let target = format!("http://127.0.0.1:{port}");
     let https_arg = format!("--https={port}");
 
-    let output = Command::new("tailscale")
-        .args(["serve", "--bg", &https_arg, &target])
-        .output()
-        .map_err(ServeError::Spawn)?;
+    let output = run_with_timeout(
+        &["serve", "--bg", &https_arg, &target],
+        SERVE_TIMEOUT,
+    )
+    .map_err(ServeError::Spawn)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -196,10 +259,11 @@ pub fn unserve(port: u16) -> Result<(), ServeError> {
         return Err(ServeError::NotInstalled);
     }
     let https_arg = format!("--https={port}");
-    let output = Command::new("tailscale")
-        .args(["serve", "--bg", &https_arg, "off"])
-        .output()
-        .map_err(ServeError::Spawn)?;
+    let output = run_with_timeout(
+        &["serve", "--bg", &https_arg, "off"],
+        SERVE_TIMEOUT,
+    )
+    .map_err(ServeError::Spawn)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         return Err(ServeError::CommandFailed(stderr));

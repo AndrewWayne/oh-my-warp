@@ -330,11 +330,16 @@ impl AuthViewBody {
             ..Default::default()
         };
 
+        #[cfg(feature = "omw_local")]
+        let tos_span_text = "";
+        #[cfg(not(feature = "omw_local"))]
+        let tos_span_text = "By continuing, you agree to Warp's ";
+
         let disclaimer_line_1 = Container::new(
             Flex::row()
                 .with_child(
                     ui_builder
-                        .span("By continuing, you agree to Warp's ")
+                        .span(tos_span_text)
                         .with_style(disclaimer_styles)
                         .build()
                         .finish(),

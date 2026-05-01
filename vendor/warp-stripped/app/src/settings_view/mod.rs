@@ -1248,6 +1248,7 @@ impl SettingsView {
         });
 
         let mut settings_pages = vec![
+            #[cfg(not(feature = "omw_local"))]
             SettingsPage::new(main_page_handle),
             SettingsPage::new(ai_page_handle),
             SettingsPage::new(billing_and_usage_page_handle),

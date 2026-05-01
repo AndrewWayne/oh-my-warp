@@ -42,13 +42,21 @@ const NONCE_WINDOW: Duration = Duration::from_secs(60);
 ///
 /// `pair_url` and `error` are populated for the Debug print that the toggle
 /// handler emits (and for future use); they aren't read by name yet.
+/// `tailscale_serving` is `true` iff Gap 4's auto-bootstrap successfully
+/// brought up `tailscale serve --https=8787` for this run — the pair modal
+/// (Gap 2) reads it to decide whether to surface the tailnet URL.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub enum OmwRemoteStatus {
     Stopped,
     Starting,
-    Running { pair_url: String },
-    Failed { error: String },
+    Running {
+        pair_url: String,
+        tailscale_serving: bool,
+    },
+    Failed {
+        error: String,
+    },
 }
 
 /// Process-wide launcher state.
@@ -157,6 +165,7 @@ impl OmwRemoteState {
         type InitResult = Result<
             (
                 String,
+                bool,
                 JoinHandle<()>,
                 Arc<omw_server::SessionRegistry>,
             ),
@@ -173,10 +182,15 @@ impl OmwRemoteState {
             .recv()
             .map_err(|e| format!("init channel closed: {e}"))?
         {
-            Ok((pair_url, serve_task, pty_registry)) => {
-                eprintln!("omw-remote running. Pair URL: {pair_url}");
+            Ok((pair_url, tailscale_serving, serve_task, pty_registry)) => {
+                eprintln!(
+                    "omw-remote running. Pair URL: {pair_url} (tailscale_serving={tailscale_serving})"
+                );
                 let mut g = self.inner.lock();
-                g.status = OmwRemoteStatus::Running { pair_url };
+                g.status = OmwRemoteStatus::Running {
+                    pair_url,
+                    tailscale_serving,
+                };
                 g.serve_task = Some(serve_task);
                 g.pty_registry = Some(pty_registry);
                 Ok(())
@@ -196,9 +210,17 @@ impl OmwRemoteState {
         let task = {
             let mut g = self.inner.lock();
             g.status = OmwRemoteStatus::Stopped;
+            // Drop the registry handle so any spawned PTYs the WS handlers
+            // still hold get released as soon as those tasks exit.
             g.pty_registry = None;
             g.serve_task.take()
         };
+        // Best-effort: if Gap 4's auto-bootstrap brought up `tailscale serve
+        // --https=8787`, tell tailscale to forget that mapping before we kill
+        // the serve task. Ignore errors: if Tailscale isn't installed, isn't
+        // running, or no serve was registered, this is a no-op anyway, and
+        // we'd rather stop the daemon than block on `tailscale unserve` here.
+        let _ = super::tailscale::unserve(8787);
         if let Some(task) = task {
             task.abort();
         }
@@ -272,15 +294,23 @@ fn data_dir() -> Result<PathBuf, String> {
     Ok(home.join(".local").join("share").join("omw"))
 }
 
-/// Bring the daemon up. Returns the pair URL, a join handle for the spawned
-/// serve task, and a clone of the live PTY-session registry. Caller
-/// `.abort()`s the handle to stop the daemon — `omw-remote` doesn't expose a
-/// graceful-shutdown hook in this version of the API. The registry clone is
-/// surfaced so the UI can call `share_pane` against the same registry the
-/// daemon's WS handlers consult.
+/// Bring the daemon up. Returns the pair URL, whether Tailscale Serve was
+/// successfully bootstrapped, a join handle for the spawned serve task, and
+/// a clone of the live PTY-session registry. Caller `.abort()`s the handle
+/// to stop the daemon — `omw-remote` doesn't expose a graceful-shutdown hook
+/// in this version of the API. The registry clone is surfaced so the UI can
+/// call `share_pane` against the same registry the daemon's WS handlers
+/// consult.
+///
+/// Gap 4 (Tailscale Serve auto-bootstrap): after binding loopback, probe for
+/// a running Tailscale install. If one's there and reports a DNSName, shell
+/// out to `tailscale serve --bg --https=8787 http://127.0.0.1:8787` and add
+/// `https://<DNSName>` to `pinned_origins` so the WS handshake accepts both
+/// the loopback AND the tailnet origin. If anything in that chain fails,
+/// fall back to loopback-only behavior — never a hard error.
 async fn bring_up_daemon(
     runtime_handle: tokio::runtime::Handle,
-) -> Result<(String, JoinHandle<()>, Arc<omw_server::SessionRegistry>), String> {
+) -> Result<(String, bool, JoinHandle<()>, Arc<omw_server::SessionRegistry>), String> {
     let dir = data_dir()?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
 
@@ -298,18 +328,37 @@ async fn bring_up_daemon(
     let token = pairings
         .issue(PAIR_TTL)
         .map_err(|e| format!("issuing pair token: {e}"))?;
-    let pair_url = format!("{DEFAULT_PINNED_ORIGIN}/pair?t={}", token.to_base32());
 
     let bind = DEFAULT_BIND
         .parse()
         .map_err(|e| format!("parsing bind addr {DEFAULT_BIND}: {e}"))?;
+
+    // Probe Tailscale (Gap 4). On a running install with a DNSName, register
+    // a serve mapping and prefer the tailnet URL for the pair link.
+    let mut pinned_origins = vec![DEFAULT_PINNED_ORIGIN.to_string()];
+    let mut pair_origin = DEFAULT_PINNED_ORIGIN.to_string();
+    let mut tailscale_serving = false;
+    let ts = super::tailscale::detect_status();
+    if ts.installed && ts.running && ts.local_hostname.is_some() {
+        match super::tailscale::serve_https(8787) {
+            Ok(url) => {
+                pinned_origins.push(url.clone());
+                pair_origin = url;
+                tailscale_serving = true;
+            }
+            Err(e) => {
+                eprintln!("omw-remote: tailscale serve bootstrap failed: {e} (loopback-only)");
+            }
+        }
+    }
+    let pair_url = format!("{pair_origin}/pair?t={}", token.to_base32());
 
     let pty_registry = omw_server::SessionRegistry::new();
     let pty_registry_for_state = pty_registry.clone();
     let config = omw_remote::ServerConfig {
         bind,
         host_key: Arc::new(host_key),
-        pinned_origins: vec![DEFAULT_PINNED_ORIGIN.to_string()],
+        pinned_origins,
         inactivity_timeout: INACTIVITY_TIMEOUT,
         revocations: omw_remote::RevocationList::new(),
         nonce_store: omw_remote::NonceStore::new(NONCE_WINDOW),
@@ -325,5 +374,5 @@ async fn bring_up_daemon(
         }
     });
 
-    Ok((pair_url, serve_task, pty_registry_for_state))
+    Ok((pair_url, tailscale_serving, serve_task, pty_registry_for_state))
 }

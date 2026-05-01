@@ -3,6 +3,8 @@
 Status: Design report
 Last updated: 2026-04-30
 
+> **Note (2026-05-01):** path references below use `vendor/warp-fork/<...>` because the report was written against a pristine upstream submodule that has since been removed. The fork now lives in-tree at `vendor/warp-stripped/` (see `specs/fork-strategy.md` and PRD §8.5). Most cited line numbers remain accurate against `vendor/warp-stripped/`, but `omw_local` gating commits on `omw/strip-built-in-ai` may have shifted some line numbers in dispatchers and Cargo.toml files. References to `vendor/warp-fork` being "read-only" or to a sibling `oh-my-warp/warp-fork` repo are obsolete: the in-tree fork is freely editable, and there is no sibling repo.
+
 ## Executive Summary
 
 This report compares two implementation patterns for invoking an agent from a

@@ -60,8 +60,8 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 `omw` is the product brand; `oh-my-warp` is the repo codename (see [PRD §12.1](./PRD.md#121-brand-vs-codename)).
 
-- **Brand.** Never write `Warp` (capitalized) in product-surface code or docs. Allowed in: file paths, `LICENSE-AGPL`, source-attribution comments (e.g. `// upstream:` blocks), and the literal `oh-my-warp` codename.
-- **Vendor.** `vendor/warp-fork/` is a submodule pointing at the `oh-my-warp/warp-fork` sibling repo. Never edit it from this repo. Patches go upstream; rebase strategy lives in `specs/fork-strategy.md`.
+- **Brand.** Never write `Warp` (capitalized) in product-surface code or docs. Allowed in: file paths, `LICENSE`, source-attribution comments (e.g. `// upstream:` blocks), and the literal `oh-my-warp` codename.
+- **Vendor.** `vendor/warp-stripped/` is the in-tree Warp fork (AGPL). Direct edits are allowed; preserve the AGPL header on every file you touch. Upstream sync is a manual procedure documented in `specs/fork-strategy.md` §2 — do not run it autonomously.
 - **Spec coupling.** Any change to PRD.md §3.1 (v1.0 Committed Scope) MUST include a TODO.md update in the same PR.
 - **Test gate.** Any new endpoint in `crates/omw-remote/` requires a contract test (see `specs/test-plan.md` §1.2) AND a fuzz target (`specs/test-plan.md` §3.1) before merge.
 

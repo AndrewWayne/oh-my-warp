@@ -4,5 +4,9 @@
   "type": "module",
   "workspaces": [
     "apps/*"
-  ]
+  ],
+  "scripts": {
+    "build": "cargo build --workspace && npm run build --workspaces --if-present",
+    "build:release": "cargo build --workspace --release && npm run build --workspaces --if-present"
+  }
 }

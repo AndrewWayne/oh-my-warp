@@ -66,3 +66,16 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - **Test gate.** Any new endpoint in `crates/omw-remote/` requires a contract test (see `specs/test-plan.md` §1.2) AND a fuzz target (`specs/test-plan.md` §3.1) before merge.
 
 If you're unsure whether a change crosses the brand or vendor lines, run `/spec-consistency` and `/check-scope` from the project's slash commands before opening a PR.
+
+### 5.1 Release naming conventions (omw_local previews)
+
+Until v0.3 closes (binary rebrand to `omw`, `omw-server`, agent panel — see [TODO.md](./TODO.md) v0.3), `.dmg` releases of the audit-clean `omw_local` build use the **preview** track, not the v0.x phase tags reserved in TODO.md.
+
+- **Tag.** `omw-local-preview-v<x.y.z>` (e.g. `omw-local-preview-v0.0.1`). The reserved tags `v0.1`, `v0.2`, `v0.3`, `v1.0` follow the [TODO.md](./TODO.md) phases and are NOT used for previews.
+- **Distributed app/binary name.** `omw-warp-oss`. The Cargo `[[bin]] warp-oss` inside `vendor/warp-stripped/app/Cargo.toml` is unchanged — the rename happens at packaging time only, to keep fork delta small per [`specs/fork-strategy.md`](./specs/fork-strategy.md) §2.
+- **Bundle ID.** `omw.local.warpOss`. The embedded plist baked into the upstream binary still says `dev.warp.WarpOss`; the `.app`'s `Contents/Info.plist` overrides for LaunchServices identity. App data dir: `~/Library/Application Support/omw.local.warpOss/`. Logs still land in `~/Library/Logs/warp-oss.log` (path inherited from the embedded plist; not currently overridden).
+- **Architecture.** `aarch64-apple-darwin` only. Universal/x86_64 deferred to a later release track.
+- **Signing.** Unsigned. Install instructions ship `xattr -d com.apple.quarantine /Applications/omw-warp-oss.app`. Codesign + notarize is a v1.0 task (see [PRD §13](./PRD.md#13-phased-roadmap)).
+- **Package format.** `.dmg` containing `omw-warp-oss.app` + `Applications` symlink + `LICENSE` + the matching `RELEASE_NOTES_v<version>.md`.
+- **Brand carryover.** Preview icons may carry transitional "OSS" glyphs derived from upstream until the omw rebrand work in v0.3 lands. The literal `Warp` wordmark stays prohibited per §5 even on previews.
+- **Build entry point.** `bash scripts/build-mac-dmg.sh <version>` from the umbrella root. The script does not modify `vendor/warp-stripped/`.

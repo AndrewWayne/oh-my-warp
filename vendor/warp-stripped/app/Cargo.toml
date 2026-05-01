@@ -100,7 +100,7 @@ enclose = "1.1.8"
 enum-iterator.workspace = true
 event-listener = "5.4.0"
 field_mask.workspace = true
-firebase = { workspace = true, optional = true }
+firebase.workspace = true
 flate2 = "1.0.17"
 float-cmp.workspace = true
 futures-lite.workspace = true
@@ -220,10 +220,10 @@ warp_core.workspace = true
 warp_editor.workspace = true
 warp_graphql.workspace = true
 warp_js = { workspace = true, optional = true }
-warp_server_client = { workspace = true, optional = true }
+warp_server_client.workspace = true
 warp_util.workspace = true
 warpui = { workspace = true, features = ["schema_gen", "settings_value"] }
-voice_input = { workspace = true, optional = true }
+voice_input.workspace = true
 warpui_extras = { workspace = true, features = ["default", "user_preferences-toml"] }
 syntax_tree.workspace = true
 languages.workspace = true
@@ -231,7 +231,7 @@ warp_terminal.workspace = true
 websocket.workspace = true
 wgpu = { workspace = true, optional = true }
 natural_language_detection.workspace = true
-onboarding = { workspace = true, optional = true }
+onboarding.workspace = true
 aho-corasick = "1.1.3"
 strum.workspace = true
 strum_macros.workspace = true
@@ -248,7 +248,7 @@ vim.workspace = true
 rmcp = { workspace = true, features = ["client"] }
 warp_isolation_platform.workspace = true
 warp_ripgrep.workspace = true
-warp_managed_secrets = { workspace = true, optional = true }
+warp_managed_secrets.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block.workspace = true
@@ -301,7 +301,7 @@ rquickjs = { workspace = true, optional = true }
 rustls.workspace = true
 syntect = "5.0"
 sysinfo.workspace = true
-warp-command-signatures = { workspace = true, features = ["embed-signatures"] }
+warp-command-signatures.workspace = true
 is_executable = "1.0.1"
 gethostname = "1.1.0"
 watcher.workspace = true
@@ -717,13 +717,7 @@ mcp_server = []
 mcp_oauth = []
 mcp_debugging_ids = []
 notebook_parameter = []
-cloud = [
-    "dep:firebase",
-    "dep:warp_server_client",
-    "dep:warp_managed_secrets",
-    "dep:onboarding",
-    "dep:voice_input",
-]
+cloud = ["warp-command-signatures/embed-signatures"]
 omw_local = ["skip_firebase_anonymous_user", "warp_core/omw_local"]
 oz_changelog_updates = []
 personal_cloud_objects = []
@@ -765,7 +759,7 @@ skip_login = []
 # This feature should only be enabled when building a self-contained binary with the bundle script.
 standalone = []
 prompt_suggestions_via_maa = []
-voice_input = ["dep:voice_input"]
+voice_input = []
 system_theme = []
 tab_close_button_on_left = []
 team_features_override = []

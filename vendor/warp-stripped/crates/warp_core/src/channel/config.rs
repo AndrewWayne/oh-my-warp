@@ -41,6 +41,7 @@ pub struct WarpServerConfig {
 }
 
 impl WarpServerConfig {
+    #[cfg(not(feature = "omw_local"))]
     pub fn production() -> Self {
         Self {
             server_root_url: "https://app.warp.dev".into(),
@@ -48,6 +49,11 @@ impl WarpServerConfig {
             session_sharing_server_url: Some("wss://sessions.app.warp.dev".into()),
             firebase_auth_api_key: "AIzaSyBdy3O3S9hrdayLJxJ7mriBR4qgUaUygAs".into(),
         }
+    }
+
+    #[cfg(feature = "omw_local")]
+    pub fn production() -> Self {
+        Self::omw_local()
     }
 
     /// Local/offline defaults for the omw fork.
@@ -82,11 +88,17 @@ pub struct OzConfig {
 }
 
 impl OzConfig {
+    #[cfg(not(feature = "omw_local"))]
     pub fn production() -> Self {
         Self {
             oz_root_url: "https://oz.warp.dev".into(),
             workload_audience_url: None,
         }
+    }
+
+    #[cfg(feature = "omw_local")]
+    pub fn production() -> Self {
+        Self::omw_local()
     }
 
     /// Local/offline defaults for the omw fork.

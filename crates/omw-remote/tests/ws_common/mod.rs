@@ -14,6 +14,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::SigningKey;
 use omw_remote::{
@@ -208,4 +210,48 @@ pub fn sign_canonical(f: &WsFixture, req: &CanonicalRequest) -> [u8; 64] {
         device_priv: &priv_seed,
     }
     .sign(req)
+}
+
+/// Build a `?ct=<base64url>` connect-token bundle that mirrors the JSON shape
+/// emitted by `apps/web-controller/src/lib/pty-ws.ts::buildConnectToken`.
+///
+/// Returns the bundle's base64url string (suitable for splicing into a WS URL
+/// as `?ct=<value>`).
+///
+/// `ts` and `nonce` are exposed as parameters so individual tests can build
+/// expired-ts or replayed-nonce variants without re-implementing the bundle.
+pub fn make_connect_token(
+    device: &SigningKey,
+    cap_token_b64: &str,
+    device_id: &str,
+    session_id: &str,
+    ts: DateTime<Utc>,
+    nonce: &str,
+) -> String {
+    let canonical = CanonicalRequest {
+        method: "GET".into(),
+        path: format!("/ws/v1/pty/{session_id}"),
+        query: String::new(),
+        ts: ts.to_rfc3339(),
+        nonce: nonce.into(),
+        body_sha256: body_hash(b""),
+        device_id: device_id.into(),
+        protocol_version: 1,
+    };
+    let priv_seed = device.to_bytes();
+    let sig = Signer {
+        device_priv: &priv_seed,
+    }
+    .sign(&canonical);
+
+    let bundle = serde_json::json!({
+        "v": 1,
+        "device_id": device_id,
+        "ts": ts.to_rfc3339(),
+        "nonce": nonce,
+        "sig": URL_SAFE_NO_PAD.encode(sig),
+        "capability_token": cap_token_b64,
+    });
+    let bytes = serde_json::to_vec(&bundle).expect("bundle serializes");
+    URL_SAFE_NO_PAD.encode(&bytes)
 }

@@ -3118,7 +3118,18 @@ impl ansi::Handler for TerminalModel {
         let bytes = input.bytes();
 
         // Send a copy of the bytes to subscribers.
-        self.event_proxy.send_pty_read_event(bytes);
+        //
+        // Filter out synchronized-output frames the same way the shared-
+        // session emission below does: `on_finish_byte_processing` fires
+        // TWICE for synchronized-output frames (DCS sequences used by
+        // TUI apps like Claude Code for atomic redraws) — once when the
+        // raw bytes are processed and once when the frame is flushed.
+        // Without this gate, omw-remote subscribers (the phone via
+        // `pane_share`) see every TUI redraw twice — first as a static
+        // print of the raw bytes, then as the rendered frame.
+        if !input.is_synchronized_output_frame() {
+            self.event_proxy.send_pty_read_event(bytes);
+        }
 
         // Send a copy of the bytes for the active shared session, if applicable.
         // When processing a synchronized output frame, `on_finish_byte_processing` is called

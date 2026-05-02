@@ -149,10 +149,28 @@ pub fn share_self_pane(
     registry: Arc<omw_server::SessionRegistry>,
     runtime: tokio::runtime::Handle,
 ) -> Option<PaneShareHandle> {
-    let io = local_io_handles_for(me, ctx)?;
+    let Some(io) = local_io_handles_for(me, ctx) else {
+        // stderr-direct so users running warp-oss from PowerShell see the
+        // diagnostic without configuring log filters. The negative case is
+        // important to surface: it means "we ran, but the active manager
+        // wasn't a local_tty pane" — which would silently leave the
+        // Sessions list empty and the user wondering.
+        eprintln!(
+            "[omw-debug] share_self_pane: active pane is NOT a local_tty manager \
+             (could be remote SSH, shared-session viewer, or detached); skipping"
+        );
+        return None;
+    };
     match spawn_share_and_collect(&runtime, &registry, "active-pane", io) {
-        Ok(h) => Some(h),
+        Ok(h) => {
+            eprintln!(
+                "[omw-debug] share_self_pane: registered active pane as session {}",
+                h.session_id
+            );
+            Some(h)
+        }
         Err(e) => {
+            eprintln!("[omw-debug] share_self_pane: spawn_share_and_collect failed: {e}");
             log::warn!("omw pane_auto_share: share_self_pane failed: {e}");
             None
         }

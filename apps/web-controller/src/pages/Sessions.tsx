@@ -30,6 +30,10 @@ export default function Sessions() {
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
 
+  // True once we've auto-navigated for this mount, so subsequent refreshes
+  // don't re-fire (e.g., user comes back to /host/:hostId from terminal,
+  // sees the same single session, and gets bounced again).
+  const autoNavigatedRef = useRef(false);
   // Avoid stale-set after unmount.
   const aliveRef = useRef(true);
   useEffect(() => {
@@ -39,20 +43,42 @@ export default function Sessions() {
     };
   }, []);
 
-  const refresh = useCallback(async (p: PairingRecord) => {
-    try {
-      const sessions = await listSessions(p);
-      sessions.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-      if (aliveRef.current) setLoad({ kind: "ready", sessions });
-    } catch (e) {
-      if (aliveRef.current) {
-        setLoad({
-          kind: "error",
-          message: e instanceof Error ? e.message : String(e),
-        });
+  const refresh = useCallback(
+    async (p: PairingRecord) => {
+      try {
+        const sessions = await listSessions(p);
+        sessions.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+        if (!aliveRef.current) return;
+        setLoad({ kind: "ready", sessions });
+
+        // Auto-navigate when there's exactly one alive session — typically
+        // means the host's only open Warp pane was just registered via
+        // share_self_pane. Restores the "pair -> immediately on a working
+        // terminal" UX without going through createDefaultSession (which
+        // would spawn a sibling shell, not the Warp pane). Fires once per
+        // mount.
+        if (!autoNavigatedRef.current && p.hostId) {
+          const alive = sessions.filter((s) => s.alive);
+          if (alive.length === 1) {
+            autoNavigatedRef.current = true;
+            navigate(
+              `/terminal/${encodeURIComponent(p.hostId)}/${encodeURIComponent(
+                alive[0]!.id,
+              )}`,
+            );
+          }
+        }
+      } catch (e) {
+        if (aliveRef.current) {
+          setLoad({
+            kind: "error",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
       }
-    }
-  }, []);
+    },
+    [navigate],
+  );
 
   // Load pairing on mount; redirect if missing.
   useEffect(() => {

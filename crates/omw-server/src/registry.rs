@@ -469,6 +469,37 @@ impl SessionRegistry {
     /// scroll into the client's main-screen scrollback when the next live
     /// update arrives, producing a visible duplicate-render that the user
     /// reported during smoke testing of v0.4-thin.
+    /// Like `subscribe_with_state` but also returns the parser's current
+    /// (rows, cols) so the WS handler can ship that size to the freshly-
+    /// attached client. The phone xterm.js must match the laptop pane's
+    /// size or cursor-positioning bytes from claude code (e.g. row 35,
+    /// col 100 for a 39x149 pane) clamp to the phone's smaller grid and
+    /// cause multiple writes to pile up at the boundary — the duplicate-
+    /// render bug.
+    pub fn subscribe_with_state_and_size(
+        &self,
+        id: SessionId,
+    ) -> Option<(Bytes, (u16, u16), broadcast::Receiver<Bytes>)> {
+        let map = self.sessions.lock().expect("registry mutex poisoned");
+        let entry = map.get(&id)?;
+        let (snapshot, size) = {
+            let term = entry.term.lock().expect("term mutex poisoned");
+            let screen = term.screen();
+            let mode_prefix: &[u8] = if screen.alternate_screen() {
+                b"\x1b[?1049h"
+            } else {
+                b"\x1b[?1049l"
+            };
+            let state = screen.state_formatted();
+            let mut buf = Vec::with_capacity(mode_prefix.len() + state.len());
+            buf.extend_from_slice(mode_prefix);
+            buf.extend_from_slice(&state);
+            (Bytes::from(buf), screen.size())
+        };
+        let rx = entry.output_tx.subscribe();
+        Some((snapshot, size, rx))
+    }
+
     pub fn subscribe_with_state(
         &self,
         id: SessionId,

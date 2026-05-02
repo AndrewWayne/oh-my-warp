@@ -43,6 +43,14 @@ export interface PtyConnection {
   sendInput(bytes: Uint8Array): Promise<void>;
   sendControl(payload: object): Promise<void>;
   onOutput(handler: (bytes: Uint8Array) => void): () => void;
+  /**
+   * Subscribe to inbound `Control` frames. The daemon sends these for
+   * out-of-band signals — e.g. an initial `{type:"size", rows, cols}` on
+   * attach so the phone xterm can resize itself to match the laptop pane
+   * (otherwise cursor-positioning bytes from the TUI clamp to the phone's
+   * smaller grid and content piles up at the boundary).
+   */
+  onControl(handler: (payload: unknown) => void): () => void;
   onClose(handler: (info: { code: number; reason: string }) => void): () => void;
   ping(): Promise<void>;
   close(): void;
@@ -190,6 +198,7 @@ export async function connectPty(opts: ConnectOptions): Promise<PtyConnection> {
   let outboundSeq = 0;
   let lastInboundSeq = -1;
   const outputHandlers = new Set<OutputHandler>();
+  const controlHandlers = new Set<(payload: unknown) => void>();
   const closeHandlers = new Set<CloseHandler>();
   let closed = false;
   let pingTimer: ReturnType<typeof setInterval> | undefined;
@@ -256,8 +265,22 @@ export async function connectPty(opts: ConnectOptions): Promise<PtyConnection> {
               /* swallow */
             }
           }
+        } else if (frame.kind === "control") {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(new TextDecoder().decode(frame.payload));
+          } catch {
+            return;
+          }
+          for (const h of controlHandlers) {
+            try {
+              h(parsed);
+            } catch {
+              /* swallow */
+            }
+          }
         }
-        // pong / control: no-op at this layer.
+        // pong: no-op at this layer.
       })
       .catch(() => {
         if (closed) return;
@@ -329,6 +352,10 @@ export async function connectPty(opts: ConnectOptions): Promise<PtyConnection> {
     onOutput(h) {
       outputHandlers.add(h);
       return () => outputHandlers.delete(h);
+    },
+    onControl(h) {
+      controlHandlers.add(h);
+      return () => controlHandlers.delete(h);
     },
     onClose(h) {
       closeHandlers.add(h);

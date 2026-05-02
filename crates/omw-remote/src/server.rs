@@ -217,16 +217,22 @@ async fn ws_handler(
             return (StatusCode::NOT_FOUND, "session_not_found").into_response();
         }
     };
-    let (snapshot, output_rx) = match state.pty_registry.subscribe_with_state(session_uuid) {
-        Some(pair) => pair,
+    let (snapshot, parser_size, output_rx) = match state
+        .pty_registry
+        .subscribe_with_state_and_size(session_uuid)
+    {
+        Some(triple) => triple,
         None => {
             eprintln!("[omw-debug] ws_handler -> 404 session not in registry: {session_uuid}");
             return (StatusCode::NOT_FOUND, "session_not_found").into_response();
         }
     };
+    let (parser_rows, parser_cols) = parser_size;
     eprintln!(
-        "[omw-debug] ws_handler -> registry hit, upgrading (snapshot {} bytes)",
-        snapshot.len()
+        "[omw-debug] ws_handler -> registry hit, upgrading (snapshot {} bytes, parser size {}x{})",
+        snapshot.len(),
+        parser_rows,
+        parser_cols,
     );
 
     // 4. Accept upgrade.
@@ -240,6 +246,7 @@ async fn ws_handler(
             device_id_for_session,
             session_uuid,
             snapshot,
+            (parser_rows, parser_cols),
             output_rx,
         )
     })

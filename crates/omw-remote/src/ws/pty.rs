@@ -91,6 +91,7 @@ pub(crate) async fn handle_authed_socket(
     device_id: String,
     session_id: Uuid,
     snapshot: Bytes,
+    parser_size: (u16, u16),
     mut pty_rx: broadcast::Receiver<Bytes>,
 ) {
     eprintln!(
@@ -155,6 +156,28 @@ pub(crate) async fn handle_authed_socket(
             }
         }
     });
+
+    // ---- Size hint Control frame ----
+    // Send the laptop pane's actual (rows, cols) to the phone BEFORE the
+    // snapshot/live byte stream. The phone must call `xterm.resize(cols,
+    // rows)` to match — otherwise cursor-positioning bytes targeting rows
+    // up to N (the laptop's height) clamp to the phone's smaller grid and
+    // multiple writes pile up at the boundary, producing the duplicate-
+    // render bug confirmed by the xterm-mid-stream-attach.test.ts fixture
+    // test ("phone xterm SMALLER than laptop pane causes accumulation").
+    {
+        let (rows, cols) = parser_size;
+        let payload = serde_json::json!({"type": "size", "rows": rows, "cols": cols});
+        let frame = Frame {
+            v: 1,
+            seq: 0,
+            ts: Utc::now(),
+            kind: FrameKind::Control,
+            payload: Bytes::from(serde_json::to_vec(&payload).unwrap_or_default()),
+            sig: [0u8; 64],
+        };
+        let _ = out_tx.send(Outbound::Frame(frame));
+    }
 
     // ---- Snapshot frame (tmux-style attach) ----
     // Ship the current vt100 screen state as the first Output frame BEFORE

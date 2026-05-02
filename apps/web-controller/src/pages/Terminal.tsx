@@ -85,6 +85,28 @@ export default function Terminal() {
         if (xterm) xterm.write(bytes);
       });
 
+      // Daemon sends a `{type:"size", rows, cols}` Control frame on attach
+      // so the phone xterm can match the laptop pane's grid. Without this,
+      // cursor-positioning bytes from the running TUI clamp to the phone's
+      // smaller default 80x24 grid and content piles up at the boundary —
+      // the duplicate-render bug verified by the
+      // xterm-mid-stream-attach.test.ts fixture test.
+      connection.onControl((payload) => {
+        if (
+          xterm &&
+          typeof payload === "object" &&
+          payload !== null &&
+          (payload as { type?: unknown }).type === "size"
+        ) {
+          const p = payload as { rows?: number; cols?: number };
+          const rows = typeof p.rows === "number" ? p.rows : 0;
+          const cols = typeof p.cols === "number" ? p.cols : 0;
+          if (rows > 0 && cols > 0) {
+            xterm.resize(cols, rows);
+          }
+        }
+      });
+
       connection.onClose((info) => {
         if (cancelled) return;
         setErrorMsg(`Connection closed (${info.code}${info.reason ? `: ${info.reason}` : ""})`);

@@ -61,11 +61,98 @@ export interface ConnectOptions {
   sessionId: string;
   pingIntervalMs?: number;
   /**
+   * Number of WS-open attempts before giving up. Each attempt creates a
+   * fresh WebSocket. iOS Safari over Tailscale frequently stalls the first
+   * SYN/handshake for tens of seconds; the second attempt usually completes
+   * quickly because the prior attempt's NAT/keepalive handshake is already
+   * mid-flight. Default 3.
+   */
+  maxConnectAttempts?: number;
+  /**
+   * Per-attempt deadline for WS open. Default 6000ms — short enough to
+   * give up on a stuck attempt quickly, long enough to absorb a normal
+   * Tailscale NAT-traversal handshake.
+   */
+  connectTimeoutMs?: number;
+  /**
    * Optional sink for connection-lifecycle debug events. Useful on devices
    * without DevTools (e.g. iPhone Safari) — the page can render these to a
    * visible panel and surface what's happening during a stuck connection.
    */
   onDebug?: (msg: string) => void;
+}
+
+/**
+ * Open a single WebSocket and wait for its `open` event with a deadline.
+ * Resolves with the open `WebSocket` on success; rejects with
+ * `connect_timeout` if the deadline passes (caller should retry),
+ * `ws_closed:CODE` if the server closes during handshake, or `ws_error`
+ * for transport errors. The temporary `open`/`close`/`error` listeners are
+ * removed before resolving — caller attaches its real listeners after.
+ */
+async function openOnce(
+  url: string,
+  dbg: (msg: string) => void,
+  timeoutMs: number,
+): Promise<WebSocket> {
+  return new Promise<WebSocket>((resolve, reject) => {
+    const ws = new WebSocket(url);
+    let settled = false;
+    const start = Date.now();
+    const tick = setInterval(() => {
+      const elapsed = Date.now() - start;
+      if (ws.readyState === WebSocket.CONNECTING) {
+        dbg(`openOnce: still CONNECTING, elapsed=${elapsed}ms`);
+      }
+    }, 2000);
+    const cleanup = () => {
+      ws.removeEventListener("open", onOpen);
+      ws.removeEventListener("close", onClose);
+      ws.removeEventListener("error", onErr);
+      clearInterval(tick);
+      clearTimeout(timer);
+    };
+    const onOpen = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      const elapsed = Date.now() - start;
+      dbg(`openOnce: open after ${elapsed}ms`);
+      resolve(ws);
+    };
+    const onClose = (ev: Event) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      const e = ev as CloseEvent;
+      const elapsed = Date.now() - start;
+      dbg(`openOnce: closed before open code=${e.code} elapsed=${elapsed}ms`);
+      reject(new Error(`ws_closed:${e.code}`));
+    };
+    const onErr = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      const elapsed = Date.now() - start;
+      dbg(`openOnce: error before open, elapsed=${elapsed}ms`);
+      reject(new Error("ws_error"));
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      try {
+        ws.close(4000, "client_timeout");
+      } catch {
+        /* ignore */
+      }
+      dbg(`openOnce: timeout after ${timeoutMs}ms`);
+      reject(new Error("connect_timeout"));
+    }, timeoutMs);
+    ws.addEventListener("open", onOpen);
+    ws.addEventListener("close", onClose);
+    ws.addEventListener("error", onErr);
+  });
 }
 
 /** Build the canonical JSON bytes for a frame envelope (sig omitted). */
@@ -202,7 +289,64 @@ export async function connectPty(opts: ConnectOptions): Promise<PtyConnection> {
   const dbg = opts.onDebug ?? ((_: string) => {});
   dbg(`open ws ${wsBase}/ws/v1/pty/${opts.sessionId}`);
 
-  const ws = new WebSocket(url);
+  // Pre-warm the network path with a quick HTTP GET. iOS Safari + Tailscale
+  // can leave the very first packet to a peer stuck for tens of seconds
+  // while WireGuard does its handshake; a small unsigned HTTP request to
+  // a fast endpoint wakes that path up so the WS upgrade lands on a
+  // ready connection. Best-effort: any failure is logged but does NOT
+  // block the WS open below — the retry loop below will still recover.
+  // (Empirical signature: connecting from a freshly-loaded sessions page
+  // always timed out, but coming from a recently-closed terminal page
+  // connected instantly. That delta is the cold-vs-warm path.)
+  {
+    const prewarmUrl = `${opts.pairing.hostUrl.replace(/\/$/, "")}/api/v1/host-info`;
+    dbg(`pre-warm: GET ${prewarmUrl}`);
+    const prewarmStart = Date.now();
+    try {
+      const resp = await Promise.race([
+        fetch(prewarmUrl, { method: "GET", cache: "no-store" }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("prewarm_timeout")), 4000),
+        ),
+      ]);
+      dbg(
+        `pre-warm: status=${(resp as Response).status} in ${Date.now() - prewarmStart}ms`,
+      );
+    } catch (e) {
+      dbg(
+        `pre-warm: ${(e as Error).message} after ${Date.now() - prewarmStart}ms (continuing)`,
+      );
+    }
+  }
+
+  // Retry loop: iOS Safari + Tailscale frequently stalls the first WS
+  // handshake for tens of seconds. A fresh WebSocket on retry usually
+  // completes immediately because the prior attempt's NAT-traversal
+  // handshake is already in progress.
+  const maxAttempts = opts.maxConnectAttempts ?? 3;
+  const perAttemptTimeoutMs = opts.connectTimeoutMs ?? 6000;
+  let opened: WebSocket | null = null;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      dbg(`connect attempt ${attempt}/${maxAttempts}`);
+      opened = await openOnce(url, dbg, perAttemptTimeoutMs);
+      dbg(`connect attempt ${attempt} succeeded`);
+      lastErr = undefined;
+      break;
+    } catch (e) {
+      lastErr = e;
+      const msg = e instanceof Error ? e.message : String(e);
+      dbg(`connect attempt ${attempt} failed: ${msg}`);
+      if (msg !== "connect_timeout" || attempt === maxAttempts) {
+        throw e;
+      }
+    }
+  }
+  if (!opened) {
+    throw lastErr ?? new Error("connect_failed");
+  }
+  const ws: WebSocket = opened;
 
   let outboundSeq = 0;
   let lastInboundSeq = -1;
@@ -229,9 +373,8 @@ export async function connectPty(opts: ConnectOptions): Promise<PtyConnection> {
     }
   }
 
-  ws.addEventListener("open", () => {
-    dbg("ws open");
-  });
+  // (The "open" event already fired during openOnce above; no listener
+  // needed here.)
   ws.addEventListener("close", (ev) => {
     const e = ev as CloseEvent;
     dbg(`ws close code=${e.code} reason=${e.reason || "(none)"}`);
@@ -313,61 +456,8 @@ export async function connectPty(opts: ConnectOptions): Promise<PtyConnection> {
       });
   });
 
-  function waitOpen(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        dbg("waitOpen: already OPEN");
-        resolve();
-        return;
-      }
-      dbg(`waitOpen: readyState=${ws.readyState}`);
-      // Diagnostic heartbeat for iOS Safari case where WS stays in
-      // CONNECTING for 30s+ before transitioning. Logs the readyState and
-      // elapsed every 2s while waiting, so users can see whether the
-      // browser is making any progress (readyState changes) or genuinely
-      // stalled (Tailscale NAT traversal, iOS background throttling, etc).
-      const start = Date.now();
-      const tick = setInterval(() => {
-        const elapsed = Date.now() - start;
-        if (ws.readyState === WebSocket.CONNECTING) {
-          dbg(`waitOpen: still CONNECTING, elapsed=${elapsed}ms`);
-        } else {
-          dbg(`waitOpen: readyState=${ws.readyState}, elapsed=${elapsed}ms`);
-        }
-      }, 2000);
-      const cleanup = () => {
-        clearInterval(tick);
-        ws.removeEventListener("open", onOpen);
-        ws.removeEventListener("close", onClose);
-        ws.removeEventListener("error", onErr);
-      };
-      const onOpen = () => {
-        cleanup();
-        const elapsed = Date.now() - start;
-        dbg(`waitOpen: open event fired after ${elapsed}ms`);
-        resolve();
-      };
-      const onClose = (ev: Event) => {
-        cleanup();
-        const e = ev as CloseEvent;
-        const elapsed = Date.now() - start;
-        dbg(`waitOpen: closed before open code=${e.code} reason=${e.reason} elapsed=${elapsed}ms`);
-        reject(new Error(`ws_closed:${e.code}`));
-      };
-      const onErr = () => {
-        cleanup();
-        const elapsed = Date.now() - start;
-        dbg(`waitOpen: error before open, elapsed=${elapsed}ms`);
-        reject(new Error("ws_error"));
-      };
-      ws.addEventListener("open", onOpen);
-      ws.addEventListener("close", onClose);
-      ws.addEventListener("error", onErr);
-    });
-  }
-
-  await waitOpen();
-  dbg("waitOpen: resolved, returning PtyConnection");
+  // (waitOpen replaced by the openOnce-based retry loop earlier in this
+  // function; ws is already open by the time we reach here.)
 
   async function sendFrame(kind: FrameKind, payload: Uint8Array): Promise<void> {
     if (closed) throw new Error("connection_closed");

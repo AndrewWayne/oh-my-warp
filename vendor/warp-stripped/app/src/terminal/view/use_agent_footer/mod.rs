@@ -301,44 +301,33 @@ impl TerminalView {
                     }
                 }
 
-                // Gap 1 part C (server-side): auto-share every open Warp pane
-                // in this window into the daemon's PTY-session registry. The
-                // phone's GET /api/v1/sessions then lists those panes, and
-                // tapping one drives the actual Warp pane (input echoes on
-                // the laptop, output streams to the phone). One-shot
-                // enumeration: panes opened *after* daemon start aren't
-                // auto-shared (deferred — see `omw::pane_auto_share` module
-                // docs).
+                // TODO(omw/wiring, gap-1c): auto-share open Warp panes into
+                // the daemon's PTY-session registry on Phone click.
                 //
-                // DEFERRED via `ctx.spawn(Timer::after(0), ...)` because the
-                // walk goes `pane_group.update()` -> `for_all_terminal_panes`
-                // which re-enters every TerminalView's update closure —
-                // including the one we're inside right now (this very Phone
-                // click handler). Re-entering an in-progress view aborts
-                // warp's UI framework and the process exits, which the user
-                // sees as warp-oss restarting + losing all panes + omw-
-                // remote resetting. Bouncing through the timer guarantees
-                // the share runs after this handler returns, so every view
-                // is free to be re-borrowed.
-                ctx.spawn(
-                    Timer::after(Duration::ZERO),
-                    move |_me, _result, ctx| {
-                        let state = OmwRemoteState::shared();
-                        let (Some(registry), Some(runtime)) =
-                            (state.pty_registry(), state.runtime_handle())
-                        else {
-                            return;
-                        };
-                        let handles = crate::omw::pane_auto_share::share_all_local_panes(
-                            ctx, registry, runtime,
-                        );
-                        log::info!(
-                            "omw pane_auto_share: registered {} pane(s) into the daemon registry",
-                            handles.len(),
-                        );
-                        state.store_pane_shares(handles);
-                    },
-                );
+                // Two attempts so far have crashed warp-oss on click (process
+                // exits, all panes lost, omw-remote resets):
+                //
+                //   1. inline `share_all_local_panes(ctx, ...)` (commit
+                //      1272ce6). Suspected re-entry into the current
+                //      TerminalView's update via for_all_terminal_panes.
+                //   2. ditto, deferred via `ctx.spawn(Timer::after(0), ...)`
+                //      (commit 49ffbb2). Same crash — defer didn't help, so
+                //      reentrancy isn't the only issue.
+                //
+                // The `crate::omw::pane_auto_share` helper is left in place
+                // (unused) for the next attempt. Plausible directions:
+                //   - integrate with Warp's existing `attempt_to_share_session`
+                //     instead of going through `pane_share::share_pane`,
+                //   - move the trigger out of `TerminalView`'s event handler
+                //     entirely (e.g., a dispatched `TerminalAction` handled at
+                //     the workspace level),
+                //   - run warp-oss from a console to capture the panic and
+                //     identify the actual abort cause before re-enabling.
+                //
+                // Until that lands, the daemon spawns a sibling shell on
+                // first WS connect, and the Web Controller surfaces a "Start
+                // a new shell" button on the Sessions page so the user has
+                // a working path.
 
                 // Gap 2 (toast surface): after start, snapshot the daemon
                 // state + Tailscale probe and render the modal text body.

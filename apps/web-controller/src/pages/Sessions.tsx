@@ -6,6 +6,7 @@ import {
   type PairingRecord,
 } from "../lib/storage/idb";
 import {
+  createDefaultSession,
   deleteSession,
   listSessions,
   type SessionMeta,
@@ -26,6 +27,8 @@ export default function Sessions() {
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
   const [stopping, setStopping] = useState<string | null>(null);
   const [stopError, setStopError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
 
   // Avoid stale-set after unmount.
   const aliveRef = useRef(true);
@@ -112,6 +115,24 @@ export default function Sessions() {
     }
   }
 
+  async function handleStartNew() {
+    if (!pairing || !hostId) return;
+    setStartError(null);
+    setStarting(true);
+    try {
+      const sessionId = await createDefaultSession(pairing, "shell");
+      navigate(
+        `/terminal/${encodeURIComponent(hostId)}/${encodeURIComponent(sessionId)}`,
+      );
+    } catch (e) {
+      setStartError(
+        `Couldn't start session: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      if (aliveRef.current) setStarting(false);
+    }
+  }
+
   async function handleForgetHost() {
     if (!hostId) return;
     if (
@@ -162,6 +183,15 @@ export default function Sessions() {
           >
             Refresh
           </button>
+          <button
+            type="button"
+            onClick={() => void handleStartNew()}
+            disabled={!pairing || starting}
+            title="Spawn a fresh shell session on the host (sibling to any open Warp panes)"
+            className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-500 text-sm font-semibold"
+          >
+            {starting ? "Starting…" : "Start a new shell"}
+          </button>
         </div>
       </div>
 
@@ -187,10 +217,21 @@ export default function Sessions() {
         </div>
       )}
 
+      {startError && (
+        <div
+          role="alert"
+          className="rounded border border-red-700 bg-red-900/30 p-3 text-sm text-red-200"
+        >
+          {startError}
+        </div>
+      )}
+
       {load.kind === "ready" && load.sessions.length === 0 && (
         <div className="rounded border border-neutral-800 bg-neutral-900/40 p-4 text-sm text-neutral-400">
-          No active sessions on this host. Open a pane in Warp on the desktop to
-          share it here.
+          No active sessions on this host. Click <strong>Start a new shell</strong>{" "}
+          to spawn one. (Auto-sharing of open Warp panes is not yet wired —
+          shells started from here are siblings to any panes the laptop has
+          open.)
         </div>
       )}
 

@@ -72,8 +72,17 @@ pub struct ExternalSessionSpec {
     pub output_tx: broadcast::Sender<Bytes>,
     /// Closure invoked on `kill(id)`. Called at most once.
     pub kill: Box<dyn Fn() + Send + Sync>,
-    /// Initial PTY size — recorded for future resize support; v0.4-thin does
-    /// NOT plumb resize for external sessions.
+    /// Optional resize callback. When the phone sends a `Control` resize
+    /// frame, the registry calls this so `pane_share` can forward
+    /// `Message::Resize` through the laptop pane's `event_loop_tx`. The
+    /// laptop pane's child process gets SIGWINCH and re-flows its TUI for
+    /// the phone's actual viewport — required for iPhone where the phone
+    /// xterm is much narrower than the laptop pane's natural size.
+    pub resize_handler: Option<Box<dyn Fn(u16, u16) + Send + Sync>>,
+    /// Initial PTY size — recorded so the parser is constructed at the
+    /// correct dimensions on register, which avoids out-of-range cursor
+    /// positioning getting clamped at the boundary (see PR notes on the
+    /// duplicate-render bug).
     pub initial_size: PtySize,
 }
 
@@ -152,6 +161,10 @@ enum SessionSource {
         input_tx: mpsc::Sender<Vec<u8>>,
         /// Closure invoked on first `kill(id)`. `take()`'d to fire-once.
         kill: Option<Box<dyn Fn() + Send + Sync>>,
+        /// Resize forwarder — see `ExternalSessionSpec::resize_handler`.
+        /// Called by `SessionRegistry::resize` so the laptop pane's child
+        /// gets SIGWINCH when the phone reports its actual viewport size.
+        resize_handler: Option<Box<dyn Fn(u16, u16) + Send + Sync>>,
         /// Recorded for future resize support; not used in v0.4-thin.
         #[allow(dead_code)]
         initial_size: PtySize,
@@ -326,6 +339,7 @@ impl SessionRegistry {
             source: SessionSource::External {
                 input_tx: spec.input_tx,
                 kill: Some(spec.kill),
+                resize_handler: spec.resize_handler,
                 initial_size: spec.initial_size,
             },
         };
@@ -527,15 +541,30 @@ impl SessionRegistry {
         Some((snapshot, rx))
     }
 
-    /// Resize the session's vt100 parser screen. Caller is responsible for
-    /// also sending the resize to the upstream PTY (the registry doesn't
-    /// own a PTY for external sessions). Returns [`crate::Error::NotFound`]
-    /// if the id is unknown.
+    /// Resize the session's vt100 parser AND forward the resize to the
+    /// upstream PTY when the source is external (via the spec-supplied
+    /// `resize_handler`). Returns [`crate::Error::NotFound`] if the id is
+    /// unknown.
+    ///
+    /// The handler is invoked with the parser-mutex still held, so any
+    /// concurrent `record_output` from the laptop pane that targets the new
+    /// size is serialized after this resize completes. The handler itself
+    /// is non-blocking (it just queues a `Message::Resize` on the laptop
+    /// pane's mio channel).
     pub fn resize(&self, id: SessionId, rows: u16, cols: u16) -> Result<()> {
         let map = self.sessions.lock().expect("registry mutex poisoned");
         let entry = map.get(&id).ok_or(Error::NotFound(id))?;
-        let mut term = entry.term.lock().expect("term mutex poisoned");
-        term.screen_mut().set_size(rows, cols);
+        {
+            let mut term = entry.term.lock().expect("term mutex poisoned");
+            term.screen_mut().set_size(rows, cols);
+        }
+        if let SessionSource::External {
+            resize_handler: Some(handler),
+            ..
+        } = &entry.source
+        {
+            handler(rows, cols);
+        }
         Ok(())
     }
 

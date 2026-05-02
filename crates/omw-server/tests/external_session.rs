@@ -42,6 +42,7 @@ fn make_external_spec(
         input_tx,
         output_tx: output_tx.clone(),
         kill,
+        resize_handler: None,
         initial_size: PtySize {
             cols: 80,
             rows: 24,

@@ -88,6 +88,7 @@ async fn external_session_round_trips_input_and_output_via_signed_ws() {
         input_tx,
         output_tx: output_tx.clone(),
         kill,
+        resize_handler: None,
         initial_size: omw_pty::PtySize { cols: 80, rows: 24 },
     };
 

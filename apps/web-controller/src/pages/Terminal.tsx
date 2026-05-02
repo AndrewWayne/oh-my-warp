@@ -16,6 +16,14 @@ export default function Terminal() {
   const [status, setStatus] = useState<Status>("loading");
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [retryNonce, setRetryNonce] = useState(0);
+  const [debugLog, setDebugLog] = useState<string[]>([]);
+  // Stable ref for accumulating logs without triggering re-renders for every line.
+  const debugLogRef = useRef<string[]>([]);
+  const appendDebug = (msg: string) => {
+    const stamped = `[${new Date().toISOString().slice(11, 19)}] ${msg}`;
+    debugLogRef.current = [...debugLogRef.current, stamped].slice(-30);
+    setDebugLog(debugLogRef.current);
+  };
 
   useEffect(() => {
     if (!hostId || !sessionId) return;
@@ -59,14 +67,21 @@ export default function Terminal() {
       }
 
       setStatus("connecting");
+      appendDebug("connectPty start");
       try {
-        connection = await connectPty({ pairing, sessionId });
+        connection = await connectPty({
+          pairing,
+          sessionId,
+          onDebug: appendDebug,
+        });
       } catch (e) {
+        appendDebug(`connectPty rejected: ${errStr(e)}`);
         if (cancelled) return;
         setErrorMsg(`Failed to connect: ${errStr(e)}`);
         setStatus("error");
         return;
       }
+      appendDebug("connectPty resolved");
       if (cancelled) {
         connection.close();
         return;
@@ -86,24 +101,61 @@ export default function Terminal() {
       });
 
       // Daemon sends a `{type:"size", rows, cols}` Control frame on attach
-      // so the phone xterm can match the laptop pane's grid. Without this,
-      // cursor-positioning bytes from the running TUI clamp to the phone's
-      // smaller default 80x24 grid and content piles up at the boundary —
-      // the duplicate-render bug verified by the
-      // xterm-mid-stream-attach.test.ts fixture test.
+      // with the laptop pane's actual size. Two cases:
+      //
+      // 1. Browser/wide client (fit-derived size >= laptop): match the
+      //    laptop. xterm.resize(laptop_cols, laptop_rows). Bytes flow at
+      //    laptop's coords and render correctly. NO upstream resize, so
+      //    laptop user sees no change. (This is what fixed the desktop
+      //    browser duplicate-render bug.)
+      //
+      // 2. Phone/narrow client (fit-derived size < laptop): the laptop's
+      //    cursor positioning would clamp on phone's smaller grid and pile
+      //    up. Instead, tell the laptop to shrink to phone's fit-size; the
+      //    laptop's TUI re-flows for the narrow viewport via SIGWINCH and
+      //    bytes flow at phone size — no clamping, readable text.
       connection.onControl((payload) => {
         if (
-          xterm &&
-          typeof payload === "object" &&
-          payload !== null &&
-          (payload as { type?: unknown }).type === "size"
+          !xterm ||
+          typeof payload !== "object" ||
+          payload === null ||
+          (payload as { type?: unknown }).type !== "size"
         ) {
-          const p = payload as { rows?: number; cols?: number };
-          const rows = typeof p.rows === "number" ? p.rows : 0;
-          const cols = typeof p.cols === "number" ? p.cols : 0;
-          if (rows > 0 && cols > 0) {
-            xterm.resize(cols, rows);
-          }
+          return;
+        }
+        const p = payload as { rows?: number; cols?: number };
+        const laptopRows = typeof p.rows === "number" ? p.rows : 0;
+        const laptopCols = typeof p.cols === "number" ? p.cols : 0;
+        if (laptopRows <= 0 || laptopCols <= 0) return;
+
+        // Phone's natural size is whatever fit.fit() set after open(). If
+        // the phone is at least as large as the laptop, match the laptop;
+        // otherwise drive the laptop down to phone size.
+        const phoneRows = xterm.rows;
+        const phoneCols = xterm.cols;
+        appendDebug(
+          `size msg laptop=${laptopRows}x${laptopCols} phone=${phoneRows}x${phoneCols}`,
+        );
+
+        // Threshold: only trigger an upstream laptop-resize when the phone
+        // is genuinely too narrow for a normal TUI to fit (< 80 cols, the
+        // canonical terminal width). Above 80 cols we always match the
+        // laptop's size — desktop browsers, even at narrower window
+        // widths, end up here and the laptop user sees no change.
+        // iPhone Safari at default viewport falls below 80 cols and gets
+        // the laptop shrunk to its own size so claude code re-flows.
+        const TOO_NARROW = 80;
+        if (phoneCols >= TOO_NARROW) {
+          // Wide enough — match laptop, no upstream resize. (Browser case.)
+          xterm.resize(laptopCols, laptopRows);
+        } else if (connection) {
+          // iPhone-like — keep our own (smaller) size and ask the laptop
+          // to shrink. Laptop's TUI re-flows for the narrow viewport via
+          // SIGWINCH; new bytes will arrive at phone size.
+          appendDebug(`request laptop shrink to ${phoneRows}x${phoneCols} (phone < 80 cols)`);
+          void connection
+            .sendControl({ type: "resize", rows: phoneRows, cols: phoneCols })
+            .catch((err) => appendDebug(`sendControl resize failed: ${errStr(err)}`));
         }
       });
 
@@ -212,6 +264,27 @@ export default function Terminal() {
         data-testid="xterm-container"
         className="h-[70vh] rounded border border-neutral-800 bg-black p-2"
       />
+
+      {/* On-device debug log — primary purpose is to surface WebSocket
+          lifecycle events on iOS Safari where DevTools isn't accessible.
+          Renders the most recent ~30 events from connectPty / WS / signature
+          verification / etc. Hidden once the connection is healthy and an
+          output frame has flowed (status === "connected" and the log shows
+          a "connectPty resolved" line). For now we render unconditionally so
+          we can diagnose stuck-connecting cases. */}
+      {debugLog.length > 0 ? (
+        <details
+          open={status !== "connected"}
+          className="rounded border border-neutral-800 bg-neutral-950 text-[11px] font-mono"
+        >
+          <summary className="px-2 py-1 cursor-pointer text-neutral-300">
+            debug ({debugLog.length} events)
+          </summary>
+          <pre className="px-2 py-1 max-h-48 overflow-auto text-neutral-400 whitespace-pre-wrap break-all">
+            {debugLog.join("\n")}
+          </pre>
+        </details>
+      ) : null}
     </section>
   );
 }

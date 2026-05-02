@@ -164,6 +164,31 @@ pub async fn share_pane(
         }
     });
 
+    // Resize forwarder: when the phone sends a resize control via the WS,
+    // omw-server's registry calls this so the laptop pane's child process
+    // receives SIGWINCH (via Message::Resize through the mio event loop).
+    // claude code / ratatui re-flow the TUI for the new viewport, the
+    // bytes flow back through pty_reads_tx, and the phone xterm renders
+    // them at its own dimensions — no clamping, no boundary pile-up.
+    let event_loop_tx_for_resize = event_loop_tx.clone();
+    let pane_name_log_for_resize = pane_name_log.clone();
+    let resize_handler: Box<dyn Fn(u16, u16) + Send + Sync> = Box::new(move |rows, cols| {
+        let size = SizeInfo::new_without_font_metrics(rows as usize, cols as usize);
+        let tx = event_loop_tx_for_resize.lock();
+        match tx.send(Message::Resize(size)) {
+            Ok(()) => {
+                eprintln!(
+                    "[omw-debug] pane_share[{pane_name_log_for_resize}] resize forwarded: {rows}x{cols}"
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "[omw-debug] pane_share[{pane_name_log_for_resize}] resize forward FAILED: {e:?}"
+                );
+            }
+        }
+    });
+
     // Use the laptop pane's ACTUAL size for the parser, not a hardcoded
     // 80×24. Claude Code's cursor-positioning bytes (`\x1b[r;cH`) assume the
     // pane's real dimensions; if the parser is sized smaller, out-of-range
@@ -177,6 +202,7 @@ pub async fn share_pane(
         input_tx,
         output_tx,
         kill,
+        resize_handler: Some(resize_handler),
         initial_size: omw_pty::PtySize {
             cols: initial_cols.max(1),
             rows: initial_rows.max(1),

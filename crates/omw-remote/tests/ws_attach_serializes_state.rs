@@ -63,6 +63,7 @@ async fn ws_attach_ships_serialized_screen_state_as_first_frame() {
         input_tx,
         output_tx: output_tx.clone(),
         kill,
+        resize_handler: None,
         initial_size: omw_pty::PtySize { cols: 80, rows: 24 },
     };
     let session_id = f
@@ -218,6 +219,7 @@ async fn ws_attach_resize_control_updates_parser_size() {
         input_tx,
         output_tx,
         kill,
+        resize_handler: None,
         initial_size: omw_pty::PtySize { cols: 80, rows: 24 },
     };
     let session_id = f

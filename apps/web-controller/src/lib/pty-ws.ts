@@ -60,6 +60,12 @@ export interface ConnectOptions {
   pairing: PairingRecord;
   sessionId: string;
   pingIntervalMs?: number;
+  /**
+   * Optional sink for connection-lifecycle debug events. Useful on devices
+   * without DevTools (e.g. iPhone Safari) — the page can render these to a
+   * visible panel and surface what's happening during a stuck connection.
+   */
+  onDebug?: (msg: string) => void;
 }
 
 /** Build the canonical JSON bytes for a frame envelope (sig omitted). */
@@ -193,6 +199,9 @@ export async function connectPty(opts: ConnectOptions): Promise<PtyConnection> {
   );
   const url = `${wsBase}/ws/v1/pty/${opts.sessionId}?ct=${ct}`;
 
+  const dbg = opts.onDebug ?? ((_: string) => {});
+  dbg(`open ws ${wsBase}/ws/v1/pty/${opts.sessionId}`);
+
   const ws = new WebSocket(url);
 
   let outboundSeq = 0;
@@ -202,6 +211,7 @@ export async function connectPty(opts: ConnectOptions): Promise<PtyConnection> {
   const closeHandlers = new Set<CloseHandler>();
   let closed = false;
   let pingTimer: ReturnType<typeof setInterval> | undefined;
+  let inboundCount = 0;
 
   function fireClose(code: number, reason: string): void {
     if (closed) return;
@@ -219,17 +229,23 @@ export async function connectPty(opts: ConnectOptions): Promise<PtyConnection> {
     }
   }
 
+  ws.addEventListener("open", () => {
+    dbg("ws open");
+  });
   ws.addEventListener("close", (ev) => {
     const e = ev as CloseEvent;
+    dbg(`ws close code=${e.code} reason=${e.reason || "(none)"}`);
     fireClose(e.code, e.reason);
   });
   ws.addEventListener("error", () => {
+    dbg("ws error event");
     fireClose(1006, "ws_error");
   });
 
   ws.addEventListener("message", (ev) => {
     const data = (ev as MessageEvent).data;
     if (typeof data !== "string") {
+      dbg("msg: binary_unsupported");
       ws.close(4400, "binary_unsupported");
       fireClose(4400, "binary_unsupported");
       return;
@@ -238,11 +254,15 @@ export async function connectPty(opts: ConnectOptions): Promise<PtyConnection> {
     try {
       frame = decodeFrame(data);
     } catch {
+      dbg(`msg: bad_frame ${data.slice(0, 80)}`);
       ws.close(4400, "bad_frame");
       fireClose(4400, "bad_frame");
       return;
     }
+    inboundCount += 1;
+    dbg(`msg #${inboundCount} kind=${frame.kind} seq=${frame.seq} payload=${frame.payload.length}B`);
     if (frame.seq <= lastInboundSeq) {
+      dbg(`msg: seq_regression seq=${frame.seq} <= last=${lastInboundSeq}`);
       ws.close(4401, "seq_regression");
       fireClose(4401, "seq_regression");
       return;
@@ -252,6 +272,7 @@ export async function connectPty(opts: ConnectOptions): Promise<PtyConnection> {
       .then((ok) => {
         if (closed) return;
         if (!ok) {
+          dbg(`msg: signature_invalid seq=${frame.seq}`);
           ws.close(4401, "signature_invalid");
           fireClose(4401, "signature_invalid");
           return;
@@ -270,8 +291,10 @@ export async function connectPty(opts: ConnectOptions): Promise<PtyConnection> {
           try {
             parsed = JSON.parse(new TextDecoder().decode(frame.payload));
           } catch {
+            dbg("msg: control_payload_not_json");
             return;
           }
+          dbg(`control payload: ${JSON.stringify(parsed)}`);
           for (const h of controlHandlers) {
             try {
               h(parsed);
@@ -282,8 +305,9 @@ export async function connectPty(opts: ConnectOptions): Promise<PtyConnection> {
         }
         // pong: no-op at this layer.
       })
-      .catch(() => {
+      .catch((err) => {
         if (closed) return;
+        dbg(`msg: verify_threw ${err}`);
         ws.close(4401, "signature_invalid");
         fireClose(4401, "signature_invalid");
       });
@@ -292,26 +316,48 @@ export async function connectPty(opts: ConnectOptions): Promise<PtyConnection> {
   function waitOpen(): Promise<void> {
     return new Promise((resolve, reject) => {
       if (ws.readyState === WebSocket.OPEN) {
+        dbg("waitOpen: already OPEN");
         resolve();
         return;
       }
-      const onOpen = () => {
+      dbg(`waitOpen: readyState=${ws.readyState}`);
+      // Diagnostic heartbeat for iOS Safari case where WS stays in
+      // CONNECTING for 30s+ before transitioning. Logs the readyState and
+      // elapsed every 2s while waiting, so users can see whether the
+      // browser is making any progress (readyState changes) or genuinely
+      // stalled (Tailscale NAT traversal, iOS background throttling, etc).
+      const start = Date.now();
+      const tick = setInterval(() => {
+        const elapsed = Date.now() - start;
+        if (ws.readyState === WebSocket.CONNECTING) {
+          dbg(`waitOpen: still CONNECTING, elapsed=${elapsed}ms`);
+        } else {
+          dbg(`waitOpen: readyState=${ws.readyState}, elapsed=${elapsed}ms`);
+        }
+      }, 2000);
+      const cleanup = () => {
+        clearInterval(tick);
         ws.removeEventListener("open", onOpen);
         ws.removeEventListener("close", onClose);
         ws.removeEventListener("error", onErr);
+      };
+      const onOpen = () => {
+        cleanup();
+        const elapsed = Date.now() - start;
+        dbg(`waitOpen: open event fired after ${elapsed}ms`);
         resolve();
       };
       const onClose = (ev: Event) => {
-        ws.removeEventListener("open", onOpen);
-        ws.removeEventListener("close", onClose);
-        ws.removeEventListener("error", onErr);
+        cleanup();
         const e = ev as CloseEvent;
+        const elapsed = Date.now() - start;
+        dbg(`waitOpen: closed before open code=${e.code} reason=${e.reason} elapsed=${elapsed}ms`);
         reject(new Error(`ws_closed:${e.code}`));
       };
       const onErr = () => {
-        ws.removeEventListener("open", onOpen);
-        ws.removeEventListener("close", onClose);
-        ws.removeEventListener("error", onErr);
+        cleanup();
+        const elapsed = Date.now() - start;
+        dbg(`waitOpen: error before open, elapsed=${elapsed}ms`);
         reject(new Error("ws_error"));
       };
       ws.addEventListener("open", onOpen);
@@ -321,6 +367,7 @@ export async function connectPty(opts: ConnectOptions): Promise<PtyConnection> {
   }
 
   await waitOpen();
+  dbg("waitOpen: resolved, returning PtyConnection");
 
   async function sendFrame(kind: FrameKind, payload: Uint8Array): Promise<void> {
     if (closed) throw new Error("connection_closed");

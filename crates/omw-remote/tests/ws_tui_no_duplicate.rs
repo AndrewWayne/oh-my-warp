@@ -93,6 +93,7 @@ async fn phone_ws_renders_match_parser_after_mode_2026_updates() {
         input_tx,
         output_tx: output_tx.clone(),
         kill,
+        resize_handler: None,
         initial_size: omw_pty::PtySize { rows, cols },
     };
     let session_id = f

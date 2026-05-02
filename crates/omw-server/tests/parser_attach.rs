@@ -29,6 +29,7 @@ async fn make_session(rows: u16, cols: u16) -> (std::sync::Arc<SessionRegistry>,
         input_tx,
         output_tx,
         kill: Box::new(|| {}),
+        resize_handler: None,
         initial_size: PtySize { rows, cols },
     };
     let id = registry

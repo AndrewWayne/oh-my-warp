@@ -207,6 +207,17 @@ impl TerminalManager {
         self.pty_reads_tx.clone()
     }
 
+    /// Snapshot of the pane's current `SizeInfo`. Used by the omw-remote
+    /// `share_pane` bridge to send a same-size-then-+1-row resize jitter
+    /// back through `event_loop_tx`, which delivers SIGWINCH to the child
+    /// — most TUI apps respond by emitting a complete repaint, giving the
+    /// phone a coherent baseline frame instead of accumulating incremental
+    /// `\x1b[?2026h…\x1b[?2026l` sync-update deltas.
+    #[allow(dead_code)]
+    pub fn current_size_info(&self) -> crate::terminal::SizeInfo {
+        self.model.lock().block_list().size().to_owned()
+    }
+
     /// Sends a shutdown message to the PTY event loop and waits for it to
     /// process that event.
     fn shutdown_event_loop(&mut self) {

@@ -39,6 +39,7 @@ use tokio::task::JoinHandle;
 
 use crate::terminal::local_tty::mio_channel;
 use crate::terminal::writeable_pty::Message;
+use crate::terminal::SizeInfo;
 
 /// Capacity of the input mpsc the registry pushes bytes into. Generous; phone
 /// keystrokes are tiny and rare relative to PTY output.
@@ -133,6 +134,7 @@ pub async fn share_pane(
     pane_name: String,
     event_loop_tx: Arc<PlMutex<mio_channel::Sender<Message>>>,
     pty_reads_tx: async_broadcast::Sender<Arc<Vec<u8>>>,
+    current_size: SizeInfo,
     registry: Arc<omw_server::SessionRegistry>,
 ) -> Result<PaneShareHandle, ShareError> {
     // Short label used in pump-tracing eprintlns so the user can correlate
@@ -162,14 +164,22 @@ pub async fn share_pane(
         }
     });
 
+    // Use the laptop pane's ACTUAL size for the parser, not a hardcoded
+    // 80×24. Claude Code's cursor-positioning bytes (`\x1b[r;cH`) assume the
+    // pane's real dimensions; if the parser is sized smaller, out-of-range
+    // positions clamp to the boundary and content piles up at row=last/col=last,
+    // producing the empty middle/bottom rows observed in earlier diagnostics
+    // and the visible duplicate-render symptom on the phone.
+    let initial_cols = current_size.columns() as u16;
+    let initial_rows = current_size.rows() as u16;
     let spec = omw_server::ExternalSessionSpec {
         name: pane_name,
         input_tx,
         output_tx,
         kill,
         initial_size: omw_pty::PtySize {
-            cols: INITIAL_COLS,
-            rows: INITIAL_ROWS,
+            cols: initial_cols.max(1),
+            rows: initial_rows.max(1),
         },
     };
 
@@ -208,6 +218,47 @@ pub async fn share_pane(
     // immediately after share_pane returns don't race the spawn (which would
     // otherwise see receiver_count == 0 and drop the chunk).
     let mut pty_rx = pty_reads_tx.new_receiver();
+
+    // SIGWINCH trick (mirror of `2a61ae5`'s "fix at the source" pattern):
+    // before the pump starts, push a one-row jitter through `event_loop_tx`.
+    // Two `Message::Resize` events deliver SIGWINCH to the laptop pane's
+    // child process; ratatui apps (which is what Claude Code uses) respond
+    // by re-emitting their entire viewport via the normal byte stream.
+    // Those bytes flow back through `pty_reads_tx` and are caught by the
+    // pump we're about to spawn — so the parser gets a complete baseline
+    // frame instead of just the incremental sync-update deltas Claude
+    // sends per spinner tick / hint refresh.
+    //
+    // Without this, the phone xterm starts from an empty grid and the
+    // child's deltas accumulate visibly: the "/exit hint stays on screen"
+    // and "spinner states pile up" symptoms reported during smoke testing.
+    {
+        let jitter_size = current_size.with_rows_and_columns(
+            current_size.rows().saturating_sub(1).max(1),
+            current_size.columns(),
+        );
+        eprintln!(
+            "[omw-debug] pane_share[{pane_name_log}] SIGWINCH trick: resize {}x{} -> {}x{} -> {}x{}",
+            current_size.rows(),
+            current_size.columns(),
+            jitter_size.rows(),
+            jitter_size.columns(),
+            current_size.rows(),
+            current_size.columns(),
+        );
+        let tx = event_loop_tx.lock();
+        if let Err(e) = tx.send(Message::Resize(jitter_size)) {
+            eprintln!(
+                "[omw-debug] pane_share[{pane_name_log}] SIGWINCH trick: jitter resize FAILED: {e:?}"
+            );
+        }
+        if let Err(e) = tx.send(Message::Resize(current_size)) {
+            eprintln!(
+                "[omw-debug] pane_share[{pane_name_log}] SIGWINCH trick: restore resize FAILED: {e:?}"
+            );
+        }
+    }
+
     let registry_for_pump = registry.clone();
     let pump_label_out = pane_name_log.clone();
     let output_pump = tokio::spawn(async move {
@@ -315,6 +366,32 @@ mod tests {
         None
     }
 
+    /// Default `SizeInfo` for tests: a no-font-metrics 24×80. The SIGWINCH
+    /// trick `share_pane` performs sends two `Message::Resize` events on
+    /// `event_loop_tx` ahead of any test-driven input, so tests that drain
+    /// the receiver use [`recv_input`] below to skip past them.
+    fn dummy_size() -> SizeInfo {
+        SizeInfo::new_without_font_metrics(24, 80)
+    }
+
+    /// Drain the event-loop receiver until a `Message::Input` arrives or
+    /// `tries` 10ms ticks elapse. Skips `Message::Resize` (the SIGWINCH
+    /// trick) and any other non-input variants — those are not the
+    /// payload these tests are trying to assert about.
+    async fn recv_input(
+        rx: &mio_channel::Receiver<Message>,
+        tries: usize,
+    ) -> Option<std::borrow::Cow<'static, [u8]>> {
+        for _ in 0..tries {
+            match rx.try_recv() {
+                Ok(Message::Input(b)) => return Some(b),
+                Ok(_) => continue,
+                Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+            }
+        }
+        None
+    }
+
     #[tokio::test]
     async fn share_pane_registers_external_session() {
         let registry = omw_server::SessionRegistry::new();
@@ -325,6 +402,7 @@ mod tests {
             "pane-1".to_string(),
             event_loop_tx,
             pty_tx,
+            dummy_size(),
             registry.clone(),
         )
         .await
@@ -347,6 +425,7 @@ mod tests {
             "pane-input".to_string(),
             event_loop_tx,
             pty_tx,
+            dummy_size(),
             registry.clone(),
         )
         .await
@@ -357,15 +436,10 @@ mod tests {
             .await
             .expect("write_input should succeed");
 
-        let msg = wait_for(50, || event_loop_rx.try_recv().ok())
+        let bytes = recv_input(&event_loop_rx, 50)
             .await
             .expect("event loop should receive Message::Input");
-        match msg {
-            Message::Input(bytes) => {
-                assert_eq!(<std::borrow::Cow<'_, [u8]> as AsRef<[u8]>>::as_ref(&bytes), b"hi")
-            }
-            other => panic!("expected Message::Input, got {other:?}"),
-        }
+        assert_eq!(<std::borrow::Cow<'_, [u8]> as AsRef<[u8]>>::as_ref(&bytes), b"hi");
     }
 
     #[tokio::test]
@@ -378,6 +452,7 @@ mod tests {
             "pane-output".to_string(),
             event_loop_tx,
             pty_tx.clone(),
+            dummy_size(),
             registry.clone(),
         )
         .await
@@ -411,6 +486,7 @@ mod tests {
             "pane-stop".to_string(),
             event_loop_tx,
             pty_tx,
+            dummy_size(),
             registry.clone(),
         )
         .await
@@ -460,6 +536,7 @@ mod tests {
             "pane-drop".to_string(),
             event_loop_tx,
             pty_tx,
+            dummy_size(),
             registry.clone(),
         )
         .await
@@ -500,11 +577,17 @@ mod tests {
             "pane-killed".to_string(),
             event_loop_tx,
             pty_tx,
+            dummy_size(),
             registry.clone(),
         )
         .await
         .unwrap();
         let session_id = handle.session_id;
+
+        // Drain the two `Message::Resize` events the SIGWINCH trick fires on
+        // share_pane entry — the assertion below is about the input pump
+        // having been aborted, not about whether the resize ever happened.
+        while event_loop_rx.try_recv().is_ok() {}
 
         // Kill via the registry (the path the omw-remote DELETE handler takes).
         registry

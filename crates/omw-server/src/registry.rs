@@ -420,6 +420,23 @@ impl SessionRegistry {
     pub fn record_output(&self, id: SessionId, bytes: Bytes) -> Result<usize> {
         let map = self.sessions.lock().expect("registry mutex poisoned");
         let entry = map.get(&id).ok_or(Error::NotFound(id))?;
+        // Optional byte-dump diagnostic: when OMW_BYTE_DUMP is set to a
+        // file path, append every chunk's raw bytes to that file. Used to
+        // capture real-world TUI byte streams (e.g. Claude Code typing
+        // `/exit`) so we can replay them in xterm.js tests and verify the
+        // duplicate-render pattern. Cheap when env var is unset (single
+        // env::var_os check + no filesystem touch).
+        if let Some(path) = std::env::var_os("OMW_BYTE_DUMP") {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                let _ = f.write_all(&bytes);
+                let _ = f.flush();
+            }
+        }
         // Lock the parser inside the map lock and hold both for the broadcast
         // to keep this point in time atomic with subscribe_with_state.
         {

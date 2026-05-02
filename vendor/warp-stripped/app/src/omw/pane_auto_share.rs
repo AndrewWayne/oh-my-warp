@@ -114,6 +114,7 @@ pub fn share_all_local_panes(
 type LocalIoHandles = (
     Arc<parking_lot::Mutex<crate::terminal::local_tty::mio_channel::Sender<crate::terminal::writeable_pty::Message>>>,
     async_broadcast::Sender<Arc<Vec<u8>>>,
+    crate::terminal::SizeInfo,
 );
 
 /// Pull the local-PTY io channels off `tv`'s active manager, if it's a
@@ -129,7 +130,7 @@ fn local_io_handles_for(
     let manager_handle = stack.as_ref(ctx).active_data().clone();
     let manager_box: &Box<dyn TerminalManager> = manager_handle.as_ref(ctx);
     let local: &LocalTtyManager = manager_box.as_any().downcast_ref::<LocalTtyManager>()?;
-    Some((local.event_loop_tx(), local.pty_reads_tx()))
+    Some((local.event_loop_tx(), local.pty_reads_tx(), local.current_size_info()))
 }
 
 /// Share JUST the supplied `TerminalView`'s pane (no workspace iteration).
@@ -198,9 +199,16 @@ fn spawn_share_and_collect(
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     let registry_clone = registry.clone();
     let name_owned = name.to_string();
-    let (event_loop_tx, pty_reads_tx) = io;
+    let (event_loop_tx, pty_reads_tx, current_size) = io;
     runtime.spawn(async move {
-        let result = share_pane(name_owned, event_loop_tx, pty_reads_tx, registry_clone).await;
+        let result = share_pane(
+            name_owned,
+            event_loop_tx,
+            pty_reads_tx,
+            current_size,
+            registry_clone,
+        )
+        .await;
         let _ = tx.send(result);
     });
     rx.recv()

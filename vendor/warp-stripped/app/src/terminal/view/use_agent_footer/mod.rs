@@ -301,15 +301,26 @@ impl TerminalView {
                     }
                 }
 
-                // TODO(omw/wiring, gap-1c): auto-share the active pane here by
-                // calling `crate::omw::pane_share::share_pane` with the pane's
-                // `event_loop_tx` / `pty_reads_tx` and the registry from
-                // `state.pty_registry()`. Deferred because reaching the
-                // concrete `local_tty::TerminalManager` from this
-                // manager-agnostic `TerminalView` callsite requires plumbing
-                // through `pane_stack` -> `PaneView::child_data()` and then
-                // downcasting `Box<dyn TerminalManager>`. Until that lands,
-                // the daemon spawns a sibling shell on phone connect.
+                // Gap 1 part C (server-side): auto-share every open Warp pane
+                // in this window into the daemon's PTY-session registry. The
+                // phone's GET /api/v1/sessions then lists those panes, and
+                // tapping one drives the actual Warp pane (input echoes on
+                // the laptop, output streams to the phone). One-shot
+                // enumeration: panes opened *after* daemon start aren't
+                // auto-shared (deferred — see `omw::pane_auto_share` module
+                // docs).
+                if let (Some(registry), Some(runtime)) =
+                    (state.pty_registry(), state.runtime_handle())
+                {
+                    let handles = crate::omw::pane_auto_share::share_all_local_panes(
+                        ctx, registry, runtime,
+                    );
+                    log::info!(
+                        "omw pane_auto_share: registered {} pane(s) into the daemon registry",
+                        handles.len(),
+                    );
+                    state.store_pane_shares(handles);
+                }
 
                 // Gap 2 (toast surface): after start, snapshot the daemon
                 // state + Tailscale probe and render the modal text body.

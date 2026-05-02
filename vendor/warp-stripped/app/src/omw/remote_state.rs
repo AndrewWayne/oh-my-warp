@@ -92,6 +92,13 @@ struct Inner {
     /// the daemon is running; cleared on stop. `share_pane` callers grab a
     /// clone of this `Arc` to register the pane as an external session.
     pty_registry: Option<Arc<omw_server::SessionRegistry>>,
+    /// One [`PaneShareHandle`] per Warp pane that's been auto-shared into the
+    /// registry. Populated by [`OmwRemoteState::store_pane_shares`] right
+    /// after a successful start; dropped on stop (each `Drop` triggers the
+    /// handle's stop closure, which calls `registry.kill(id)`, which in turn
+    /// fires the kill closure inside `ExternalSessionSpec` and aborts the
+    /// share pumps).
+    pane_shares: Vec<super::pane_share::PaneShareHandle>,
     /// Handle to the dedicated runtime thread. Created lazily; reused across
     /// start/stop cycles. We keep it warm rather than tearing it down on stop
     /// so the second start doesn't have to spin up a new runtime.
@@ -112,6 +119,7 @@ impl OmwRemoteState {
                         status: OmwRemoteStatus::Stopped,
                         serve_task: None,
                         pty_registry: None,
+                        pane_shares: Vec::new(),
                         runtime_handle: None,
                         runtime_thread: None,
                     }),
@@ -284,6 +292,13 @@ impl OmwRemoteState {
         let task = {
             let mut g = self.inner.lock();
             self.set_status(&mut g, OmwRemoteStatus::Stopped);
+            // Drop pane-share handles BEFORE dropping the registry, so each
+            // handle's stop closure can call `registry.kill(id)` against a
+            // still-live registry. (The closures spawn detached tasks on the
+            // daemon runtime; those tasks will run shortly even after we
+            // drop the local Arc here, since the runtime keeps its own
+            // references for the duration of each task.)
+            g.pane_shares.clear();
             // Drop the registry handle so any spawned PTYs the WS handlers
             // still hold get released as soon as those tasks exit.
             g.pty_registry = None;
@@ -304,6 +319,23 @@ impl OmwRemoteState {
     #[allow(dead_code)]
     pub fn pty_registry(&self) -> Option<Arc<omw_server::SessionRegistry>> {
         self.inner.lock().pty_registry.clone()
+    }
+
+    /// Returns the daemon's tokio runtime handle, when one has been spun up.
+    /// Used by `pane_auto_share::share_all_local_panes` so it can `spawn`
+    /// each `share_pane` future on the same runtime that owns the registry.
+    #[allow(dead_code)]
+    pub fn runtime_handle(&self) -> Option<tokio::runtime::Handle> {
+        self.inner.lock().runtime_handle.clone()
+    }
+
+    /// Append more `PaneShareHandle`s to the live set. The handles are kept
+    /// alive until `stop()` (or the next `store_pane_shares` replace pass on
+    /// daemon restart). Idempotent and additive.
+    #[allow(dead_code)]
+    pub fn store_pane_shares(&self, handles: Vec<super::pane_share::PaneShareHandle>) {
+        let mut g = self.inner.lock();
+        g.pane_shares.extend(handles);
     }
 
     /// Spin up (or return) the dedicated runtime thread.
@@ -457,6 +489,7 @@ impl OmwRemoteState {
                 status: OmwRemoteStatus::Stopped,
                 serve_task: None,
                 pty_registry: None,
+                pane_shares: Vec::new(),
                 runtime_handle: None,
                 runtime_thread: None,
             }),

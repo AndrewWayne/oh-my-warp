@@ -6499,6 +6499,20 @@ impl TerminalView {
             .and_then(BlockMetadata::session_id)
     }
 
+    /// Upgrade the weak [`PaneStack`] handle this view is part of, if any.
+    /// Used by `crate::omw::pane_auto_share` to walk the active pane's
+    /// associated `Box<dyn TerminalManager>` and downcast to the local-PTY
+    /// concrete type. The field itself stays private; this gated accessor is
+    /// the smallest surface that lets the omw module reach the manager from
+    /// outside `terminal::view`.
+    #[cfg(feature = "omw_local")]
+    pub(crate) fn pane_stack_handle(
+        &self,
+        ctx: &AppContext,
+    ) -> Option<ModelHandle<crate::pane_group::pane::PaneStack<Self>>> {
+        self.pane_stack.as_ref()?.upgrade(ctx)
+    }
+
     pub fn active_session_shell_type<C: ModelAsRef>(&self, ctx: &C) -> Option<ShellType> {
         self.active_block_session_id()
             .and_then(|id| self.sessions.as_ref(ctx).get(id))

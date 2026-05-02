@@ -9,6 +9,7 @@
 
 pub mod pair_browser;
 pub mod pair_modal;
+pub mod pane_auto_share;
 pub mod pane_share;
 pub mod qr;
 pub mod remote_state;

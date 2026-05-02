@@ -6,7 +6,7 @@
 //! Thread-safe: registry methods take `&self` (interior mutability via
 //! `Mutex`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -29,6 +29,19 @@ pub type SessionId = uuid::Uuid;
 
 /// Capacity (in chunks) of the per-session output broadcast channel.
 const OUTPUT_BROADCAST_CAPACITY: usize = 256;
+
+/// Capacity (in bytes) of the per-session output scrollback ring buffer. When
+/// exceeded, oldest chunks are dropped first. v0.4-thin Stage C: lets a phone
+/// that disconnects (e.g. user puts the phone away to wait for a long-running
+/// command) reattach later and see what happened in the interim, instead of
+/// joining a fresh broadcast that only carries bytes from the moment of
+/// reconnection forward.
+///
+/// 64 KiB is enough for several screens of typical shell output without
+/// dragging memory usage. Long-running TUI apps that repaint constantly will
+/// roll the ring quickly — that's fine; the user wants the *last* state, not
+/// the full session history. Tunable later via [`ServerConfig`] if needed.
+const SCROLLBACK_BYTE_CAPACITY: usize = 64 * 1024;
 
 /// Description of a session to register. Mirrors the JSON body of
 /// `POST /internal/v1/sessions` after deserialization.
@@ -104,6 +117,53 @@ pub struct Session {
     _impl: (),
 }
 
+/// Bounded byte ring buffer used to replay recent output to a late-attaching
+/// subscriber. Stores `Bytes` chunks (no copying) and tracks total byte count
+/// so eviction is O(amortised 1). Not Sync on its own — callers wrap in
+/// `Mutex` and access under the registry's map mutex for cross-method
+/// atomicity.
+struct ScrollbackBuf {
+    chunks: VecDeque<Bytes>,
+    total_bytes: usize,
+    cap_bytes: usize,
+}
+
+impl ScrollbackBuf {
+    fn new(cap_bytes: usize) -> Self {
+        Self {
+            chunks: VecDeque::new(),
+            total_bytes: 0,
+            cap_bytes,
+        }
+    }
+
+    /// Append one chunk. Drops oldest chunks until the total byte count is
+    /// within cap. If the chunk itself exceeds the cap, retain only it (the
+    /// most recent state is what the user wants).
+    fn push(&mut self, chunk: Bytes) {
+        if chunk.len() >= self.cap_bytes {
+            self.chunks.clear();
+            self.total_bytes = chunk.len();
+            self.chunks.push_back(chunk);
+            return;
+        }
+        self.total_bytes += chunk.len();
+        self.chunks.push_back(chunk);
+        while self.total_bytes > self.cap_bytes {
+            if let Some(front) = self.chunks.pop_front() {
+                self.total_bytes -= front.len();
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Snapshot of the current chunks (cheap clones — `Bytes` is refcounted).
+    fn snapshot(&self) -> Vec<Bytes> {
+        self.chunks.iter().cloned().collect()
+    }
+}
+
 /// Internal state for one live session, regardless of source.
 struct SessionEntry {
     name: String,
@@ -112,6 +172,18 @@ struct SessionEntry {
     /// (WS clients, tests). For owned sessions this is the registry-created
     /// Sender. For external sessions this is the spec-provided Sender.
     output_tx: broadcast::Sender<Bytes>,
+    /// Bounded recent-output ring buffer. v0.4-thin Stage C: replayed to new
+    /// subscribers via [`SessionRegistry::subscribe_with_scrollback`] so a
+    /// phone that disconnects and reattaches sees recent output instead of a
+    /// blank screen.
+    ///
+    /// Populated by [`SessionRegistry::record_output`] for external sessions
+    /// (called by the pane_share output pump in warp-oss) and by the owned
+    /// session's internal output pump for registry-spawned PTYs. Direct
+    /// `output_tx.send(...)` calls (legacy / test path) bypass the scrollback
+    /// — that's fine for the existing ws_via_external_session test which
+    /// doesn't exercise scrollback.
+    scrollback: Arc<Mutex<ScrollbackBuf>>,
     /// Set to `false` when the child is reaped (owned) or `kill` is invoked
     /// (external).
     alive: Arc<AtomicBool>,
@@ -220,9 +292,15 @@ impl SessionRegistry {
         let created_at = Utc::now();
         let alive = Arc::new(AtomicBool::new(true));
         let (output_tx, _output_rx0) = broadcast::channel::<Bytes>(OUTPUT_BROADCAST_CAPACITY);
+        let scrollback = Arc::new(Mutex::new(ScrollbackBuf::new(SCROLLBACK_BYTE_CAPACITY)));
 
-        // Output pump: async read loop into the broadcast.
+        // Output pump: async read loop into scrollback + broadcast. Order
+        // (scrollback push BEFORE broadcast send) matches `record_output` so
+        // a `subscribe_with_scrollback` call concurrent with output sees a
+        // chunk EITHER in the snapshot OR on the live receiver — never both
+        // and never neither.
         let output_tx_pump = output_tx.clone();
+        let scrollback_for_pump = scrollback.clone();
         let output_pump = tokio::spawn(async move {
             let mut buf = vec![0u8; 4096];
             loop {
@@ -230,6 +308,10 @@ impl SessionRegistry {
                     Ok(0) => break,
                     Ok(n) => {
                         let chunk = Bytes::copy_from_slice(&buf[..n]);
+                        scrollback_for_pump
+                            .lock()
+                            .expect("scrollback poisoned")
+                            .push(chunk.clone());
                         // `send` returns Err only when there are zero
                         // subscribers; that's fine — keep pumping so the
                         // broadcast is ready for late subscribers.
@@ -265,6 +347,7 @@ impl SessionRegistry {
             name: spec.name,
             created_at,
             output_tx,
+            scrollback,
             alive,
             source: SessionSource::Owned {
                 writer: Arc::new(AsyncMutex::new(Some(writer))),
@@ -289,11 +372,13 @@ impl SessionRegistry {
         let id: SessionId = uuid::Uuid::new_v4();
         let created_at = Utc::now();
         let alive = Arc::new(AtomicBool::new(true));
+        let scrollback = Arc::new(Mutex::new(ScrollbackBuf::new(SCROLLBACK_BYTE_CAPACITY)));
 
         let entry = SessionEntry {
             name: spec.name,
             created_at,
             output_tx: spec.output_tx,
+            scrollback,
             alive,
             source: SessionSource::External {
                 input_tx: spec.input_tx,
@@ -378,6 +463,63 @@ impl SessionRegistry {
     pub fn subscribe(&self, id: SessionId) -> Option<broadcast::Receiver<Bytes>> {
         let map = self.sessions.lock().expect("registry mutex poisoned");
         map.get(&id).map(|e| e.output_tx.subscribe())
+    }
+
+    /// Subscribe AND atomically snapshot the recent-output ring buffer so the
+    /// caller can replay past output before the live broadcast catches up.
+    ///
+    /// Returns `(scrollback_chunks, live_receiver)` or `None` if the id is
+    /// unknown. The two halves are taken under the same map mutex that
+    /// [`record_output`] uses, so a chunk recorded concurrently is delivered
+    /// either via the snapshot or via the live receiver — never both, never
+    /// neither.
+    ///
+    /// **Important contract for callers:** if a producer pushes bytes via
+    /// [`broadcast::Sender::send`] directly (instead of through
+    /// [`record_output`]), those bytes go to the live receiver but are NOT
+    /// captured in scrollback. The legacy `output_tx`-direct-send path used
+    /// by some tests works fine for live delivery; only the production
+    /// pane-share path needs scrollback semantics, and that path uses
+    /// [`record_output`].
+    pub fn subscribe_with_scrollback(
+        &self,
+        id: SessionId,
+    ) -> Option<(Vec<Bytes>, broadcast::Receiver<Bytes>)> {
+        let map = self.sessions.lock().expect("registry mutex poisoned");
+        let entry = map.get(&id)?;
+        let snapshot = entry
+            .scrollback
+            .lock()
+            .expect("scrollback poisoned")
+            .snapshot();
+        let rx = entry.output_tx.subscribe();
+        Some((snapshot, rx))
+    }
+
+    /// Record one chunk of output for a session: appends to the recent-output
+    /// ring buffer AND broadcasts to live subscribers. Atomic with respect to
+    /// [`subscribe_with_scrollback`] (both take the registry's map mutex).
+    ///
+    /// Returns the number of subscribers the broadcast send reached, or
+    /// [`crate::Error::NotFound`] if the id is unknown. A `0` return is not
+    /// an error — the registry stores the bytes in scrollback for any future
+    /// subscribers.
+    ///
+    /// Used by the warp-oss pane-share output pump (and by the owned-session
+    /// output pump internally). Direct `output_tx.send(...)` still works for
+    /// legacy callers but those bytes won't appear in scrollback.
+    pub fn record_output(&self, id: SessionId, chunk: Bytes) -> Result<usize> {
+        let map = self.sessions.lock().expect("registry mutex poisoned");
+        let entry = map.get(&id).ok_or(Error::NotFound(id))?;
+        entry
+            .scrollback
+            .lock()
+            .expect("scrollback poisoned")
+            .push(chunk.clone());
+        // `send` returns Err(SendError) only when there are zero subscribers;
+        // the chunk is already in scrollback so that's fine — count of 0.
+        let n = entry.output_tx.send(chunk).unwrap_or(0);
+        Ok(n)
     }
 
     /// Kill the session and remove it from the registry. For owned sessions

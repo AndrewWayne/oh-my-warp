@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { getPairing, type PairingRecord } from "../lib/storage/idb";
 import { connectPty, type PtyConnection } from "../lib/pty-ws";
+import { listSessions } from "../lib/sessions";
 
 type Status = "loading" | "connecting" | "connected" | "disconnected" | "error";
 
@@ -88,6 +89,35 @@ export default function Terminal() {
         if (cancelled) return;
         setErrorMsg(`Connection closed (${info.code}${info.reason ? `: ${info.reason}` : ""})`);
         setStatus("disconnected");
+        // v0.4-thin Stage C: when the close looks like the session went away
+        // (1006 abnormal-close — host-side pump aborted; or 1011 server
+        // error), check whether the session still exists. If not, the user
+        // is stranded on a dead Terminal page whose Retry button would 404 —
+        // navigate them back to the Sessions list instead.
+        if (
+          info.code === 1006 ||
+          info.code === 1011 ||
+          // 4500 is the daemon's own "pty_io" close code from
+          // `crates/omw-remote/src/ws/pty.rs`; same idea: session is gone.
+          info.code === 4500
+        ) {
+          void listSessions(pairing!)
+            .then((sessions) => {
+              if (cancelled) return;
+              const stillAlive = sessions.some(
+                (s) => s.id === sessionId && s.alive,
+              );
+              if (!stillAlive && hostId) {
+                navigate(`/host/${encodeURIComponent(hostId)}`, {
+                  replace: true,
+                });
+              }
+            })
+            .catch(() => {
+              // listSessions failure (e.g. host unreachable) — leave the
+              // user on the disconnected screen with the Retry option.
+            });
+        }
       });
 
       onResize = () => {
@@ -118,7 +148,19 @@ export default function Terminal() {
   return (
     <section className="max-w-5xl mx-auto space-y-3">
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold">Terminal</h1>
+        <div className="flex items-center gap-3">
+          {hostId ? (
+            <Link
+              to={`/host/${encodeURIComponent(hostId)}`}
+              data-testid="terminal-back-button"
+              aria-label="Back to sessions"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-neutral-700 text-xs text-neutral-200 hover:bg-neutral-800"
+            >
+              ← Sessions
+            </Link>
+          ) : null}
+          <h1 className="text-2xl font-semibold">Terminal</h1>
+        </div>
         <div className="flex items-center gap-3 text-xs">
           <StatusBadge status={status} />
           <span className="font-mono text-neutral-500">

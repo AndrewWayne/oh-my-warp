@@ -86,6 +86,13 @@ describe("Terminal page", () => {
     expect(screen.getByText(/sess-7/)).toBeInTheDocument();
   });
 
+  it("renders a back button that links to /host/:hostId (Stage C.4)", () => {
+    renderAt("/terminal/h1/sess-7");
+    const back = screen.getByTestId("terminal-back-button");
+    expect(back).toBeInTheDocument();
+    expect(back).toHaveAttribute("href", "/host/h1");
+  });
+
   it("redirects to /pair when no PairingRecord exists for the hostId", async () => {
     renderAt("/terminal/missing-host/sess-1");
     await waitFor(() => {

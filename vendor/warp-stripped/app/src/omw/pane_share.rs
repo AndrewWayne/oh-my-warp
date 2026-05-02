@@ -180,52 +180,10 @@ pub async fn share_pane(
         eprintln!("[omw-debug] pane_share[{pump_label_in}] input pump: exiting (registry mpsc closed)");
     });
 
-    // Output pump: pty_reads broadcast -> registry broadcast. We materialise
-    // the receiver synchronously *before* spawning so callers that broadcast
-    // immediately after share_pane returns don't race the spawn (which would
-    // otherwise see receiver_count == 0 and drop the chunk).
+    // Materialise the pty-reads receiver synchronously BEFORE registering so
+    // chunks emitted between register_external and the output pump's spawn
+    // aren't lost (the receiver buffers them).
     let mut pty_rx = pty_reads_tx.new_receiver();
-    let output_tx_clone = output_tx.clone();
-    let pump_label_out = pane_name_log.clone();
-    let output_pump = tokio::spawn(async move {
-        loop {
-            match pty_rx.recv().await {
-                Ok(chunk) => {
-                    let bytes = Bytes::copy_from_slice(chunk.as_slice());
-                    let len = bytes.len();
-                    let preview = debug_preview(&bytes);
-                    let sub_count = output_tx_clone.receiver_count();
-                    // The first time bytes flow we expect sub_count == 0
-                    // until the WS handler subscribes. Send returns Err
-                    // (no subs) silently — that's fine but we log it once
-                    // so we know whether the chunk got dropped.
-                    match output_tx_clone.send(bytes) {
-                        Ok(_) => {
-                            eprintln!(
-                                "[omw-debug] pane_share[{pump_label_out}] output pump: forwarded {len} bytes to registry broadcast ({sub_count} subs) (preview {preview:?})"
-                            );
-                        }
-                        Err(_) => {
-                            eprintln!(
-                                "[omw-debug] pane_share[{pump_label_out}] output pump: dropped {len} bytes ({sub_count} subs — likely no phone attached yet) (preview {preview:?})"
-                            );
-                        }
-                    }
-                }
-                Err(async_broadcast::RecvError::Closed) => {
-                    eprintln!("[omw-debug] pane_share[{pump_label_out}] output pump: pty_reads_tx closed, exiting");
-                    break;
-                }
-                Err(async_broadcast::RecvError::Overflowed(skipped)) => {
-                    eprintln!(
-                        "[omw-debug] pane_share[{pump_label_out}] output pump: lagged, dropped {skipped} chunks"
-                    );
-                }
-            }
-        }
-    });
-
-    *pumps.lock() = Some((input_pump, output_pump));
 
     let kill = Box::new(move || {
         if let Some((a, b)) = pumps_for_kill.lock().take() {
@@ -246,6 +204,52 @@ pub async fn share_pane(
     };
 
     let session_id = registry.register_external(spec).await?;
+
+    // Output pump: pty_reads broadcast -> registry. v0.4-thin Stage C: route
+    // through `registry.record_output(session_id, bytes)` instead of pushing
+    // directly on the broadcast Sender. record_output captures the chunk in
+    // the per-session scrollback ring buffer (so a phone reconnecting later
+    // sees recent output) AND fans out to live subscribers in one call.
+    // Spawned AFTER register_external so we have the assigned session_id.
+    let registry_for_pump = registry.clone();
+    let pump_label_out = pane_name_log.clone();
+    let output_pump = tokio::spawn(async move {
+        loop {
+            match pty_rx.recv().await {
+                Ok(chunk) => {
+                    let bytes = Bytes::copy_from_slice(chunk.as_slice());
+                    let len = bytes.len();
+                    let preview = debug_preview(&bytes);
+                    match registry_for_pump.record_output(session_id, bytes) {
+                        Ok(sub_count) => {
+                            eprintln!(
+                                "[omw-debug] pane_share[{pump_label_out}] output pump: recorded {len} bytes ({sub_count} live subs) (preview {preview:?})"
+                            );
+                        }
+                        Err(e) => {
+                            // record_output returns NotFound only if the
+                            // session has been killed — exit the pump.
+                            eprintln!(
+                                "[omw-debug] pane_share[{pump_label_out}] output pump: record_output failed: {e}; exiting"
+                            );
+                            break;
+                        }
+                    }
+                }
+                Err(async_broadcast::RecvError::Closed) => {
+                    eprintln!("[omw-debug] pane_share[{pump_label_out}] output pump: pty_reads_tx closed, exiting");
+                    break;
+                }
+                Err(async_broadcast::RecvError::Overflowed(skipped)) => {
+                    eprintln!(
+                        "[omw-debug] pane_share[{pump_label_out}] output pump: lagged, dropped {skipped} chunks"
+                    );
+                }
+            }
+        }
+    });
+
+    *pumps.lock() = Some((input_pump, output_pump));
 
     let registry_for_stop = registry.clone();
     let stop: Box<dyn FnOnce() + Send> = Box::new(move || {

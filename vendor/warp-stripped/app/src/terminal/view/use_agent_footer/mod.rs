@@ -309,18 +309,36 @@ impl TerminalView {
                 // enumeration: panes opened *after* daemon start aren't
                 // auto-shared (deferred — see `omw::pane_auto_share` module
                 // docs).
-                if let (Some(registry), Some(runtime)) =
-                    (state.pty_registry(), state.runtime_handle())
-                {
-                    let handles = crate::omw::pane_auto_share::share_all_local_panes(
-                        ctx, registry, runtime,
-                    );
-                    log::info!(
-                        "omw pane_auto_share: registered {} pane(s) into the daemon registry",
-                        handles.len(),
-                    );
-                    state.store_pane_shares(handles);
-                }
+                //
+                // DEFERRED via `ctx.spawn(Timer::after(0), ...)` because the
+                // walk goes `pane_group.update()` -> `for_all_terminal_panes`
+                // which re-enters every TerminalView's update closure —
+                // including the one we're inside right now (this very Phone
+                // click handler). Re-entering an in-progress view aborts
+                // warp's UI framework and the process exits, which the user
+                // sees as warp-oss restarting + losing all panes + omw-
+                // remote resetting. Bouncing through the timer guarantees
+                // the share runs after this handler returns, so every view
+                // is free to be re-borrowed.
+                ctx.spawn(
+                    Timer::after(Duration::ZERO),
+                    move |_me, _result, ctx| {
+                        let state = OmwRemoteState::shared();
+                        let (Some(registry), Some(runtime)) =
+                            (state.pty_registry(), state.runtime_handle())
+                        else {
+                            return;
+                        };
+                        let handles = crate::omw::pane_auto_share::share_all_local_panes(
+                            ctx, registry, runtime,
+                        );
+                        log::info!(
+                            "omw pane_auto_share: registered {} pane(s) into the daemon registry",
+                            handles.len(),
+                        );
+                        state.store_pane_shares(handles);
+                    },
+                );
 
                 // Gap 2 (toast surface): after start, snapshot the daemon
                 // state + Tailscale probe and render the modal text body.

@@ -198,6 +198,71 @@ async fn resize_changes_parser_screen_size() {
     assert_eq!(screen.cell(1, 1).map(|c| c.contents().to_string()), Some("d".to_string()));
 }
 
+/// Alt-screen mode (TUI sessions like Claude Code) round-trips through the
+/// snapshot. vt100 0.16's `state_formatted()` does NOT itself emit the
+/// `\x1b[?1049h` mode bit, so without the explicit prefix in
+/// `subscribe_with_state` the snapshot would draw alt-screen cells onto
+/// xterm.js's main-screen buffer — reproducing the byte-replay duplicate
+/// that this whole design exists to avoid.
+#[tokio::test]
+async fn snapshot_preserves_alt_screen_mode_for_tui_sessions() {
+    let (registry, id) = make_session(24, 80).await;
+
+    // Enter alt-screen and write content (simulates a TUI like Claude Code).
+    registry
+        .record_output(
+            id,
+            Bytes::from_static(b"\x1b[?1049h\x1b[2J\x1b[1;1HTUI"),
+        )
+        .expect("record_output alt-screen entry");
+
+    let (snapshot, _rx) = registry
+        .subscribe_with_state(id)
+        .expect("session is registered");
+
+    // Replay the snapshot into a fresh parser. The replay parser must end
+    // up in alt-screen mode AND have the cells on the alt-screen buffer.
+    let mut replay = vt100::Parser::new(24, 80, 0);
+    replay.process(&snapshot);
+    assert!(
+        replay.screen().alternate_screen(),
+        "snapshot must put the replay parser into alt-screen mode; otherwise xterm.js draws TUI cells on main-screen and they bleed into scrollback"
+    );
+    let row0: String = (0..3)
+        .map(|c| {
+            replay
+                .screen()
+                .cell(0, c)
+                .map(|cell| cell.contents().to_string())
+                .unwrap_or_default()
+        })
+        .collect();
+    assert_eq!(row0, "TUI", "replay row 0 should reflect alt-screen content");
+}
+
+/// Inverse of the above: a non-TUI session (still in main-screen) MUST
+/// have its snapshot emit the main-screen toggle so a re-attach over an
+/// xterm.js that's stuck in alt-screen from a previous TUI session gets
+/// reset back to main.
+#[tokio::test]
+async fn snapshot_emits_main_screen_reset_for_non_tui_sessions() {
+    let (registry, id) = make_session(24, 80).await;
+    registry
+        .record_output(id, Bytes::from_static(b"hello"))
+        .expect("record_output main-screen");
+
+    let (snapshot, _rx) = registry
+        .subscribe_with_state(id)
+        .expect("session is registered");
+
+    // The snapshot must contain the explicit `\x1b[?1049l` reset.
+    let bytes: &[u8] = &snapshot;
+    assert!(
+        bytes.windows(8).any(|w| w == b"\x1b[?1049l"),
+        "main-screen snapshot must emit \\x1b[?1049l so xterm.js exits any prior alt-screen state on re-attach"
+    );
+}
+
 /// `record_output` on a kill-removed session returns `NotFound`.
 #[tokio::test]
 async fn record_output_on_unknown_session_returns_notfound() {

@@ -443,6 +443,15 @@ impl SessionRegistry {
     /// The map mutex is held for the whole operation so the snapshot bytes
     /// and the broadcast `subscribe()` are taken at the same instant — see
     /// [`record_output`] for the matching producer-side guarantee.
+    ///
+    /// The snapshot is built as: alt-screen toggle (1049 set/reset) + the
+    /// parser's `state_formatted()` (cells + cursor + SGR + input modes).
+    /// vt100 0.16's `state_formatted` does NOT itself include the 1049 mode
+    /// bit, so without the explicit prefix an alt-screen TUI session would
+    /// have its cells drawn on the client's main-screen buffer. Cells then
+    /// scroll into the client's main-screen scrollback when the next live
+    /// update arrives, producing a visible duplicate-render that the user
+    /// reported during smoke testing of v0.4-thin.
     pub fn subscribe_with_state(
         &self,
         id: SessionId,
@@ -451,7 +460,20 @@ impl SessionRegistry {
         let entry = map.get(&id)?;
         let snapshot = {
             let term = entry.term.lock().expect("term mutex poisoned");
-            Bytes::from(term.screen().contents_formatted())
+            let screen = term.screen();
+            // Match xterm's screen-buffer mode to the parser's. We emit both
+            // sides explicitly so a re-attach over an xterm.js instance that
+            // is still in alt-screen from a prior session also gets reset.
+            let mode_prefix: &[u8] = if screen.alternate_screen() {
+                b"\x1b[?1049h"
+            } else {
+                b"\x1b[?1049l"
+            };
+            let state = screen.state_formatted();
+            let mut buf = Vec::with_capacity(mode_prefix.len() + state.len());
+            buf.extend_from_slice(mode_prefix);
+            buf.extend_from_slice(&state);
+            Bytes::from(buf)
         };
         let rx = entry.output_tx.subscribe();
         Some((snapshot, rx))

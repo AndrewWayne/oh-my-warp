@@ -64,25 +64,15 @@ pub async fn ws_handler(_ws: WebSocketUpgrade) -> impl IntoResponse {
 }
 
 /// Bridge a fully-authenticated WS socket to a registered PTY session.
-///
-/// `scrollback` is the recent-output ring buffer captured atomically with the
-/// `pty_rx` subscribe in [`crate::server::ws_handler`]. Each chunk is sent as
-/// an `Output` frame BEFORE the live broadcast pump starts forwarding new
-/// chunks, so a phone reconnecting mid-session sees recent state before live
-/// frames begin to flow.
 pub(crate) async fn handle_authed_socket(
     socket: WebSocket,
     state: AppState,
     capability: CapabilityToken,
     device_id: String,
     session_id: Uuid,
-    scrollback: Vec<Bytes>,
     mut pty_rx: broadcast::Receiver<Bytes>,
 ) {
-    eprintln!(
-        "[omw-debug] handle_authed_socket: upgrade closure entered, session={session_id}, scrollback={} chunks",
-        scrollback.len()
-    );
+    eprintln!("[omw-debug] handle_authed_socket: upgrade closure entered, session={session_id}");
     let auth = Arc::new(WsSessionAuth {
         last_inbound_seq: AtomicU64::new(u64::MAX),
         device_id,
@@ -141,29 +131,6 @@ pub(crate) async fn handle_authed_socket(
             }
         }
     });
-
-    // ---- Scrollback replay (must be enqueued BEFORE the live pump task is
-    // spawned, so the writer task processes scrollback chunks first and the
-    // ordering matches the timeline of bytes the producer recorded).
-    //
-    // The mpsc into the writer task is FIFO and serialized — sending the
-    // snapshot here, then spawning the live pump, guarantees the WS sees
-    // scrollback frames first. We don't need to await the writer; we just
-    // need the enqueue order to be right.
-    for chunk in scrollback {
-        let frame = Frame {
-            v: 1,
-            seq: 0,
-            ts: Utc::now(),
-            kind: FrameKind::Output,
-            payload: chunk,
-            sig: [0u8; 64],
-        };
-        if out_tx.send(Outbound::Frame(frame)).is_err() {
-            // Writer already gone — nothing useful to do; the WS will close.
-            break;
-        }
-    }
 
     // ---- Registry-broadcast -> outbound task ----
     let reader_tx = out_tx.clone();

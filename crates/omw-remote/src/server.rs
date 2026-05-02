@@ -217,21 +217,14 @@ async fn ws_handler(
             return (StatusCode::NOT_FOUND, "session_not_found").into_response();
         }
     };
-    // v0.4-thin Stage C: take the scrollback snapshot atomically with the
-    // live-receiver subscribe so a phone reconnecting mid-session sees recent
-    // output before live frames begin flowing.
-    let (scrollback_snapshot, output_rx) =
-        match state.pty_registry.subscribe_with_scrollback(session_uuid) {
-            Some(pair) => pair,
-            None => {
-                eprintln!("[omw-debug] ws_handler -> 404 session not in registry: {session_uuid}");
-                return (StatusCode::NOT_FOUND, "session_not_found").into_response();
-            }
-        };
-    eprintln!(
-        "[omw-debug] ws_handler -> registry hit, upgrading (scrollback={} chunks)",
-        scrollback_snapshot.len()
-    );
+    let output_rx = match state.pty_registry.subscribe(session_uuid) {
+        Some(rx) => rx,
+        None => {
+            eprintln!("[omw-debug] ws_handler -> 404 session not in registry: {session_uuid}");
+            return (StatusCode::NOT_FOUND, "session_not_found").into_response();
+        }
+    };
+    eprintln!("[omw-debug] ws_handler -> registry hit, upgrading");
 
     // 4. Accept upgrade.
     let cap_for_session = cap_token.clone();
@@ -243,7 +236,6 @@ async fn ws_handler(
             cap_for_session,
             device_id_for_session,
             session_uuid,
-            scrollback_snapshot,
             output_rx,
         )
     })

@@ -301,33 +301,48 @@ impl TerminalView {
                     }
                 }
 
-                // TODO(omw/wiring, gap-1c): auto-share open Warp panes into
-                // the daemon's PTY-session registry on Phone click.
+                // Gap 1 part C, attempt 3 — share JUST the active pane (the
+                // one whose Phone button was clicked), not iterate the whole
+                // workspace. Two prior iterating attempts crashed warp-oss
+                // (commits 1272ce6 and 49ffbb2); the per-self path skips
+                // workspace traversal and pane_group.update entirely, so it
+                // can't re-enter foreign views.
                 //
-                // Two attempts so far have crashed warp-oss on click (process
-                // exits, all panes lost, omw-remote resets):
+                // Deferred via `ctx.spawn(Timer::after(0), ...)` so we don't
+                // re-enter the in-progress update on `self` either —
+                // `share_self_pane` calls `me.pane_stack_handle(ctx)` which
+                // is a read-only accessor, but spawning the share future and
+                // blocking on its result while still inside the event handler
+                // is risky. The bounce gives the framework a clean tick.
                 //
-                //   1. inline `share_all_local_panes(ctx, ...)` (commit
-                //      1272ce6). Suspected re-entry into the current
-                //      TerminalView's update via for_all_terminal_panes.
-                //   2. ditto, deferred via `ctx.spawn(Timer::after(0), ...)`
-                //      (commit 49ffbb2). Same crash — defer didn't help, so
-                //      reentrancy isn't the only issue.
-                //
-                // The `crate::omw::pane_auto_share` helper is left in place
-                // (unused) for the next attempt. Plausible directions:
-                //   - integrate with Warp's existing `attempt_to_share_session`
-                //     instead of going through `pane_share::share_pane`,
-                //   - move the trigger out of `TerminalView`'s event handler
-                //     entirely (e.g., a dispatched `TerminalAction` handled at
-                //     the workspace level),
-                //   - run warp-oss from a console to capture the panic and
-                //     identify the actual abort cause before re-enabling.
-                //
-                // Until that lands, the daemon spawns a sibling shell on
-                // first WS connect, and the Web Controller surfaces a "Start
-                // a new shell" button on the Sessions page so the user has
-                // a working path.
+                // Per-pane only: clicking Phone from another pane will share
+                // that pane too (handles are appended to `pane_shares`). The
+                // multi-pane "see every Warp pane on the phone" UX is the
+                // next iteration once this path is verified stable.
+                ctx.spawn(
+                    Timer::after(Duration::ZERO),
+                    move |me, _result, ctx| {
+                        let state = OmwRemoteState::shared();
+                        let (Some(registry), Some(runtime)) =
+                            (state.pty_registry(), state.runtime_handle())
+                        else {
+                            return;
+                        };
+                        if let Some(handle) = crate::omw::pane_auto_share::share_self_pane(
+                            me, ctx, registry, runtime,
+                        ) {
+                            log::info!(
+                                "omw pane_auto_share: shared the active pane on Phone click"
+                            );
+                            state.store_pane_shares(vec![handle]);
+                        } else {
+                            log::warn!(
+                                "omw pane_auto_share: active pane is not a local_tty manager; \
+                                 nothing shared"
+                            );
+                        }
+                    },
+                );
 
                 // Gap 2 (toast surface): after start, snapshot the daemon
                 // state + Tailscale probe and render the modal text body.

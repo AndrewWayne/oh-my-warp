@@ -70,7 +70,13 @@ describe("Pair page", () => {
     expect(btn).not.toBeDisabled();
   });
 
-  it("on click Pair with success: persists to IDB and navigates to /host/:hostId", async () => {
+  it("on click Pair with success: persists to IDB and navigates to a terminal", async () => {
+    // Both /api/v1/pair/redeem and /api/v1/sessions are POSTed via the
+    // global fetch mock here. The redeem responds with okBody (the redeem
+    // shape) and the session-create call gets the same body — which has no
+    // `id` field, so createDefaultSession throws `session_create_failed:
+    // missing id in response`. Pair.tsx's catch in that path navigates to
+    // /host/<hostId> as a fallback, which is the assertion below.
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValue(

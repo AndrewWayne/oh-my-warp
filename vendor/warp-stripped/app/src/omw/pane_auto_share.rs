@@ -132,6 +132,33 @@ fn local_io_handles_for(
     Some((local.event_loop_tx(), local.pty_reads_tx()))
 }
 
+/// Share JUST the supplied `TerminalView`'s pane (no workspace iteration).
+/// Used by the Phone-click handler to register the active pane the user
+/// clicked from. Returns `None` if the pane isn't backed by a
+/// `local_tty::TerminalManager` or if `share_pane` errors.
+///
+/// Why this and not [`share_all_local_panes`]: the iteration version walks
+/// every PaneGroup and re-enters every TerminalView's update closure via
+/// `for_all_terminal_panes`. That crashed warp-oss on Phone click in two
+/// separate attempts (commits 1272ce6 and 49ffbb2). Sharing only the
+/// active pane skips iteration entirely — no foreign-view re-entry, no
+/// nested PaneGroup borrow.
+pub fn share_self_pane(
+    me: &TerminalView,
+    ctx: &AppContext,
+    registry: Arc<omw_server::SessionRegistry>,
+    runtime: tokio::runtime::Handle,
+) -> Option<PaneShareHandle> {
+    let io = local_io_handles_for(me, ctx)?;
+    match spawn_share_and_collect(&runtime, &registry, "active-pane", io) {
+        Ok(h) => Some(h),
+        Err(e) => {
+            log::warn!("omw pane_auto_share: share_self_pane failed: {e}");
+            None
+        }
+    }
+}
+
 /// Spawn `share_pane` on the daemon runtime and synchronously collect the
 /// resulting `PaneShareHandle`. The future's only `.await` is on
 /// `register_external`, which is a non-blocking mutex insert — total wall

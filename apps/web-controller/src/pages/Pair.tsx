@@ -8,6 +8,7 @@ import {
 } from "../lib/pairing";
 import { startQrScan, type QrScanner } from "../lib/qr-scan";
 import { savePairing } from "../lib/storage/idb";
+import { createDefaultSession } from "../lib/sessions";
 
 // Camera scan needs `navigator.mediaDevices.getUserMedia`, which browsers
 // gate behind a secure context (HTTPS, localhost, or file://). On plain
@@ -178,7 +179,29 @@ export default function Pair() {
       };
       await savePairing(pairingRecord);
 
-      navigate(`/host/${encodeURIComponent(result.hostId)}`);
+      // Auto-create a default shell session and land directly on the
+      // terminal, matching the pre-Stage-1 UX the user expects from "phone
+      // pairs -> phone gets a working terminal." The Sessions page at
+      // /host/:hostId stays reachable via Home or the Hosts link from the
+      // terminal — useful for re-attaching to existing sessions later.
+      // If session creation fails (e.g., daemon hiccup), surface the error
+      // and let the user navigate to the Sessions page manually.
+      let sessionId: string;
+      try {
+        sessionId = await createDefaultSession(pairingRecord, "shell");
+      } catch (e) {
+        setErrorMsg(
+          `Paired, but couldn't open a terminal session on the host: ${
+            e instanceof Error ? e.message : String(e)
+          }. You can try again from the Sessions page.`,
+        );
+        navigate(`/host/${encodeURIComponent(result.hostId)}`);
+        return;
+      }
+
+      navigate(
+        `/terminal/${encodeURIComponent(result.hostId)}/${encodeURIComponent(sessionId)}`,
+      );
     } catch (e) {
       if (e instanceof PairError) {
         setErrorMsg(friendlyError(e.code));

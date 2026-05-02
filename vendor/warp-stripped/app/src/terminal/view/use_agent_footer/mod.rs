@@ -292,10 +292,11 @@ impl TerminalView {
                 // Daemon" affordance for the explicit stop path. (Today the
                 // toast is informational; once the real `View`-backed modal
                 // lands, the Stop button will be in the dialog footer.)
-                if matches!(
+                let was_stopped = matches!(
                     state.status(),
                     OmwRemoteStatus::Stopped | OmwRemoteStatus::Failed { .. }
-                ) {
+                );
+                if was_stopped {
                     if let Err(e) = state.start() {
                         log::warn!("omw-remote: start failed: {e}");
                     }
@@ -309,40 +310,41 @@ impl TerminalView {
                 // can't re-enter foreign views.
                 //
                 // Deferred via `ctx.spawn(Timer::after(0), ...)` so we don't
-                // re-enter the in-progress update on `self` either —
-                // `share_self_pane` calls `me.pane_stack_handle(ctx)` which
-                // is a read-only accessor, but spawning the share future and
-                // blocking on its result while still inside the event handler
-                // is risky. The bounce gives the framework a clean tick.
+                // re-enter the in-progress update on `self` either.
                 //
-                // Per-pane only: clicking Phone from another pane will share
-                // that pane too (handles are appended to `pane_shares`). The
-                // multi-pane "see every Warp pane on the phone" UX is the
-                // next iteration once this path is verified stable.
-                ctx.spawn(
-                    Timer::after(Duration::ZERO),
-                    move |me, _result, ctx| {
-                        let state = OmwRemoteState::shared();
-                        let (Some(registry), Some(runtime)) =
-                            (state.pty_registry(), state.runtime_handle())
-                        else {
-                            return;
-                        };
-                        if let Some(handle) = crate::omw::pane_auto_share::share_self_pane(
-                            me, ctx, registry, runtime,
-                        ) {
-                            log::info!(
-                                "omw pane_auto_share: shared the active pane on Phone click"
-                            );
-                            state.store_pane_shares(vec![handle]);
-                        } else {
-                            log::warn!(
-                                "omw pane_auto_share: active pane is not a local_tty manager; \
-                                 nothing shared"
-                            );
-                        }
-                    },
-                );
+                // GATE: only share when this click actually transitioned the
+                // daemon from Stopped/Failed -> Running. Re-clicking Phone
+                // while the daemon is already Running used to re-fire
+                // share_self_pane, which created a SECOND external session
+                // for the same pane; both subscribed to Warp's pty_reads_tx
+                // and the user saw every PTY chunk twice on the phone. The
+                // gate makes the share idempotent per-daemon-lifetime.
+                if was_stopped {
+                    ctx.spawn(
+                        Timer::after(Duration::ZERO),
+                        move |me, _result, ctx| {
+                            let state = OmwRemoteState::shared();
+                            let (Some(registry), Some(runtime)) =
+                                (state.pty_registry(), state.runtime_handle())
+                            else {
+                                return;
+                            };
+                            if let Some(handle) = crate::omw::pane_auto_share::share_self_pane(
+                                me, ctx, registry, runtime,
+                            ) {
+                                log::info!(
+                                    "omw pane_auto_share: shared the active pane on Phone click"
+                                );
+                                state.store_pane_shares(vec![handle]);
+                            } else {
+                                log::warn!(
+                                    "omw pane_auto_share: active pane is not a local_tty manager; \
+                                     nothing shared"
+                                );
+                            }
+                        },
+                    );
+                }
 
                 // Gap 2 (toast surface): after start, snapshot the daemon
                 // state + Tailscale probe and render the modal text body.

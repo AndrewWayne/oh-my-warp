@@ -70,7 +70,7 @@ describe("Pair page", () => {
     expect(btn).not.toBeDisabled();
   });
 
-  it("on click Pair with success: persists to IDB and navigates to /", async () => {
+  it("on click Pair with success: persists to IDB and navigates to /host/:hostId", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValue(
@@ -91,7 +91,7 @@ describe("Pair page", () => {
     await user.click(btn);
 
     await waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/");
+      expect(navigateMock).toHaveBeenCalledWith("/host/home-mac");
     });
 
     const all = await listPairings();

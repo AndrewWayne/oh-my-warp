@@ -8,7 +8,6 @@ import {
 } from "../lib/pairing";
 import { startQrScan, type QrScanner } from "../lib/qr-scan";
 import { savePairing } from "../lib/storage/idb";
-import { createDefaultSession } from "../lib/sessions";
 
 // Camera scan needs `navigator.mediaDevices.getUserMedia`, which browsers
 // gate behind a secure context (HTTPS, localhost, or file://). On plain
@@ -179,25 +178,7 @@ export default function Pair() {
       };
       await savePairing(pairingRecord);
 
-      // Spawn a default shell session so the Terminal page has a real UUID
-      // to connect to. Without this, /ws/v1/pty/<anything> 404s because
-      // omw-remote requires the path's session_id to (a) parse as UUID
-      // and (b) be registered in the registry.
-      let sessionId: string;
-      try {
-        sessionId = await createDefaultSession(pairingRecord, "main");
-      } catch (e) {
-        setErrorMsg(
-          `Paired, but couldn't open a terminal session on the host: ${
-            e instanceof Error ? e.message : String(e)
-          }. Try again from the home page.`,
-        );
-        return;
-      }
-
-      navigate(
-        `/terminal/${encodeURIComponent(result.hostId)}/${encodeURIComponent(sessionId)}`,
-      );
+      navigate(`/host/${encodeURIComponent(result.hostId)}`);
     } catch (e) {
       if (e instanceof PairError) {
         setErrorMsg(friendlyError(e.code));

@@ -21,6 +21,7 @@ use axum::response::IntoResponse;
 use bytes::Bytes;
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
 use uuid::Uuid;
@@ -29,6 +30,19 @@ use crate::capability::CapabilityToken;
 use crate::server::AppState;
 use crate::ws::auth::WsSessionAuth;
 use crate::ws::frame::{Frame, FrameKind};
+
+/// Inbound `Control` frame payload. Only `resize` is currently handled;
+/// other control types are accepted but ignored. Field names match the
+/// shape `apps/web-controller/src/pages/Terminal.tsx::sendControl` emits.
+#[derive(Deserialize)]
+struct ControlPayload {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    rows: Option<u16>,
+    #[serde(default)]
+    cols: Option<u16>,
+}
 
 /// How to spawn the shell child for a PTY session.
 #[derive(Clone, Debug)]
@@ -64,15 +78,25 @@ pub async fn ws_handler(_ws: WebSocketUpgrade) -> impl IntoResponse {
 }
 
 /// Bridge a fully-authenticated WS socket to a registered PTY session.
+///
+/// `snapshot` carries the ANSI-encoded current screen state from the
+/// per-session vt100 parser (see `omw_server::SessionRegistry::subscribe_with_state`).
+/// When non-empty it is shipped as the FIRST outbound `Output` frame, before
+/// the live broadcast pump starts — that's how a freshly-attached client
+/// renders the current TUI grid directly instead of replaying byte history.
 pub(crate) async fn handle_authed_socket(
     socket: WebSocket,
     state: AppState,
     capability: CapabilityToken,
     device_id: String,
     session_id: Uuid,
+    snapshot: Bytes,
     mut pty_rx: broadcast::Receiver<Bytes>,
 ) {
-    eprintln!("[omw-debug] handle_authed_socket: upgrade closure entered, session={session_id}");
+    eprintln!(
+        "[omw-debug] handle_authed_socket: upgrade closure entered, session={session_id}, snapshot={} bytes",
+        snapshot.len()
+    );
     let auth = Arc::new(WsSessionAuth {
         last_inbound_seq: AtomicU64::new(u64::MAX),
         device_id,
@@ -131,6 +155,25 @@ pub(crate) async fn handle_authed_socket(
             }
         }
     });
+
+    // ---- Snapshot frame (tmux-style attach) ----
+    // Ship the current vt100 screen state as the first Output frame BEFORE
+    // wiring the live broadcast pump, so the client renders the present grid
+    // directly instead of replaying byte history. The snapshot is empty for
+    // sessions that have never received output (or for the initial 80×24
+    // empty grid right after register, in which case it is just clear+home);
+    // either way send it so the client always starts from a known state.
+    if !snapshot.is_empty() {
+        let frame = Frame {
+            v: 1,
+            seq: 0,
+            ts: Utc::now(),
+            kind: FrameKind::Output,
+            payload: snapshot,
+            sig: [0u8; 64],
+        };
+        let _ = out_tx.send(Outbound::Frame(frame));
+    }
 
     // ---- Registry-broadcast -> outbound task ----
     let reader_tx = out_tx.clone();
@@ -204,7 +247,25 @@ pub(crate) async fn handle_authed_socket(
                             };
                             let _ = inbound_tx.send(Outbound::Frame(pong));
                         }
-                        FrameKind::Pong | FrameKind::Output | FrameKind::Control => {}
+                        FrameKind::Control => {
+                            // Resize control: { "type": "resize", "rows": N, "cols": N }.
+                            // Updates the per-session vt100 parser's screen
+                            // size so subsequent snapshots match the phone's
+                            // viewport. Other control types are ignored —
+                            // the wire format is small but extensible.
+                            if let Ok(payload) =
+                                serde_json::from_slice::<ControlPayload>(&frame.payload)
+                            {
+                                if payload.kind == "resize" {
+                                    let _ = inbound_registry.resize(
+                                        session_id,
+                                        payload.rows.unwrap_or(24),
+                                        payload.cols.unwrap_or(80),
+                                    );
+                                }
+                            }
+                        }
+                        FrameKind::Pong | FrameKind::Output => {}
                     }
                 }
                 Message::Binary(_) => {

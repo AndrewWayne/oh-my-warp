@@ -217,14 +217,17 @@ async fn ws_handler(
             return (StatusCode::NOT_FOUND, "session_not_found").into_response();
         }
     };
-    let output_rx = match state.pty_registry.subscribe(session_uuid) {
-        Some(rx) => rx,
+    let (snapshot, output_rx) = match state.pty_registry.subscribe_with_state(session_uuid) {
+        Some(pair) => pair,
         None => {
             eprintln!("[omw-debug] ws_handler -> 404 session not in registry: {session_uuid}");
             return (StatusCode::NOT_FOUND, "session_not_found").into_response();
         }
     };
-    eprintln!("[omw-debug] ws_handler -> registry hit, upgrading");
+    eprintln!(
+        "[omw-debug] ws_handler -> registry hit, upgrading (snapshot {} bytes)",
+        snapshot.len()
+    );
 
     // 4. Accept upgrade.
     let cap_for_session = cap_token.clone();
@@ -236,6 +239,7 @@ async fn ws_handler(
             cap_for_session,
             device_id_for_session,
             session_uuid,
+            snapshot,
             output_rx,
         )
     })

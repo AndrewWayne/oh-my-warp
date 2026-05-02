@@ -479,6 +479,21 @@ impl TerminalView {
     ) -> bool {
         let ai_settings = AISettings::as_ref(app);
 
+        // v0.4-thin Stage D: when this pane is currently shared with a phone,
+        // ALWAYS show the footer so the user has a reachable host-side stop
+        // affordance — without this gate, a pane sitting at a fresh shell
+        // prompt (no LRC, no warpify, no CLI agent) would hide the footer and
+        // strand the user with no way to click the Phone button to unshare.
+        // The button itself flips to "Stop sharing" via the share-map watch
+        // wired in Stage B (agent_input_footer / warpify_footer subscribe to
+        // both subscribe_status_stream and subscribe_share_stream).
+        #[cfg(feature = "omw_local")]
+        {
+            if crate::omw::OmwRemoteState::shared().is_pane_shared(self.view_id) {
+                return true;
+            }
+        }
+
         // If a warpify mode is set, that means ssh or subshell is detected and we should show the footer.
         if self
             .use_agent_footer

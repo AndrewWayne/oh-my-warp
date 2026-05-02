@@ -197,17 +197,24 @@ impl ScrollbackBuf {
     }
 }
 
-/// Find the byte offset of the LAST screen-state-reset escape sequence in
-/// `bytes`, returning `None` if none exists. "Reset" here means an escape
-/// that wipes (or replaces) the entire visible terminal state from xterm's
-/// perspective:
-///   - `\x1b[2J`     CSI 2 J  — Erase in Display, all
-///   - `\x1b[3J`     CSI 3 J  — Erase in Display, scrollback included
-///   - `\x1bc`       RIS      — Reset to Initial State (full reset)
-///   - `\x1b[?1049h` enter alternate screen buffer — TUI apps use this
-///   - `\x1b[?47h`   legacy alternate screen
-///   - `\x1b[?1049l` exit alternate screen — also a reset of the visible
-///                   buffer (back to main screen, prior contents restored)
+/// Find the byte offset of the LAST screen-state-establishing escape sequence
+/// in `bytes`, returning `None` if none exists. "Establishes screen state"
+/// here means an escape after which xterm's visible state is fully
+/// determined by the bytes that follow (so anything BEFORE the escape is
+/// cosmetic noise on replay):
+///
+///   - `\x1b[2J` / `\x1b[3J`         Erase in Display
+///   - `\x1bc`                       RIS — Reset to Initial State
+///   - `\x1b[?1049h` / `\x1b[?1049l` alt-screen enter / exit
+///   - `\x1b[?47h`   / `\x1b[?47l`   legacy alt-screen enter / exit
+///   - `\x1b[?2026h`                 BEGIN synchronized output — TUI apps
+///                                   like Claude Code emit this at the start
+///                                   of every atomic redraw frame. Trimming
+///                                   to the LAST `2026h` gives the latest
+///                                   sync-output frame and discards the
+///                                   pre-TUI plain-text intro that would
+///                                   otherwise replay as a "static printline"
+///                                   before the TUI overdraws it.
 ///
 /// We do a linear forward scan and remember the LAST hit; for ≤ 64 KiB this
 /// is microseconds and avoids tricky reverse-scanning of multi-byte
@@ -257,6 +264,21 @@ fn find_last_screen_state_reset(bytes: &[u8]) -> Option<usize> {
             {
                 last = Some(i);
                 i += 6;
+                continue;
+            }
+            // ESC [ ? 2 0 2 6 h — BEGIN synchronized output (Claude Code et al.).
+            // We deliberately ignore the matching `l` (END) — only the BEGIN
+            // marks "the latest atomic redraw frame starts here." Trimming
+            // to the END would discard the frame's content too.
+            if matches!(bytes.get(i + 2), Some(b'?'))
+                && matches!(bytes.get(i + 3), Some(b'2'))
+                && matches!(bytes.get(i + 4), Some(b'0'))
+                && matches!(bytes.get(i + 5), Some(b'2'))
+                && matches!(bytes.get(i + 6), Some(b'6'))
+                && matches!(bytes.get(i + 7), Some(b'h'))
+            {
+                last = Some(i);
+                i += 8;
                 continue;
             }
         }
@@ -684,6 +706,36 @@ mod scrollback_tests {
         let bytes = b"plain\x1b[?1049htui-content";
         let pos = find_last_screen_state_reset(bytes).expect("must find");
         assert_eq!(pos, 5);
+    }
+
+    #[test]
+    fn find_last_screen_state_reset_finds_sync_output_begin() {
+        // The Claude Code case: pre-TUI plain text, then a sync-output
+        // frame BEGIN. Trim should return the offset of the BEGIN.
+        let bytes = b"Welcome to Claude Code\n\x1b[?2026hframe-content";
+        let pos = find_last_screen_state_reset(bytes).expect("must find");
+        assert_eq!(pos, 23); // len("Welcome to Claude Code\n") = 23
+    }
+
+    #[test]
+    fn find_last_screen_state_reset_picks_latest_sync_frame_begin() {
+        // Multiple sync-output frames — typical of a long-running TUI session.
+        // We want the LATEST `\x1b[?2026h`, since each frame is a full
+        // redraw and the latest one represents the current visible state.
+        let bytes =
+            b"intro\x1b[?2026hframe1\x1b[?2026l\x1b[?2026hframe2\x1b[?2026l\x1b[?2026hframe3";
+        let pos = find_last_screen_state_reset(bytes).expect("must find");
+        // bytes through end of frame2's `\x1b[?2026l`, the next `\x1b[?2026h`
+        // is the start of frame3 — that's the trim point.
+        assert_eq!(&bytes[pos..pos + 8], b"\x1b[?2026h");
+    }
+
+    #[test]
+    fn find_last_screen_state_reset_ignores_sync_output_end() {
+        // `\x1b[?2026l` alone (no preceding BEGIN in this test slice) is NOT
+        // a screen-state-reset — only the BEGIN counts.
+        let bytes = b"foo\x1b[?2026lbar";
+        assert_eq!(find_last_screen_state_reset(bytes), None);
     }
 
     #[test]

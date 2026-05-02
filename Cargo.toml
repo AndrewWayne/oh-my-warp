@@ -39,3 +39,4 @@ toml_edit = "0.22"
 anyhow = "1"
 rusqlite = { version = "0.35", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
+vt100 = "0.16"

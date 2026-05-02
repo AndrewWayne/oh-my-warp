@@ -30,6 +30,7 @@ base64 = "0.22"
 thiserror = { workspace = true }
 tracing = { version = "0.1", optional = true }
 futures-util = "0.3"
+vt100 = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = [

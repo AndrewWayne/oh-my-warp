@@ -6977,9 +6977,9 @@ dependencies = [
 
 [[package]]
 name = "itoa"
-version = "1.0.9"
+version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af150ab688ff2122fcef229be89cb50dd66af9e01a4ff320cc137eecc9bacc38"
+checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jaq-all"
@@ -9110,6 +9110,7 @@ dependencies = [
  "tokio",
  "tower",
  "uuid",
+ "vt100",
 ]
 
 [[package]]
@@ -14430,12 +14431,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "vt100"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "054ff75fb8fa83e609e685106df4faeffdf3a735d3c74ebce97ec557d5d36fd9"
+dependencies = [
+ "itoa",
+ "unicode-width 0.2.1",
+ "vte 0.15.0",
+]
+
+[[package]]
 name = "vte"
 version = "0.13.0"
 source = "git+https://github.com/warpdotdev/vte.git?rev=4b399c87b63ba88f45709edaa6383fc519f6c900#4b399c87b63ba88f45709edaa6383fc519f6c900"
 dependencies = [
  "utf8parse 0.2.1",
  "vte_generate_state_changes",
+]
+
+[[package]]
+name = "vte"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5924018406ce0063cd67f8e008104968b74b563ee1b85dde3ed1f7cb87d3dbd"
+dependencies = [
+ "arrayvec",
+ "memchr",
 ]
 
 [[package]]
@@ -14713,7 +14735,7 @@ dependencies = [
  "vim",
  "virtual-fs",
  "voice_input",
- "vte",
+ "vte 0.13.0",
  "walkdir",
  "warp-command-signatures",
  "warp-workflows",
@@ -15174,7 +15196,7 @@ dependencies = [
  "unicode-width 0.1.14",
  "uuid",
  "version-compare",
- "vte",
+ "vte 0.13.0",
  "warp_completer",
  "warp_core",
  "warp_util",

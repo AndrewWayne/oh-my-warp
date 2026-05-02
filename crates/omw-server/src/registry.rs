@@ -115,9 +115,19 @@ struct SessionEntry {
     /// Set to `false` when the child is reaped (owned) or `kill` is invoked
     /// (external).
     alive: Arc<AtomicBool>,
+    /// Server-side terminal emulator. Every byte that flows through
+    /// `record_output` is fed here, and `subscribe_with_state` serializes
+    /// the current grid to ANSI for new attachers — tmux-style attach.
+    term: Arc<Mutex<vt100::Parser>>,
     /// Per-source state.
     source: SessionSource,
 }
+
+/// Parser scrollback line count. The parser's internal scrollback is used
+/// for multi-line cursor moves within the visible grid; we don't ship any
+/// of it on attach (only `Screen::contents_formatted()` covers the visible
+/// viewport). 1000 lines × ~32B/cell × 80 cols ≈ 2.4 MiB per session.
+const PARSER_SCROLLBACK_LINES: usize = 1000;
 
 /// Source-specific state for a session entry.
 enum SessionSource {
@@ -194,7 +204,7 @@ impl SessionRegistry {
 
     /// Register a new session: spawn the PTY, start the output pump, store
     /// the entry, return its assigned id.
-    pub async fn register(&self, spec: SessionSpec) -> Result<SessionId> {
+    pub async fn register(self: &Arc<Self>, spec: SessionSpec) -> Result<SessionId> {
         let mut cmd = PtyCommand::new(&spec.command).args(spec.args.iter().map(|s| s.as_str()));
         if let Some(cwd) = &spec.cwd {
             cmd = cmd.cwd(cwd.clone());
@@ -220,9 +230,19 @@ impl SessionRegistry {
         let created_at = Utc::now();
         let alive = Arc::new(AtomicBool::new(true));
         let (output_tx, _output_rx0) = broadcast::channel::<Bytes>(OUTPUT_BROADCAST_CAPACITY);
+        let term = Arc::new(Mutex::new(vt100::Parser::new(
+            rows,
+            cols,
+            PARSER_SCROLLBACK_LINES,
+        )));
 
-        // Output pump: async read loop into the broadcast.
-        let output_tx_pump = output_tx.clone();
+        // Output pump: async read loop -> registry.record_output. Routing
+        // through record_output (rather than output_tx.send directly) feeds
+        // the per-session vt100 parser so attachers can receive a snapshot
+        // of the current screen state. Capture an Arc<Self> clone so the
+        // pump can call back into the registry.
+        let registry_for_pump: Arc<SessionRegistry> = self.clone();
+        let id_for_pump = id;
         let output_pump = tokio::spawn(async move {
             let mut buf = vec![0u8; 4096];
             loop {
@@ -230,10 +250,11 @@ impl SessionRegistry {
                     Ok(0) => break,
                     Ok(n) => {
                         let chunk = Bytes::copy_from_slice(&buf[..n]);
-                        // `send` returns Err only when there are zero
-                        // subscribers; that's fine — keep pumping so the
-                        // broadcast is ready for late subscribers.
-                        let _ = output_tx_pump.send(chunk);
+                        // record_output is fire-and-forget here: any error
+                        // (NotFound after kill) means the session is gone
+                        // and the pump should also stop, but the watcher
+                        // task will tear us down via abort regardless.
+                        let _ = registry_for_pump.record_output(id_for_pump, chunk);
                     }
                     Err(_) => break,
                 }
@@ -266,6 +287,7 @@ impl SessionRegistry {
             created_at,
             output_tx,
             alive,
+            term,
             source: SessionSource::Owned {
                 writer: Arc::new(AsyncMutex::new(Some(writer))),
                 kill_tx: Some(kill_tx),
@@ -285,16 +307,22 @@ impl SessionRegistry {
     /// Register an externally-owned session — one whose I/O is provided as
     /// channels and whose lifecycle is driven by a caller-supplied `kill`
     /// closure rather than a `Pty` the registry owns.
-    pub async fn register_external(&self, spec: ExternalSessionSpec) -> Result<SessionId> {
+    pub async fn register_external(self: &Arc<Self>, spec: ExternalSessionSpec) -> Result<SessionId> {
         let id: SessionId = uuid::Uuid::new_v4();
         let created_at = Utc::now();
         let alive = Arc::new(AtomicBool::new(true));
+        let term = Arc::new(Mutex::new(vt100::Parser::new(
+            spec.initial_size.rows,
+            spec.initial_size.cols,
+            PARSER_SCROLLBACK_LINES,
+        )));
 
         let entry = SessionEntry {
             name: spec.name,
             created_at,
             output_tx: spec.output_tx,
             alive,
+            term,
             source: SessionSource::External {
                 input_tx: spec.input_tx,
                 kill: Some(spec.kill),
@@ -378,6 +406,67 @@ impl SessionRegistry {
     pub fn subscribe(&self, id: SessionId) -> Option<broadcast::Receiver<Bytes>> {
         let map = self.sessions.lock().expect("registry mutex poisoned");
         map.get(&id).map(|e| e.output_tx.subscribe())
+    }
+
+    /// Feed `bytes` into the session's vt100 parser AND broadcast them to
+    /// every live subscriber. Returns the broadcast subscriber count, or
+    /// [`crate::Error::NotFound`] if the id is unknown.
+    ///
+    /// The map mutex is held for the whole "feed parser + broadcast" so that
+    /// [`subscribe_with_state`] (which also takes the map mutex) sees an
+    /// atomic boundary: a chunk is either delivered via the live broadcast
+    /// receiver to the new attacher OR captured in the snapshot — never both,
+    /// never neither.
+    pub fn record_output(&self, id: SessionId, bytes: Bytes) -> Result<usize> {
+        let map = self.sessions.lock().expect("registry mutex poisoned");
+        let entry = map.get(&id).ok_or(Error::NotFound(id))?;
+        // Lock the parser inside the map lock and hold both for the broadcast
+        // to keep this point in time atomic with subscribe_with_state.
+        {
+            let mut term = entry.term.lock().expect("term mutex poisoned");
+            term.process(&bytes);
+        }
+        // broadcast::Sender::send returns Err only when there are zero
+        // subscribers; that's not a failure for us — the parser already
+        // captured the bytes for any future attacher's snapshot.
+        let count = match entry.output_tx.send(bytes) {
+            Ok(n) => n,
+            Err(_) => 0,
+        };
+        Ok(count)
+    }
+
+    /// Atomic snapshot + subscribe: returns the current ANSI-serialized screen
+    /// state plus a fresh broadcast receiver for live updates. Returns `None`
+    /// if the id is unknown.
+    ///
+    /// The map mutex is held for the whole operation so the snapshot bytes
+    /// and the broadcast `subscribe()` are taken at the same instant — see
+    /// [`record_output`] for the matching producer-side guarantee.
+    pub fn subscribe_with_state(
+        &self,
+        id: SessionId,
+    ) -> Option<(Bytes, broadcast::Receiver<Bytes>)> {
+        let map = self.sessions.lock().expect("registry mutex poisoned");
+        let entry = map.get(&id)?;
+        let snapshot = {
+            let term = entry.term.lock().expect("term mutex poisoned");
+            Bytes::from(term.screen().contents_formatted())
+        };
+        let rx = entry.output_tx.subscribe();
+        Some((snapshot, rx))
+    }
+
+    /// Resize the session's vt100 parser screen. Caller is responsible for
+    /// also sending the resize to the upstream PTY (the registry doesn't
+    /// own a PTY for external sessions). Returns [`crate::Error::NotFound`]
+    /// if the id is unknown.
+    pub fn resize(&self, id: SessionId, rows: u16, cols: u16) -> Result<()> {
+        let map = self.sessions.lock().expect("registry mutex poisoned");
+        let entry = map.get(&id).ok_or(Error::NotFound(id))?;
+        let mut term = entry.term.lock().expect("term mutex poisoned");
+        term.screen_mut().set_size(rows, cols);
+        Ok(())
     }
 
     /// Kill the session and remove it from the registry. For owned sessions

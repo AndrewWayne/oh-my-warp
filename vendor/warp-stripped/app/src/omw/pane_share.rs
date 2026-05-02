@@ -148,10 +148,32 @@ pub async fn share_pane(
 
     // Per-pump JoinHandles, slotted into Arc<Mutex<Option<_>>> so the kill
     // closure (which is `Fn`, not `FnOnce`) can `take()` and abort exactly
-    // once, while the closure is still callable from any thread.
+    // once, while the closure is still callable from any thread. Populated
+    // AFTER `register_external` returns the session id (the output pump
+    // needs that id to call `record_output`).
     let pumps: Arc<PlMutex<Option<(JoinHandle<()>, JoinHandle<()>)>>> =
         Arc::new(PlMutex::new(None));
     let pumps_for_kill = pumps.clone();
+
+    let kill = Box::new(move || {
+        if let Some((a, b)) = pumps_for_kill.lock().take() {
+            a.abort();
+            b.abort();
+        }
+    });
+
+    let spec = omw_server::ExternalSessionSpec {
+        name: pane_name,
+        input_tx,
+        output_tx,
+        kill,
+        initial_size: omw_pty::PtySize {
+            cols: INITIAL_COLS,
+            rows: INITIAL_ROWS,
+        },
+    };
+
+    let session_id = registry.register_external(spec).await?;
 
     // Input pump: registry mpsc -> mio event loop sender.
     let event_loop_tx_clone = event_loop_tx.clone();
@@ -180,12 +202,13 @@ pub async fn share_pane(
         eprintln!("[omw-debug] pane_share[{pump_label_in}] input pump: exiting (registry mpsc closed)");
     });
 
-    // Output pump: pty_reads broadcast -> registry broadcast. We materialise
-    // the receiver synchronously *before* spawning so callers that broadcast
+    // Output pump: pty_reads broadcast -> registry.record_output (which feeds
+    // the parser and broadcasts to live subscribers). We materialise the
+    // receiver synchronously *before* spawning so callers that broadcast
     // immediately after share_pane returns don't race the spawn (which would
     // otherwise see receiver_count == 0 and drop the chunk).
     let mut pty_rx = pty_reads_tx.new_receiver();
-    let output_tx_clone = output_tx.clone();
+    let registry_for_pump = registry.clone();
     let pump_label_out = pane_name_log.clone();
     let output_pump = tokio::spawn(async move {
         loop {
@@ -194,21 +217,17 @@ pub async fn share_pane(
                     let bytes = Bytes::copy_from_slice(chunk.as_slice());
                     let len = bytes.len();
                     let preview = debug_preview(&bytes);
-                    let sub_count = output_tx_clone.receiver_count();
-                    // The first time bytes flow we expect sub_count == 0
-                    // until the WS handler subscribes. Send returns Err
-                    // (no subs) silently — that's fine but we log it once
-                    // so we know whether the chunk got dropped.
-                    match output_tx_clone.send(bytes) {
-                        Ok(_) => {
+                    match registry_for_pump.record_output(session_id, bytes) {
+                        Ok(sub_count) => {
                             eprintln!(
-                                "[omw-debug] pane_share[{pump_label_out}] output pump: forwarded {len} bytes to registry broadcast ({sub_count} subs) (preview {preview:?})"
+                                "[omw-debug] pane_share[{pump_label_out}] output pump: recorded {len} bytes via registry ({sub_count} subs) (preview {preview:?})"
                             );
                         }
-                        Err(_) => {
+                        Err(e) => {
                             eprintln!(
-                                "[omw-debug] pane_share[{pump_label_out}] output pump: dropped {len} bytes ({sub_count} subs — likely no phone attached yet) (preview {preview:?})"
+                                "[omw-debug] pane_share[{pump_label_out}] output pump: record_output failed ({e:?}) — session likely killed, exiting"
                             );
+                            break;
                         }
                     }
                 }
@@ -226,26 +245,6 @@ pub async fn share_pane(
     });
 
     *pumps.lock() = Some((input_pump, output_pump));
-
-    let kill = Box::new(move || {
-        if let Some((a, b)) = pumps_for_kill.lock().take() {
-            a.abort();
-            b.abort();
-        }
-    });
-
-    let spec = omw_server::ExternalSessionSpec {
-        name: pane_name,
-        input_tx,
-        output_tx,
-        kill,
-        initial_size: omw_pty::PtySize {
-            cols: INITIAL_COLS,
-            rows: INITIAL_ROWS,
-        },
-    };
-
-    let session_id = registry.register_external(spec).await?;
 
     let registry_for_stop = registry.clone();
     let stop: Box<dyn FnOnce() + Send> = Box::new(move || {

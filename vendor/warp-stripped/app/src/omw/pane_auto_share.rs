@@ -161,10 +161,18 @@ pub fn share_self_pane(
         );
         return None;
     };
-    match spawn_share_and_collect(&runtime, &registry, "active-pane", io) {
+    // Multi-pane share: each session needs a recognizable name in the phone's
+    // /api/v1/sessions list. Prefer the pane's local cwd; fall back to
+    // `pane-{view_id}` so the rows stay distinguishable even when no cwd is
+    // available (e.g. a detached pane that hasn't established a session yet).
+    let view_id = me.view_id();
+    let name = me
+        .pwd_if_local(ctx)
+        .unwrap_or_else(|| format!("pane-{view_id}"));
+    match spawn_share_and_collect(&runtime, &registry, &name, io) {
         Ok(h) => {
             eprintln!(
-                "[omw-debug] share_self_pane: registered active pane as session {}",
+                "[omw-debug] share_self_pane: registered pane {view_id} as session {} (name={name:?})",
                 h.session_id
             );
             Some(h)

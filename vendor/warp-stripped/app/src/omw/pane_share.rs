@@ -57,9 +57,40 @@ const INITIAL_ROWS: u16 = 24;
 /// Handle returned by [`share_pane`]. Holds the assigned session id and a
 /// `stop` closure that asks the registry to kill the session (which in turn
 /// fires the kill closure and aborts the pumps).
+///
+/// The stop closure is fired exactly once: either via [`PaneShareHandle::stop`]
+/// (explicit) or via [`Drop`] (implicit, when the handle leaves scope or is
+/// removed from `OmwRemoteState::pane_shares`). This is what makes
+/// `unshare_pane` foolproof: removing the handle from the share map is the
+/// same as tearing down the pumps and removing the registry entry.
 pub struct PaneShareHandle {
     pub session_id: omw_server::SessionId,
-    pub stop: Box<dyn Fn() + Send + Sync>,
+    /// `Option<...>` so we can `.take()` on first call and silently ignore
+    /// subsequent calls. `PlMutex` because the explicit method takes `&self`
+    /// to keep call ergonomics, while `Drop::drop` has `&mut self`.
+    stop: PlMutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl PaneShareHandle {
+    /// Fire the stop closure. Idempotent: subsequent calls (and the eventual
+    /// Drop) are no-ops.
+    pub fn stop(&self) {
+        if let Some(f) = self.stop.lock().take() {
+            f();
+        }
+    }
+}
+
+impl Drop for PaneShareHandle {
+    fn drop(&mut self) {
+        if let Some(f) = self.stop.lock().take() {
+            eprintln!(
+                "[omw-debug] PaneShareHandle::drop: firing kill for session {}",
+                self.session_id
+            );
+            f();
+        }
+    }
 }
 
 /// Errors from [`share_pane`].
@@ -217,18 +248,37 @@ pub async fn share_pane(
     let session_id = registry.register_external(spec).await?;
 
     let registry_for_stop = registry.clone();
-    let stop = Box::new(move || {
+    let stop: Box<dyn FnOnce() + Send> = Box::new(move || {
         // `kill` is async; we may be called from a sync context. Kick off a
         // detached task on the current runtime. `kill` is idempotent on the
         // registry side — it returns NotFound if already removed, which we
         // ignore.
-        let registry = registry_for_stop.clone();
         tokio::spawn(async move {
-            let _ = registry.kill(session_id).await;
+            let _ = registry_for_stop.kill(session_id).await;
         });
     });
 
-    Ok(PaneShareHandle { session_id, stop })
+    Ok(PaneShareHandle {
+        session_id,
+        stop: PlMutex::new(Some(stop)),
+    })
+}
+
+#[cfg(test)]
+impl PaneShareHandle {
+    /// Test-only constructor: builds a handle whose `stop` closure runs the
+    /// supplied callback exactly once (via `Drop` or via `stop()`). Lets unit
+    /// tests verify share-map idempotency without spinning up a real
+    /// `SessionRegistry`.
+    pub(crate) fn new_for_test<F>(session_id: omw_server::SessionId, on_stop: F) -> Self
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        Self {
+            session_id,
+            stop: PlMutex::new(Some(Box::new(on_stop))),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -373,7 +423,7 @@ mod tests {
 
         // Stop. This spawns a task that calls registry.kill(session_id). Wait
         // until the session is gone.
-        (handle.stop)();
+        handle.stop();
 
         let removed = wait_for(50, || {
             if registry.list().is_empty() {
@@ -394,6 +444,51 @@ mod tests {
         // for this id).
         // We just verify the channel doesn't yield surprising data.
         let _ = event_loop_rx.try_recv();
+    }
+
+    /// Dropping a `PaneShareHandle` (without an explicit `stop()` call) fires
+    /// the stop closure exactly once, which asks the registry to kill the
+    /// session. Wired in v0.4-thin so removing a handle from the
+    /// `OmwRemoteState::pane_shares` map is enough to unshare a pane — no
+    /// caller has to remember to call `.stop()` first.
+    #[tokio::test]
+    async fn pane_share_handle_drop_calls_kill() {
+        let registry = omw_server::SessionRegistry::new();
+        let (event_loop_tx, _rx) = make_event_loop();
+        let (pty_tx, _pty_keep) = make_pty_broadcast();
+
+        let handle = share_pane(
+            "pane-drop".to_string(),
+            event_loop_tx,
+            pty_tx,
+            registry.clone(),
+        )
+        .await
+        .unwrap();
+        let session_id = handle.session_id;
+
+        assert_eq!(registry.list().len(), 1);
+
+        // Drop fires the kill closure, which spawns a detached
+        // `registry.kill(id)` task on the current runtime.
+        drop(handle);
+
+        let removed = wait_for(50, || {
+            if registry.list().is_empty() {
+                Some(())
+            } else {
+                None
+            }
+        })
+        .await;
+        assert!(
+            removed.is_some(),
+            "session should be removed after handle drop"
+        );
+
+        // After kill, write_input should fail (session is gone).
+        let res = registry.write_input(session_id, b"x").await;
+        assert!(res.is_err(), "write_input on killed session should fail");
     }
 
     #[tokio::test]

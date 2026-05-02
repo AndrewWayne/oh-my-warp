@@ -16,6 +16,7 @@
 //! - QR popup modal
 //! - PTY-controller hook (no `WarpSessionBashOperations` adapter)
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::thread;
@@ -25,6 +26,7 @@ use parking_lot::Mutex;
 use tokio::runtime::Builder;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
+use warpui::EntityId;
 
 /// Default bind for the embedded daemon. We listen on all interfaces so a
 /// phone on the same tailnet can reach us by either the tailnet hostname
@@ -80,6 +82,13 @@ pub struct OmwRemoteState {
     /// inner mutex — readers can clone receivers without contending with the
     /// state-mutation lock.
     status_tx: watch::Sender<OmwRemoteStatus>,
+    /// Bumped every time the per-pane share map mutates (insert or remove).
+    /// Per-pane Phone buttons subscribe via [`subscribe_share_stream`] so they
+    /// can re-render their (icon, tooltip) tuple from
+    /// `is_pane_shared(view_id)` whenever the map changes — without depending
+    /// on the daemon-status watch channel, which only carries
+    /// [`OmwRemoteStatus`].
+    share_tx: watch::Sender<u64>,
 }
 
 struct Inner {
@@ -92,13 +101,13 @@ struct Inner {
     /// the daemon is running; cleared on stop. `share_pane` callers grab a
     /// clone of this `Arc` to register the pane as an external session.
     pty_registry: Option<Arc<omw_server::SessionRegistry>>,
-    /// One [`PaneShareHandle`] per Warp pane that's been auto-shared into the
-    /// registry. Populated by [`OmwRemoteState::store_pane_shares`] right
-    /// after a successful start; dropped on stop (each `Drop` triggers the
-    /// handle's stop closure, which calls `registry.kill(id)`, which in turn
-    /// fires the kill closure inside `ExternalSessionSpec` and aborts the
-    /// share pumps).
-    pane_shares: Vec<super::pane_share::PaneShareHandle>,
+    /// Per-pane share state, keyed by the originating `TerminalView`'s
+    /// `EntityId` so a Phone-click on the same pane is idempotent. Populated
+    /// by [`OmwRemoteState::store_pane_share`] when the user shares a pane;
+    /// drained on [`OmwRemoteState::stop`] or per-pane via
+    /// [`OmwRemoteState::unshare_pane`]. Dropping a handle fires its stop
+    /// closure, which calls `registry.kill(id)` — see `PaneShareHandle::Drop`.
+    pane_shares: HashMap<EntityId, super::pane_share::PaneShareHandle>,
     /// Handle to the dedicated runtime thread. Created lazily; reused across
     /// start/stop cycles. We keep it warm rather than tearing it down on stop
     /// so the second start doesn't have to spin up a new runtime.
@@ -114,16 +123,18 @@ impl OmwRemoteState {
         SHARED
             .get_or_init(|| {
                 let (status_tx, _rx) = watch::channel(OmwRemoteStatus::Stopped);
+                let (share_tx, _share_rx) = watch::channel(0u64);
                 Arc::new(Self {
                     inner: Mutex::new(Inner {
                         status: OmwRemoteStatus::Stopped,
                         serve_task: None,
                         pty_registry: None,
-                        pane_shares: Vec::new(),
+                        pane_shares: HashMap::new(),
                         runtime_handle: None,
                         runtime_thread: None,
                     }),
                     status_tx,
+                    share_tx,
                 })
             })
             .clone()
@@ -289,21 +300,30 @@ impl OmwRemoteState {
 
     /// Stop the daemon if running. Idempotent.
     pub fn stop(&self) -> Result<(), String> {
-        let task = {
+        let (task, had_shares) = {
             let mut g = self.inner.lock();
             self.set_status(&mut g, OmwRemoteStatus::Stopped);
+            let had_shares = !g.pane_shares.is_empty();
             // Drop pane-share handles BEFORE dropping the registry, so each
-            // handle's stop closure can call `registry.kill(id)` against a
-            // still-live registry. (The closures spawn detached tasks on the
-            // daemon runtime; those tasks will run shortly even after we
-            // drop the local Arc here, since the runtime keeps its own
-            // references for the duration of each task.)
+            // handle's `Drop` impl fires the stop closure (which calls
+            // `registry.kill(id)`) against a still-live registry. (The
+            // closures spawn detached tasks on the daemon runtime; those
+            // tasks will run shortly even after we drop the local Arc here,
+            // since the runtime keeps its own references for the duration of
+            // each task.)
             g.pane_shares.clear();
             // Drop the registry handle so any spawned PTYs the WS handlers
             // still hold get released as soon as those tasks exit.
             g.pty_registry = None;
-            g.serve_task.take()
+            (g.serve_task.take(), had_shares)
         };
+        // Bump the share-map watch counter so any per-pane buttons re-render
+        // (status_tx already fired Stopped, but the share-map listeners are
+        // a separate stream).
+        if had_shares {
+            let next = self.share_tx.borrow().wrapping_add(1);
+            let _ = self.share_tx.send_replace(next);
+        }
         // (No tailscale unserve call — `bring_up_daemon` no longer registers
         // a `tailscale serve` mapping. If we re-enable Serve behind an env
         // var in the future, restore the unserve call here.)
@@ -329,13 +349,94 @@ impl OmwRemoteState {
         self.inner.lock().runtime_handle.clone()
     }
 
-    /// Append more `PaneShareHandle`s to the live set. The handles are kept
-    /// alive until `stop()` (or the next `store_pane_shares` replace pass on
-    /// daemon restart). Idempotent and additive.
+    /// Insert one share keyed by the originating `TerminalView`'s id.
+    ///
+    /// Returns `true` if the handle was inserted, `false` if a share already
+    /// exists for `view_id` (in which case the supplied `handle` is dropped,
+    /// firing its kill closure — the caller picked the wrong pane id and the
+    /// new share never reached the registry's source-of-truth path).
+    ///
+    /// Bumps the share-map watch counter on insert so any per-pane buttons
+    /// re-render their (icon, tooltip) tuple.
     #[allow(dead_code)]
-    pub fn store_pane_shares(&self, handles: Vec<super::pane_share::PaneShareHandle>) {
+    pub fn store_pane_share(
+        &self,
+        view_id: EntityId,
+        handle: super::pane_share::PaneShareHandle,
+    ) -> bool {
         let mut g = self.inner.lock();
-        g.pane_shares.extend(handles);
+        if g.pane_shares.contains_key(&view_id) {
+            // Drop happens at end of scope — the duplicate share is killed.
+            return false;
+        }
+        g.pane_shares.insert(view_id, handle);
+        // Bump the share-map version counter so subscribed buttons re-render.
+        // Wrapping add so we can never panic on overflow during a long session.
+        let next = self.share_tx.borrow().wrapping_add(1);
+        let _ = self.share_tx.send_replace(next);
+        true
+    }
+
+    /// True iff a pane with this `view_id` is currently shared.
+    #[allow(dead_code)]
+    pub fn is_pane_shared(&self, view_id: EntityId) -> bool {
+        self.inner.lock().pane_shares.contains_key(&view_id)
+    }
+
+    /// Remove and drop the share for `view_id` (firing its stop closure via
+    /// [`super::pane_share::PaneShareHandle::Drop`]). Idempotent: removing a
+    /// pane that isn't shared is a no-op (no version bump).
+    #[allow(dead_code)]
+    pub fn unshare_pane(&self, view_id: EntityId) {
+        let removed = {
+            let mut g = self.inner.lock();
+            g.pane_shares.remove(&view_id)
+        };
+        if removed.is_some() {
+            // Drop the handle here, *outside* the inner-mutex critical
+            // section: the kill closure spawns a task on the daemon runtime
+            // that may take a brief moment, and we don't want to hold the
+            // inner mutex during that.
+            drop(removed);
+            let next = self.share_tx.borrow().wrapping_add(1);
+            let _ = self.share_tx.send_replace(next);
+        }
+    }
+
+    /// Number of panes currently shared. Used by the click handler to decide
+    /// whether stopping the last share should also stop the daemon.
+    #[allow(dead_code)]
+    pub fn share_count(&self) -> usize {
+        self.inner.lock().pane_shares.len()
+    }
+
+    /// Subscribe to share-map mutations. The first item delivered is the
+    /// current counter value (so a late-attached UI can render its initial
+    /// (icon, tooltip) without waiting for the next mutation). Each subsequent
+    /// `store_pane_share` / `unshare_pane` call delivers the bumped counter.
+    ///
+    /// Mirrors [`subscribe_status_stream`] in shape; the consumer doesn't care
+    /// about the counter value, only that something changed and it should
+    /// re-read [`is_pane_shared`].
+    #[allow(dead_code)]
+    pub fn subscribe_share_stream(&self) -> Result<async_channel::Receiver<u64>, String> {
+        let runtime = self.ensure_runtime()?;
+        let mut watch_rx = self.share_tx.subscribe();
+        let (tx, rx) = async_channel::unbounded();
+
+        let seed = *watch_rx.borrow_and_update();
+        let _ = tx.try_send(seed);
+
+        runtime.spawn(async move {
+            while watch_rx.changed().await.is_ok() {
+                let snapshot = *watch_rx.borrow_and_update();
+                if tx.send(snapshot).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        Ok(rx)
     }
 
     /// Spin up (or return) the dedicated runtime thread.
@@ -484,16 +585,18 @@ impl OmwRemoteState {
     /// with a daemon a previous test left running.
     fn new_for_test() -> Arc<Self> {
         let (status_tx, _rx) = watch::channel(OmwRemoteStatus::Stopped);
+        let (share_tx, _share_rx) = watch::channel(0u64);
         Arc::new(Self {
             inner: Mutex::new(Inner {
                 status: OmwRemoteStatus::Stopped,
                 serve_task: None,
                 pty_registry: None,
-                pane_shares: Vec::new(),
+                pane_shares: HashMap::new(),
                 runtime_handle: None,
                 runtime_thread: None,
             }),
             status_tx,
+            share_tx,
         })
     }
 
@@ -613,5 +716,89 @@ mod tests {
 
         let second = rx.recv().await.unwrap();
         assert!(matches!(second, OmwRemoteStatus::Running { .. }));
+    }
+
+    /// `store_pane_share` keyed by `EntityId` is idempotent: a second insert
+    /// with the same id returns `false` and the original handle stays in the
+    /// map. The duplicate handle is dropped (its stop closure fires) — that
+    /// proves the caller's "second click on same pane" can't end up
+    /// double-registering pumps.
+    #[test]
+    fn store_pane_share_idempotent() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let state = OmwRemoteState::new_for_test();
+        // `from_usize` gives a deterministic id for the test; the real path
+        // uses `TerminalView::view_id()`. The id doesn't have to refer to a
+        // live entity for the share-map mechanics to be exercisable.
+        let view_id = EntityId::from_usize(42);
+
+        let first_drops = Arc::new(AtomicUsize::new(0));
+        let first_drops_clone = first_drops.clone();
+        let first =
+            super::super::pane_share::PaneShareHandle::new_for_test(uuid::Uuid::new_v4(), move || {
+                first_drops_clone.fetch_add(1, Ordering::Relaxed);
+            });
+        assert!(state.store_pane_share(view_id, first));
+        assert_eq!(state.share_count(), 1);
+        assert!(state.is_pane_shared(view_id));
+
+        let second_drops = Arc::new(AtomicUsize::new(0));
+        let second_drops_clone = second_drops.clone();
+        let duplicate =
+            super::super::pane_share::PaneShareHandle::new_for_test(uuid::Uuid::new_v4(), move || {
+                second_drops_clone.fetch_add(1, Ordering::Relaxed);
+            });
+        // Second insert with same EntityId is rejected; the duplicate handle
+        // is dropped (its on_stop callback fires) — proving the share map
+        // can't accidentally double-register pumps for the same pane.
+        assert!(!state.store_pane_share(view_id, duplicate));
+        assert_eq!(state.share_count(), 1);
+        assert_eq!(
+            second_drops.load(Ordering::Relaxed),
+            1,
+            "duplicate handle's stop closure should fire exactly once on drop",
+        );
+        assert_eq!(
+            first_drops.load(Ordering::Relaxed),
+            0,
+            "the original handle must still be alive in the map",
+        );
+
+        // Now unshare it: removes from the map and drops the original handle,
+        // firing its stop closure exactly once.
+        state.unshare_pane(view_id);
+        assert_eq!(state.share_count(), 0);
+        assert!(!state.is_pane_shared(view_id));
+        assert_eq!(first_drops.load(Ordering::Relaxed), 1);
+    }
+
+    /// `subscribe_share_stream` seeds the consumer with the current counter
+    /// AND delivers a fresh value on every store/unshare. Mirrors
+    /// `subscribe_status_stream_seeds_and_forwards` for the share-map watch.
+    #[test]
+    fn share_tx_bumps_on_mutation() {
+        let state = OmwRemoteState::new_for_test();
+        let view_id = EntityId::from_usize(7);
+        let mut rx = state.share_tx.subscribe();
+        let initial = *rx.borrow_and_update();
+
+        let drops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let drops_for_handle = drops.clone();
+        let handle = super::super::pane_share::PaneShareHandle::new_for_test(
+            uuid::Uuid::new_v4(),
+            move || {
+                drops_for_handle.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            },
+        );
+        assert!(state.store_pane_share(view_id, handle));
+        assert!(rx.has_changed().expect("sender alive"));
+        let after_insert = *rx.borrow_and_update();
+        assert_ne!(after_insert, initial);
+
+        state.unshare_pane(view_id);
+        assert!(rx.has_changed().expect("sender alive"));
+        let after_remove = *rx.borrow_and_update();
+        assert_ne!(after_remove, after_insert);
     }
 }

@@ -8,6 +8,7 @@
 //! clean. See `vendor/warp-stripped/OMW_LOCAL_BUILD.md`.
 
 pub mod pair_browser;
+pub mod pair_button;
 pub mod pair_modal;
 pub mod pane_auto_share;
 pub mod pane_share;

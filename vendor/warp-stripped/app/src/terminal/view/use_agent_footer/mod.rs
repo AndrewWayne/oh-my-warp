@@ -96,6 +96,50 @@ const CLI_AGENT_IMAGE_PASTE_DELAY: Duration = Duration::from_millis(300);
 #[allow(clippy::byte_char_slices)]
 const CLI_AGENT_MODE_SWITCH_PREFIXES: &[u8] = &[b'!', b'&'];
 
+/// First-pair UI surface: copy the pair URL to the clipboard, open the local
+/// pair page in the system browser (so a user running warp-oss from Explorer
+/// can scan the QR or send the URL to the phone via airdrop/Slack/etc.), and
+/// emit a stderr toast block. Called from the click handler ONLY in the
+/// daemon-just-started case — subsequent silent shares (phone is already
+/// paired) skip this entirely.
+///
+/// Generic over the calling view because the click arm now lives in
+/// `TerminalView::handle_use_agent_footer_event` (`ctx: ViewContext<TerminalView>`)
+/// while previous Wiring 5 code anchored it in `UseAgentToolbar`.
+#[cfg(feature = "omw_local")]
+fn surface_pair_modal<V: warpui::Entity>(
+    state: &crate::omw::OmwRemoteState,
+    ctx: &mut ViewContext<V>,
+) {
+    use crate::omw::pair_modal::{format_pair_modal_text_block, PairModalContent};
+    use crate::omw::tailscale::detect_status as detect_tailscale_status;
+    use crate::omw::OmwRemoteStatus;
+
+    let content = PairModalContent {
+        status: state.status(),
+        tailscale: detect_tailscale_status(),
+        paired_device_count: None,
+    };
+
+    if let OmwRemoteStatus::Running { pair_url, .. } = &content.status {
+        ctx.clipboard()
+            .write(ClipboardContent::plain_text(pair_url.clone()));
+        let tailnet_host = content.tailscale.local_hostname.as_deref();
+        if let Err(e) = crate::omw::pair_browser::open_pair_page(pair_url, tailnet_host) {
+            log::warn!("omw-remote: open_pair_page failed: {e}");
+        }
+    }
+
+    eprintln!(
+        "\n=== omw Remote Control ===\n{}\n==========================\n",
+        format_pair_modal_text_block(&content)
+    );
+    log::info!(
+        "omw-remote: surfaced pair-modal toast (status={:?})",
+        content.status
+    );
+}
+
 /// How rich input delivers text + Enter to the CLI agent's PTY.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RichInputSubmitStrategy {
@@ -279,131 +323,142 @@ impl TerminalView {
             }
             #[cfg(feature = "omw_local")]
             UseAgentToolbarEvent::ToggleOmwPair => {
-                use crate::omw::pair_modal::{
-                    format_pair_modal_text_block, PairModalContent,
-                };
-                use crate::omw::tailscale::detect_status as detect_tailscale_status;
                 use crate::omw::{OmwRemoteState, OmwRemoteStatus};
 
+                // Per-pane click dispatch (v0.4-thin multi-pane share, design §3.4).
+                // The Phone button no longer global-toggles the daemon. Instead, the
+                // (was_stopped, was_shared) tuple selects one of three behaviours:
+                //
+                //   (true,  _)     daemon down  -> start daemon + share THIS pane +
+                //                                  surface QR/URL once for first-pair
+                //   (false, false) daemon up    -> share THIS pane silently (phone
+                //                                  is already paired)
+                //   (false, true)  daemon up    -> unshare THIS pane (and stop the
+                //                                  daemon if no shares remain)
+                //
+                // The QR/clipboard/`open_pair_page` block is now reachable ONLY in
+                // the (true, _) arm — that's the only click that actually represents
+                // a pair moment.
                 let state = OmwRemoteState::shared();
-
-                // Gap 2: explicit start-then-surface flow. Click no longer
-                // toggles off implicitly — the modal/toast surfaces a "Stop
-                // Daemon" affordance for the explicit stop path. (Today the
-                // toast is informational; once the real `View`-backed modal
-                // lands, the Stop button will be in the dialog footer.)
+                let view_id = self.view_id();
                 let was_stopped = matches!(
                     state.status(),
                     OmwRemoteStatus::Stopped | OmwRemoteStatus::Failed { .. }
                 );
-                if was_stopped {
-                    if let Err(e) = state.start() {
-                        log::warn!("omw-remote: start failed: {e}");
-                    }
-                }
+                let was_shared = state.is_pane_shared(view_id);
 
-                // Gap 1 part C, attempt 3 — share JUST the active pane (the
-                // one whose Phone button was clicked), not iterate the whole
-                // workspace. Two prior iterating attempts crashed warp-oss
-                // (commits 1272ce6 and 49ffbb2); the per-self path skips
-                // workspace traversal and pane_group.update entirely, so it
-                // can't re-enter foreign views.
-                //
-                // Deferred via `ctx.spawn(Timer::after(0), ...)` so we don't
-                // re-enter the in-progress update on `self` either.
-                //
-                // GATE: only share when this click actually transitioned the
-                // daemon from Stopped/Failed -> Running. Re-clicking Phone
-                // while the daemon is already Running used to re-fire
-                // share_self_pane, which created a SECOND external session
-                // for the same pane; both subscribed to Warp's pty_reads_tx
-                // and the user saw every PTY chunk twice on the phone. The
-                // gate makes the share idempotent per-daemon-lifetime.
-                if was_stopped {
-                    ctx.spawn(
-                        Timer::after(Duration::ZERO),
-                        move |me, _result, ctx| {
-                            let state = OmwRemoteState::shared();
-                            let (Some(registry), Some(runtime)) =
-                                (state.pty_registry(), state.runtime_handle())
-                            else {
-                                return;
-                            };
-                            if let Some(handle) = crate::omw::pane_auto_share::share_self_pane(
-                                me, ctx, registry, runtime,
-                            ) {
-                                log::info!(
-                                    "omw pane_auto_share: shared the active pane on Phone click"
-                                );
-                                state.store_pane_shares(vec![handle]);
-                            } else {
-                                log::warn!(
-                                    "omw pane_auto_share: active pane is not a local_tty manager; \
-                                     nothing shared"
-                                );
+                match (was_stopped, was_shared) {
+                    // Daemon is up AND this pane is already shared -> unshare it.
+                    (false, true) => {
+                        state.unshare_pane(view_id);
+                        let remaining = state.share_count();
+                        if remaining == 0 {
+                            // No panes left to share — the daemon has nothing live to
+                            // host, so stop it. The user can re-share by clicking
+                            // Phone again (which goes through the (true, _) arm and
+                            // re-pops the pair URL since pairing must be redone for
+                            // the next phone if the host_key is the same one — actually
+                            // pairings persist on disk, so the same phone re-attaches
+                            // silently).
+                            if let Err(e) = state.stop() {
+                                log::warn!("omw-remote: stop after last unshare failed: {e}");
                             }
-                        },
-                    );
-                }
+                        }
+                        eprintln!(
+                            "[omw-debug] unshared pane {view_id} (remaining_shares={remaining})"
+                        );
+                    }
 
-                // Gap 2 (toast surface): after start, snapshot the daemon
-                // state + Tailscale probe and render the modal text body.
-                // This is the deferred-modal fallback per the Gap 2 task
-                // brief: the URL is surfaced visibly via clipboard + stderr
-                // until the full reactive `View`-backed dialog lands. A
-                // future commit replaces this block with a workspace-view
-                // dialog handle while keeping the same `format_pair_modal_*`
-                // helpers and copy-on-open ergonomics.
-                let content = PairModalContent {
-                    status: state.status(),
-                    tailscale: detect_tailscale_status(),
-                    paired_device_count: None,
-                };
+                    // Daemon is up but this pane isn't shared yet -> share it.
+                    // Defer via Timer::after(0) — same reentry safety reasoning as
+                    // the original share_self_pane wiring (commits 1272ce6 / 49ffbb2
+                    // attempts crashed warp-oss; the deferred path does not re-enter
+                    // an in-progress view update).
+                    (false, false) => {
+                        ctx.spawn(
+                            Timer::after(Duration::ZERO),
+                            move |me, _result, ctx| {
+                                let state = OmwRemoteState::shared();
+                                let (Some(registry), Some(runtime)) =
+                                    (state.pty_registry(), state.runtime_handle())
+                                else {
+                                    return;
+                                };
+                                if let Some(handle) =
+                                    crate::omw::pane_auto_share::share_self_pane(
+                                        me, ctx, registry, runtime,
+                                    )
+                                {
+                                    let id = me.view_id();
+                                    if !state.store_pane_share(id, handle) {
+                                        eprintln!(
+                                            "[omw-debug] share_self_pane: pane {id} \
+                                             already shared, skipping"
+                                        );
+                                    } else {
+                                        log::info!(
+                                            "omw pane_auto_share: shared pane {id} \
+                                             on Phone click"
+                                        );
+                                    }
+                                }
+                            },
+                        );
+                        // No QR pop — phone is already paired.
+                    }
 
-                // Auto-copy the URL to the clipboard so the user has it
-                // ready to paste, even before the real modal lands. Only do
-                // this on a successful Running transition — copying nothing
-                // (or an error message) would be more confusing than a
-                // silent toast.
-                //
-                // ALSO: open the system default browser to a local HTML page
-                // that displays the QR + URL + a Copy button. This is the
-                // Gap-2-deferred-modal user-visible surface — without it,
-                // users running warp-oss.exe from Explorer have no way to
-                // see the pair URL or scan the QR. The full reactive
-                // `View<>`-backed Warp dialog still supersedes this once it
-                // lands; this module deletes itself then.
-                if let OmwRemoteStatus::Running { pair_url, .. } = &content.status {
-                    ctx.clipboard().write(
-                        ClipboardContent::plain_text(pair_url.clone()),
-                    );
-                    let tailnet_host = content
-                        .tailscale
-                        .local_hostname
-                        .as_deref();
-                    if let Err(e) = crate::omw::pair_browser::open_pair_page(
-                        pair_url,
-                        tailnet_host,
-                    ) {
-                        log::warn!("omw-remote: open_pair_page failed: {e}");
+                    // Daemon is down -> start it AND share this pane. ONLY this case
+                    // surfaces the QR/clipboard, because it's the actual pair moment.
+                    (true, _) => {
+                        if let Err(e) = state.start() {
+                            log::warn!("omw-remote: start failed: {e}");
+                            return;
+                        }
+                        ctx.spawn(
+                            Timer::after(Duration::ZERO),
+                            move |me, _result, ctx| {
+                                let state = OmwRemoteState::shared();
+                                let (Some(registry), Some(runtime)) =
+                                    (state.pty_registry(), state.runtime_handle())
+                                else {
+                                    return;
+                                };
+                                if let Some(handle) =
+                                    crate::omw::pane_auto_share::share_self_pane(
+                                        me, ctx, registry, runtime,
+                                    )
+                                {
+                                    let id = me.view_id();
+                                    if !state.store_pane_share(id, handle) {
+                                        eprintln!(
+                                            "[omw-debug] share_self_pane: pane {id} \
+                                             already shared, skipping"
+                                        );
+                                    } else {
+                                        log::info!(
+                                            "omw pane_auto_share: shared pane {id} \
+                                             on first-pair Phone click"
+                                        );
+                                    }
+                                } else {
+                                    log::warn!(
+                                        "omw pane_auto_share: active pane is not a \
+                                         local_tty manager; nothing shared"
+                                    );
+                                }
+                            },
+                        );
+                        // First-pair surface: QR + clipboard + browser. Subsequent
+                        // shares (the (false, false) arm above) are silent.
+                        surface_pair_modal(&state, ctx);
                     }
                 }
 
-                eprintln!(
-                    "\n=== omw Remote Control ===\n{}\n==========================\n",
-                    format_pair_modal_text_block(&content)
-                );
-                log::info!(
-                    "omw-remote: surfaced pair-modal toast (status={:?})",
-                    content.status
-                );
-
-                // Belt-and-suspenders re-render. Gap 3 wired the Phone
-                // button's label/tooltip/icon to `OmwRemoteState`'s watch
-                // channel, so the toolbar updates itself on every status
-                // transition. We keep the explicit notify here so any sibling
-                // chips that depend on the toolbar layout still re-paint when
-                // the user clicks toggle.
+                // Belt-and-suspenders re-render. Gap 3 wired the Phone button's
+                // label/tooltip to `OmwRemoteState`'s watch channels, so the toolbar
+                // updates itself on every status / share-map transition. We keep
+                // the explicit notify here so any sibling chips that depend on the
+                // toolbar layout still re-paint when the user clicks toggle.
                 self.use_agent_footer.update(ctx, |footer, ctx| {
                     footer.notify_and_notify_children(ctx);
                 });
@@ -1150,8 +1205,14 @@ impl UseAgentToolbar {
             me.handle_agent_input_footer_event(event, ctx);
         });
 
-        let warpify_footer_view =
-            ctx.add_typed_action_view(|ctx| WarpifyFooterView::new(terminal_model.clone(), ctx));
+        let warpify_footer_view = ctx.add_typed_action_view(|ctx| {
+            WarpifyFooterView::new(
+                terminal_model.clone(),
+                #[cfg(feature = "omw_local")]
+                terminal_view_id,
+                ctx,
+            )
+        });
 
         ctx.subscribe_to_view(&warpify_footer_view, |me, _, event, ctx| {
             me.handle_warpify_footer_event(event, ctx);

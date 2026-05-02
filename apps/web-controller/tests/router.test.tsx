@@ -21,9 +21,17 @@ describe("App routing", () => {
       </MemoryRouter>
     );
     expect(screen.getByRole("heading", { name: "Pair" })).toBeInTheDocument();
+    // jsdom doesn't expose navigator.mediaDevices and window.isSecureContext
+    // is false, so Pair.tsx's cameraScanAvailable() returns false and the
+    // page renders the "In-app QR scan unavailable" fallback instead of
+    // the "Start scan" camera button. Assert the fallback heading + the
+    // pairing-URL textarea, which together prove the page is fully wired
+    // for the no-camera path (the primary phone flow is "OS camera scans
+    // QR -> opens URL", so the in-app camera scan is a fallback anyway).
     expect(
-      screen.getByRole("button", { name: /start scan/i })
+      screen.getByRole("heading", { name: /in-app qr scan unavailable/i })
     ).toBeInTheDocument();
+    expect(screen.getByLabelText(/Pairing URL/i)).toBeInTheDocument();
   });
 
   it("renders Terminal with route params", () => {

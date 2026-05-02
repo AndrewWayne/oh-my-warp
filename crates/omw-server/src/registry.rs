@@ -158,10 +158,111 @@ impl ScrollbackBuf {
         }
     }
 
-    /// Snapshot of the current chunks (cheap clones — `Bytes` is refcounted).
+    /// Snapshot of the current chunks for replay to a fresh subscriber.
+    ///
+    /// **TUI flicker / duplicate-output mitigation.** Naively replaying every
+    /// recorded byte causes the phone's xterm to render every historical
+    /// state in sequence — for a TUI session the user perceives this as a
+    /// "static printline" of the pre-TUI plain text appearing first, then the
+    /// TUI redraw repainting the same content on top. So we trim everything
+    /// BEFORE the latest screen-state reset (alt-screen toggle / full clear /
+    /// RIS) — those escapes wipe the visible terminal state, so anything
+    /// before is cosmetic noise. After the trim, xterm's first replay byte
+    /// is the reset itself, and from there we just paint the latest live
+    /// state with no pre-history flicker.
+    ///
+    /// For a non-TUI session (no reset escape ever sent — e.g. the user only
+    /// ran `ls`/`cat`/`echo`) no trim happens and the full byte stream is
+    /// returned as-is. That preserves the actual scrollback the user wants.
     fn snapshot(&self) -> Vec<Bytes> {
-        self.chunks.iter().cloned().collect()
+        // Collapse to a single contiguous buffer so the trim search can find
+        // escape sequences that straddle chunk boundaries. Bounded to
+        // `cap_bytes`, so allocation is cheap.
+        let total_len = self.total_bytes;
+        if total_len == 0 {
+            return Vec::new();
+        }
+        let mut buf = Vec::with_capacity(total_len);
+        for chunk in &self.chunks {
+            buf.extend_from_slice(chunk);
+        }
+        if let Some(reset_at) = find_last_screen_state_reset(&buf) {
+            return vec![Bytes::copy_from_slice(&buf[reset_at..])];
+        }
+        // No reset found — return one coalesced chunk. Coalescing here gives
+        // the WS handler one Output frame to enqueue, which xterm processes
+        // as one `xterm.write` call (atomic enough that the user sees a
+        // single transition rather than a per-chunk flicker).
+        vec![Bytes::from(buf)]
     }
+}
+
+/// Find the byte offset of the LAST screen-state-reset escape sequence in
+/// `bytes`, returning `None` if none exists. "Reset" here means an escape
+/// that wipes (or replaces) the entire visible terminal state from xterm's
+/// perspective:
+///   - `\x1b[2J`     CSI 2 J  — Erase in Display, all
+///   - `\x1b[3J`     CSI 3 J  — Erase in Display, scrollback included
+///   - `\x1bc`       RIS      — Reset to Initial State (full reset)
+///   - `\x1b[?1049h` enter alternate screen buffer — TUI apps use this
+///   - `\x1b[?47h`   legacy alternate screen
+///   - `\x1b[?1049l` exit alternate screen — also a reset of the visible
+///                   buffer (back to main screen, prior contents restored)
+///
+/// We do a linear forward scan and remember the LAST hit; for ≤ 64 KiB this
+/// is microseconds and avoids tricky reverse-scanning of multi-byte
+/// sequences that may straddle chunk boundaries.
+fn find_last_screen_state_reset(bytes: &[u8]) -> Option<usize> {
+    let n = bytes.len();
+    let mut last: Option<usize> = None;
+    let mut i = 0;
+    while i < n {
+        if bytes[i] != 0x1b {
+            i += 1;
+            continue;
+        }
+        // ESC c — Full Reset
+        if matches!(bytes.get(i + 1), Some(b'c')) {
+            last = Some(i);
+            i += 2;
+            continue;
+        }
+        // ESC [ ...
+        if matches!(bytes.get(i + 1), Some(b'[')) {
+            // ESC [ 2 J  /  ESC [ 3 J
+            if (matches!(bytes.get(i + 2), Some(b'2') | Some(b'3')))
+                && matches!(bytes.get(i + 3), Some(b'J'))
+            {
+                last = Some(i);
+                i += 4;
+                continue;
+            }
+            // ESC [ ? 1 0 4 9 h  /  ESC [ ? 1 0 4 9 l
+            if matches!(bytes.get(i + 2), Some(b'?'))
+                && matches!(bytes.get(i + 3), Some(b'1'))
+                && matches!(bytes.get(i + 4), Some(b'0'))
+                && matches!(bytes.get(i + 5), Some(b'4'))
+                && matches!(bytes.get(i + 6), Some(b'9'))
+                && matches!(bytes.get(i + 7), Some(b'h') | Some(b'l'))
+            {
+                last = Some(i);
+                i += 8;
+                continue;
+            }
+            // ESC [ ? 4 7 h  /  ESC [ ? 4 7 l  — legacy alt screen
+            if matches!(bytes.get(i + 2), Some(b'?'))
+                && matches!(bytes.get(i + 3), Some(b'4'))
+                && matches!(bytes.get(i + 4), Some(b'7'))
+                && matches!(bytes.get(i + 5), Some(b'h') | Some(b'l'))
+            {
+                last = Some(i);
+                i += 6;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    last
 }
 
 /// Internal state for one live session, regardless of source.
@@ -556,5 +657,84 @@ impl SessionRegistry {
         // is a no-op for external since `kill` was already taken above.
         drop(entry);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod scrollback_tests {
+    use super::*;
+
+    #[test]
+    fn find_last_screen_state_reset_returns_none_when_no_reset() {
+        assert_eq!(find_last_screen_state_reset(b"hello world\n"), None);
+        // ESC followed by some non-reset CSI should not match.
+        assert_eq!(find_last_screen_state_reset(b"\x1b[31mred\x1b[0m"), None);
+    }
+
+    #[test]
+    fn find_last_screen_state_reset_finds_clear_screen() {
+        let bytes = b"intro text\x1b[2Jcleared content";
+        let pos = find_last_screen_state_reset(bytes).expect("must find");
+        // 10 = len("intro text"); ESC starts there.
+        assert_eq!(pos, 10);
+    }
+
+    #[test]
+    fn find_last_screen_state_reset_finds_alt_screen_enter() {
+        let bytes = b"plain\x1b[?1049htui-content";
+        let pos = find_last_screen_state_reset(bytes).expect("must find");
+        assert_eq!(pos, 5);
+    }
+
+    #[test]
+    fn find_last_screen_state_reset_returns_latest_when_multiple() {
+        // Two clears: a `[2J` early and a `[?1049h` later. The alt-screen
+        // enter is the LATEST, so its offset is what we expect to trim from.
+        // `a` (1) `\x1b[2J` (4) `b` (1) -> the second ESC starts at byte 6.
+        let bytes = b"a\x1b[2Jb\x1b[?1049hc";
+        let pos = find_last_screen_state_reset(bytes).expect("must find");
+        assert_eq!(pos, 6);
+    }
+
+    #[test]
+    fn snapshot_trims_before_last_clear_when_present() {
+        let mut buf = ScrollbackBuf::new(1024);
+        buf.push(Bytes::from_static(b"intro line\n"));
+        buf.push(Bytes::from_static(b"more intro\n\x1b[?1049h"));
+        buf.push(Bytes::from_static(b"tui body"));
+        let snap = buf.snapshot();
+        // One coalesced chunk that starts at the alt-screen enter escape.
+        assert_eq!(snap.len(), 1);
+        assert_eq!(&snap[0][..], b"\x1b[?1049htui body");
+    }
+
+    #[test]
+    fn snapshot_coalesces_when_no_reset_in_buffer() {
+        let mut buf = ScrollbackBuf::new(1024);
+        buf.push(Bytes::from_static(b"line 1\n"));
+        buf.push(Bytes::from_static(b"line 2\n"));
+        buf.push(Bytes::from_static(b"line 3\n"));
+        let snap = buf.snapshot();
+        // No clear -> coalesce all three chunks into one Bytes.
+        assert_eq!(snap.len(), 1);
+        assert_eq!(&snap[0][..], b"line 1\nline 2\nline 3\n");
+    }
+
+    #[test]
+    fn snapshot_handles_empty_buffer() {
+        let buf = ScrollbackBuf::new(1024);
+        assert!(buf.snapshot().is_empty());
+    }
+
+    #[test]
+    fn snapshot_handles_reset_split_across_chunks() {
+        // The escape sequence straddles two chunks — coalescing inside
+        // snapshot is what makes this find-able.
+        let mut buf = ScrollbackBuf::new(1024);
+        buf.push(Bytes::from_static(b"intro\x1b"));
+        buf.push(Bytes::from_static(b"[?1049htui"));
+        let snap = buf.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(&snap[0][..], b"\x1b[?1049htui");
     }
 }

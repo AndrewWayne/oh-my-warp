@@ -145,8 +145,12 @@ async fn external_session_scrollback_replays_on_subscribe() {
         .record_output(session_id, Bytes::from_static(b"live-line\n"))
         .expect("record_output live");
 
-    // Read frames until we've seen all three Output payloads, in order.
-    let expected: &[&[u8]] = &[b"past-line-1\n", b"past-line-2\n", b"live-line\n"];
+    // The two pre-upgrade chunks are coalesced into a single Output frame —
+    // see `ScrollbackBuf::snapshot` for the rationale (one frame -> one
+    // `xterm.write` -> atomic render, avoiding per-chunk flicker that
+    // surfaced as a "static printline then dynamic terminal" duplication
+    // for TUI sessions). The live chunk arrives as its own frame after.
+    let expected: &[&[u8]] = &[b"past-line-1\npast-line-2\n", b"live-line\n"];
     let mut idx = 0;
     let saw_all = timeout(Duration::from_secs(5), async {
         while let Some(msg) = ws.next().await {
@@ -178,7 +182,10 @@ async fn external_session_scrollback_replays_on_subscribe() {
     .await
     .expect("scrollback replay timed out");
 
-    assert!(saw_all, "expected all 3 Output frames in order");
+    assert!(
+        saw_all,
+        "expected coalesced past frame followed by live frame"
+    );
 
     let _ = ws.close(None).await;
     f.registry.kill(session_id).await.expect("kill ok");

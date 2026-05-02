@@ -69,6 +69,31 @@ pub enum ShareError {
     Register(#[from] omw_server::Error),
 }
 
+/// Render up to 32 bytes of a payload as an ASCII-printable preview for
+/// the pump-tracing eprintln lines. Non-printable bytes appear as `.` so
+/// the diagnostic stays one line. Used only by the input/output pumps.
+fn debug_preview(bytes: &[u8]) -> String {
+    let take = bytes.len().min(32);
+    let mut out = String::with_capacity(take + 8);
+    for &b in &bytes[..take] {
+        if (0x20..=0x7e).contains(&b) {
+            out.push(b as char);
+        } else if b == b'\n' {
+            out.push_str("\\n");
+        } else if b == b'\r' {
+            out.push_str("\\r");
+        } else if b == b'\t' {
+            out.push_str("\\t");
+        } else {
+            out.push('.');
+        }
+    }
+    if bytes.len() > take {
+        out.push_str("...");
+    }
+    out
+}
+
 /// Bridge a Warp pane to the registry. See module docs.
 ///
 /// Must be called from within a tokio runtime — both pumps are spawned via
@@ -79,6 +104,13 @@ pub async fn share_pane(
     pty_reads_tx: async_broadcast::Sender<Arc<Vec<u8>>>,
     registry: Arc<omw_server::SessionRegistry>,
 ) -> Result<PaneShareHandle, ShareError> {
+    // Short label used in pump-tracing eprintlns so the user can correlate
+    // input/output flow with the pane this share is bridging.
+    let pane_name_log: Arc<str> = Arc::from(pane_name.as_str());
+    eprintln!(
+        "[omw-debug] pane_share[{pane_name_log}] share_pane entered — wiring input mpsc + output broadcast"
+    );
+
     // Channels handed to the registry.
     let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(INPUT_CHANNEL_CAPACITY);
     let (output_tx, _output_rx0) = broadcast::channel::<Bytes>(OUTPUT_BROADCAST_CAPACITY);
@@ -92,17 +124,29 @@ pub async fn share_pane(
 
     // Input pump: registry mpsc -> mio event loop sender.
     let event_loop_tx_clone = event_loop_tx.clone();
+    let pump_label_in = pane_name_log.clone();
     let input_pump = tokio::spawn(async move {
         while let Some(bytes) = input_rx.recv().await {
+            // Tracing visible from PowerShell when running warp-oss as a
+            // console app. Truncated to 32 bytes so a paste doesn't flood
+            // stderr; the byte count is the load-bearing diagnostic.
+            eprintln!(
+                "[omw-debug] pane_share[{pump_label_in}] input pump: {} bytes from registry -> event_loop_tx (preview {:?})",
+                bytes.len(),
+                debug_preview(&bytes),
+            );
             let tx = event_loop_tx_clone.lock();
-            if tx
-                .send(Message::Input(Cow::Owned(bytes)))
-                .is_err()
-            {
-                // Event loop is gone; nothing more we can do.
-                break;
+            match tx.send(Message::Input(Cow::Owned(bytes))) {
+                Ok(()) => {}
+                Err(e) => {
+                    eprintln!(
+                        "[omw-debug] pane_share[{pump_label_in}] input pump: event_loop_tx.send FAILED: {e:?} — Warp event loop is likely gone, exiting pump"
+                    );
+                    break;
+                }
             }
         }
+        eprintln!("[omw-debug] pane_share[{pump_label_in}] input pump: exiting (registry mpsc closed)");
     });
 
     // Output pump: pty_reads broadcast -> registry broadcast. We materialise
@@ -111,11 +155,42 @@ pub async fn share_pane(
     // otherwise see receiver_count == 0 and drop the chunk).
     let mut pty_rx = pty_reads_tx.new_receiver();
     let output_tx_clone = output_tx.clone();
+    let pump_label_out = pane_name_log.clone();
     let output_pump = tokio::spawn(async move {
-        while let Ok(chunk) = pty_rx.recv().await {
-            let bytes = Bytes::copy_from_slice(chunk.as_slice());
-            // Err only when there are zero subscribers — fine, keep pumping.
-            let _ = output_tx_clone.send(bytes);
+        loop {
+            match pty_rx.recv().await {
+                Ok(chunk) => {
+                    let bytes = Bytes::copy_from_slice(chunk.as_slice());
+                    let len = bytes.len();
+                    let preview = debug_preview(&bytes);
+                    let sub_count = output_tx_clone.receiver_count();
+                    // The first time bytes flow we expect sub_count == 0
+                    // until the WS handler subscribes. Send returns Err
+                    // (no subs) silently — that's fine but we log it once
+                    // so we know whether the chunk got dropped.
+                    match output_tx_clone.send(bytes) {
+                        Ok(_) => {
+                            eprintln!(
+                                "[omw-debug] pane_share[{pump_label_out}] output pump: forwarded {len} bytes to registry broadcast ({sub_count} subs) (preview {preview:?})"
+                            );
+                        }
+                        Err(_) => {
+                            eprintln!(
+                                "[omw-debug] pane_share[{pump_label_out}] output pump: dropped {len} bytes ({sub_count} subs — likely no phone attached yet) (preview {preview:?})"
+                            );
+                        }
+                    }
+                }
+                Err(async_broadcast::RecvError::Closed) => {
+                    eprintln!("[omw-debug] pane_share[{pump_label_out}] output pump: pty_reads_tx closed, exiting");
+                    break;
+                }
+                Err(async_broadcast::RecvError::Overflowed(skipped)) => {
+                    eprintln!(
+                        "[omw-debug] pane_share[{pump_label_out}] output pump: lagged, dropped {skipped} chunks"
+                    );
+                }
+            }
         }
     });
 

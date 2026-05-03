@@ -132,6 +132,17 @@ Bridges v0.4-thin's "shipped components" to "real overnight-demo-able" experienc
 
 ---
 
+## v0.0.2 preview — known follow-ups (deferred from this preview)
+
+Tagged 2026-05-03 as `omw-local-preview-v0.0.2`. The pair-share-attach flow ships as a working preview — phone or browser attaches to a real laptop pane via Tailscale, sees the running TUI, types back. Several tracked-but-not-fixed items came out of the preview testing:
+
+- [ ] **iOS Safari + Tailscale cold-path connect delay.** First WS handshake to a peer can stall 10–30s when the WireGuard path / iOS connection pool is cold (no recent packets). Mitigated by client-side retry-with-timeout (3 × 6s) and an HTTP pre-warm fetch to `/api/v1/host-info` before the WS upgrade, but not eliminated. Empirical signature: clicking "← Sessions" then auto-tracing back to the same terminal connects instantly (warm path); entering fresh from session list always times out and then succeeds on the retry. Needs a Tailscale-side diagnostic (`tailscale ping`, `tailscale netcheck`) — not an app-level bug.
+- [ ] **Reverse-direction resize during an active phone session.** When the phone attaches, the daemon ships the laptop pane's size and the phone matches (or asks the laptop to shrink for narrow phones). But if the laptop user resizes the warp window *while* the phone is connected, the new size is not propagated to the phone — the phone xterm stays at the size from initial attach. Wire a resize event from `local_tty::TerminalManager` → `pane_share` → broadcast a fresh `Control{type:"size",…}` frame to all attached subscribers.
+- [ ] **Pre-existing test failures documented in plan §3.6.** `crates/omw-remote/tests/ws_connect_token.rs::expired_ts_in_ct_rejects_401` and `crates/omw-remote/tests/ws_pty_session.rs::ts_skew_inbound_rejects` both assert a 30s skew window, but the production code uses 300s for mobile-client clock drift (commit `99519b3`). Either the tests or the constant should align — currently red on `cargo test` but unrelated to v0.4-thin work.
+- [ ] **Mac `.dmg` build for the v0.0.2 tag.** All Windows-side wrap-up is on origin (branch + main + tag + release notes). The actual `.dmg` packaging is macOS-only via `bash scripts/build-mac-dmg.sh 0.0.2` (per [CLAUDE.md §5.1](./CLAUDE.md#51-release-naming-conventions-omw_local-previews)) and needs to run from an aarch64-apple-darwin host with full Xcode + Homebrew protoc.
+
+---
+
 ## v0.4-cleanup — Agent integration + audit + approvals (post-v0.3)
 
 Sequenced after v0.2 (policy + audit) and v0.3 (stripped GUI + omw-server) land. The Warp-pane PTY attachment migrated to v0.4-thin-polish Gap 1 (it doesn't depend on pi-agent). What remains here is the agent half of the v0.4 vision.

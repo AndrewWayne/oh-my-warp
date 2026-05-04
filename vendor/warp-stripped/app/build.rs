@@ -128,8 +128,15 @@ fn main() -> Result<()> {
         // Ideally we could access `CARGO_TARGET_DIR` but this doesn't exist at build time.
         // See https://github.com/rust-lang/cargo/issues/9661.
         //
-        // Cargo defaults to the `debug` profile.
-        let cargo_full_profile = env::var("CARGO_FULL_PROFILE").unwrap_or(String::from("debug"));
+        // Cargo defaults to the `debug` profile. Prefer the upstream-managed
+        // `CARGO_FULL_PROFILE` (covers custom profiles like `release-with-debug`),
+        // then fall back to the cargo-built-in `PROFILE` (always set, but only
+        // `debug` or `release`), then to literal `debug`. The `PROFILE` fallback
+        // is what makes `cargo build --release` work without the upstream
+        // wrapper that normally sets `CARGO_FULL_PROFILE`.
+        let cargo_full_profile = env::var("CARGO_FULL_PROFILE")
+            .or_else(|_| env::var("PROFILE"))
+            .unwrap_or_else(|_| String::from("debug"));
         let target_dir =
             app_target_dir(&cargo_full_profile).expect("Could not get app target directory");
         copy_windows_assets(&target_dir);

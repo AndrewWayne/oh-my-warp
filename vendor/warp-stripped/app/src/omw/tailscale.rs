@@ -17,6 +17,7 @@
 //! `init_rx.recv()`. On timeout we kill the child via PID and treat the
 //! Tailscale path as unavailable, falling back to loopback-only.
 
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -30,10 +31,14 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
 /// worst-case UI hang and degrades to loopback-only.
 const SERVE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Run `tailscale <args>` with a wall-clock timeout. On timeout, force-kill
-/// the child by PID and return [`std::io::ErrorKind::TimedOut`].
-fn run_with_timeout(args: &[&str], timeout: Duration) -> std::io::Result<Output> {
-    let child = Command::new("tailscale")
+/// Run `<bin> <args>` with a wall-clock timeout. On timeout, force-kill the
+/// child by PID and return [`std::io::ErrorKind::TimedOut`]. `bin` is the
+/// full path to the `tailscale` executable returned by
+/// [`find_tailscale_binary`] — using a resolved path (rather than relying on
+/// `PATH`) is what makes the call work from a macOS GUI app, whose inherited
+/// `PATH` typically excludes Homebrew/Tailscale install dirs.
+fn run_with_timeout(bin: &Path, args: &[&str], timeout: Duration) -> std::io::Result<Output> {
+    let child = Command::new(bin)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -127,33 +132,64 @@ impl std::fmt::Display for ServeError {
 
 impl std::error::Error for ServeError {}
 
-/// Returns true if `tailscale` resolves on PATH. We don't depend on the
-/// `which` crate; the standard PATH-walk is enough for our needs.
-fn tailscale_on_path() -> bool {
+/// Locate the `tailscale` executable. Returns `Some(full_path)` if found.
+///
+/// Search order:
+///   1. `$PATH` (covers terminal-launched and well-configured environments)
+///   2. Well-known platform-conventional install locations
+///
+/// The fallback list matters because macOS GUI apps launched via Finder /
+/// Launchpad inherit a minimal `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`) that
+/// excludes Homebrew. Without this fallback, a user with Tailscale installed
+/// via `brew install tailscale` would see "Tailscale not detected" in a
+/// GUI-launched build and the pair URL would degrade to loopback-only.
+fn find_tailscale_binary() -> Option<PathBuf> {
     let exe_name = if cfg!(windows) {
         "tailscale.exe"
     } else {
         "tailscale"
     };
+
+    // 1. PATH lookup.
     if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {
-            if dir.join(exe_name).is_file() {
-                return true;
+            let candidate = dir.join(exe_name);
+            if candidate.is_file() {
+                return Some(candidate);
             }
         }
     }
-    false
+
+    // 2. Well-known install locations.
+    #[cfg(target_os = "macos")]
+    let candidates: &[&str] = &[
+        "/opt/homebrew/bin/tailscale",                          // Homebrew (Apple Silicon)
+        "/usr/local/bin/tailscale",                             // Homebrew (Intel) / manual
+        "/Applications/Tailscale.app/Contents/MacOS/Tailscale", // Mac App Store
+    ];
+    #[cfg(target_os = "linux")]
+    let candidates: &[&str] = &["/usr/bin/tailscale", "/usr/local/bin/tailscale"];
+    #[cfg(target_os = "windows")]
+    let candidates: &[&str] = &[r"C:\Program Files\Tailscale\tailscale.exe"];
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    let candidates: &[&str] = &[];
+
+    candidates
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.is_file())
 }
 
 /// Probe the local Tailscale install. Cheap to call: shells out at most once.
 /// On any error (CLI missing, daemon down, unparseable JSON) returns a
 /// best-effort [`TailscaleStatus`] with whatever fields we could establish.
 pub fn detect_status() -> TailscaleStatus {
-    if !tailscale_on_path() {
-        return TailscaleStatus::default();
-    }
+    let bin = match find_tailscale_binary() {
+        Some(p) => p,
+        None => return TailscaleStatus::default(),
+    };
 
-    let output = match run_with_timeout(&["status", "--json", "--self"], STATUS_TIMEOUT) {
+    let output = match run_with_timeout(&bin, &["status", "--json", "--self"], STATUS_TIMEOUT) {
         Ok(o) => o,
         Err(_) => {
             // Includes io::Error::TimedOut from run_with_timeout — the LocalAPI
@@ -256,12 +292,10 @@ fn parse_status_json(s: &str) -> TailscaleStatus {
 /// surfaces the underlying stderr so callers can detect this and fall back to
 /// a tailnet-IP-based URL instead.
 pub fn serve_https(port: u16) -> Result<String, ServeError> {
-    if !tailscale_on_path() {
-        return Err(ServeError::NotInstalled);
-    }
+    let bin = find_tailscale_binary().ok_or(ServeError::NotInstalled)?;
     let port_str = port.to_string();
 
-    let output = run_with_timeout(&["serve", "--bg", &port_str], SERVE_TIMEOUT)
+    let output = run_with_timeout(&bin, &["serve", "--bg", &port_str], SERVE_TIMEOUT)
         .map_err(ServeError::Spawn)?;
 
     if !output.status.success() {
@@ -281,11 +315,9 @@ pub fn serve_https(port: u16) -> Result<String, ServeError> {
 /// per-port form here to avoid clobbering unrelated Serve configs the user
 /// may have set up by hand.
 pub fn unserve(port: u16) -> Result<(), ServeError> {
-    if !tailscale_on_path() {
-        return Err(ServeError::NotInstalled);
-    }
+    let bin = find_tailscale_binary().ok_or(ServeError::NotInstalled)?;
     let port_str = port.to_string();
-    let output = run_with_timeout(&["serve", "--bg", &port_str, "off"], SERVE_TIMEOUT)
+    let output = run_with_timeout(&bin, &["serve", "--bg", &port_str, "off"], SERVE_TIMEOUT)
         .map_err(ServeError::Spawn)?;
     if !output.status.success() {
         // Don't propagate — failure here is expected when Serve was never

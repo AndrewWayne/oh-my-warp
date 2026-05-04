@@ -323,13 +323,19 @@ pub async fn share_pane(
 
     *pumps.lock() = Some((input_pump, output_pump));
 
+    // Capture the runtime handle while we're inside `pub async fn share_pane`
+    // (i.e., we ARE on a Tokio runtime). The stop closure may later fire from
+    // any thread — including the UI thread via `PaneShareHandle::drop` when the
+    // user clicks "stop sharing" — where `Handle::current()` would panic with
+    // "there is no reactor running". Spawning via the captured handle works
+    // from any thread.
+    let runtime_handle = tokio::runtime::Handle::current();
     let registry_for_stop = registry.clone();
     let stop: Box<dyn FnOnce() + Send> = Box::new(move || {
-        // `kill` is async; we may be called from a sync context. Kick off a
-        // detached task on the current runtime. `kill` is idempotent on the
-        // registry side — it returns NotFound if already removed, which we
-        // ignore.
-        tokio::spawn(async move {
+        // `kill` is async; we may be called from a sync context. `kill` is
+        // idempotent on the registry side — it returns NotFound if already
+        // removed, which we ignore.
+        runtime_handle.spawn(async move {
             let _ = registry_for_stop.kill(session_id).await;
         });
     });

@@ -477,8 +477,19 @@ impl OmwRemoteState {
 }
 
 /// Resolve the `<OMW_DATA_DIR>` per the same convention used by `omw-cli`.
-/// Order: `OMW_DATA_DIR`, `XDG_DATA_HOME/omw`, `$HOME/.local/share/omw` (or
-/// `%USERPROFILE%\.local\share\omw`).
+/// Resolution order:
+///   1. `OMW_DATA_DIR` (explicit override; tests use this)
+///   2. `XDG_DATA_HOME/omw` (honored on every platform — keeps dev/test
+///      environments cross-platform)
+///   3. Platform-conventional fallback:
+///        macOS  → `$HOME/Library/Application Support/omw`
+///        Windows → `%APPDATA%\omw` (else `$USERPROFILE\AppData\Roaming\omw`)
+///        Linux  → `$HOME/.local/share/omw`
+///
+/// Earlier versions used `$HOME/.local/share/omw` on every platform, which
+/// breaks on macOS when `~/.local/share` is unwritable (a real env hazard:
+/// some installers `sudo mkdir -p ~/.local/share/...` and root-own the
+/// parent). The platform-conventional fallback fixes that.
 fn data_dir() -> Result<PathBuf, String> {
     if let Some(p) = std::env::var_os("OMW_DATA_DIR") {
         if !p.is_empty() {
@@ -495,7 +506,23 @@ fn data_dir() -> Result<PathBuf, String> {
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
         .ok_or_else(|| "neither HOME nor USERPROFILE is set".to_string())?;
-    Ok(home.join(".local").join("share").join("omw"))
+
+    #[cfg(target_os = "macos")]
+    {
+        Ok(home.join("Library/Application Support/omw"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let appdata = std::env::var_os("APPDATA")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData").join("Roaming"));
+        Ok(appdata.join("omw"))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Ok(home.join(".local").join("share").join("omw"))
+    }
 }
 
 /// Bring the daemon up. Returns the pair URL, whether Tailscale Serve was

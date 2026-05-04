@@ -57,9 +57,11 @@ jobs:
           fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      # Default checkout: tag commit on tag-push, dispatching branch on workflow_dispatch.
+      # On dispatch we want main (where the build scripts live), not the input tag —
+      # backfilling a Windows .zip onto an old tag doesn't require that tag to have
+      # had the workflow files.
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.meta.outputs.ref }}
       - name: Ensure release exists
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -89,8 +91,6 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.ref }}
       - name: Install protoc
         run: brew install protobuf
       - uses: dtolnay/rust-toolchain@master
@@ -119,8 +119,6 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.ref }}
       - name: Install protoc
         shell: pwsh
         run: |

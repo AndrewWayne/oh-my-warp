@@ -1,0 +1,153 @@
+name: Release
+
+# Builds + publishes omw-local-preview artifacts (Mac .dmg, Windows .zip)
+# for the given tag. Triggered automatically on tag push, or manually
+# via workflow_dispatch with a tag input (used to backfill artifacts
+# onto a tag that was pushed before this workflow existed).
+#
+# Both jobs run --no-default-features --features omw_local and gate
+# the upload behind audit-no-cloud.sh — a build that contains any of
+# the eight forbidden Warp/Firebase hostnames in .rodata fails the job
+# and is never uploaded.
+
+on:
+  push:
+    tags:
+      - 'omw-local-preview-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. omw-local-preview-v0.0.2)'
+        required: true
+        type: string
+      targets:
+        description: 'Which platforms to build'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - mac
+          - windows
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ref: ${{ steps.meta.outputs.ref }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Resolve tag and version
+        id: meta
+        run: |
+          ref="${{ github.event.inputs.tag || github.ref_name }}"
+          version="${ref#omw-local-preview-v}"
+          if [[ "$ref" == "$version" ]]; then
+            echo "::error::tag '$ref' does not match expected pattern omw-local-preview-v<version>"
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.ref }}
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ref="${{ steps.meta.outputs.ref }}"
+          version="${{ steps.meta.outputs.version }}"
+          if gh release view "$ref" >/dev/null 2>&1; then
+            echo "Release $ref already exists; nothing to do."
+          else
+            notes="RELEASE_NOTES_v$version.md"
+            if [[ -f "$notes" ]]; then
+              gh release create "$ref" --prerelease \
+                --title "omw-local-preview v$version" \
+                --notes-file "$notes"
+            else
+              gh release create "$ref" --prerelease \
+                --title "omw-local-preview v$version" \
+                --generate-notes
+            fi
+          fi
+
+  mac:
+    name: macOS aarch64
+    runs-on: macos-14
+    needs: prepare
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.targets != 'windows'
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+      - name: Install protoc
+        run: brew install protobuf
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.92.0'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: vendor/warp-stripped
+      - name: Build .dmg
+        env:
+          PROTOC: /opt/homebrew/bin/protoc
+        run: bash scripts/build-mac-dmg.sh ${{ needs.prepare.outputs.version }}
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.prepare.outputs.ref }}" \
+            "dist/omw-warp-oss-v${{ needs.prepare.outputs.version }}-aarch64-apple-darwin.dmg" \
+            --clobber
+
+  windows:
+    name: Windows x86_64
+    runs-on: windows-latest
+    needs: prepare
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.targets != 'mac'
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+      - name: Install protoc
+        shell: pwsh
+        run: |
+          $ver = "29.3"
+          $dir = Join-Path $env:RUNNER_TEMP "protoc-$ver"
+          $zip = "$dir.zip"
+          Invoke-WebRequest "https://github.com/protocolbuffers/protobuf/releases/download/v$ver/protoc-$ver-win64.zip" -OutFile $zip
+          if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
+          Expand-Archive -Path $zip -DestinationPath $dir
+          $protoc = Join-Path $dir "bin\protoc.exe"
+          if (-not (Test-Path $protoc)) { throw "protoc not found at $protoc" }
+          "PROTOC=$protoc" >> $env:GITHUB_ENV
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.92.0'
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: vendor/warp-stripped
+      - name: Build .zip
+        shell: pwsh
+        run: pwsh -File scripts/build-windows-zip.ps1 -Version ${{ needs.prepare.outputs.version }}
+      - name: Upload to release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.prepare.outputs.ref }}" `
+            "dist/omw-warp-oss-v${{ needs.prepare.outputs.version }}-x86_64-pc-windows-msvc.zip" `
+            --clobber

@@ -83,6 +83,14 @@ sips -z 512 512   "${ICON_SRC}" --out "${ICONSET}/icon_512x512.png"   >/dev/null
 sips -z 1024 1024 "${ICON_SRC}" --out "${ICONSET}/icon_512x512@2x.png">/dev/null
 iconutil -c icns "${ICONSET}" -o "${APP_DIR}/Contents/Resources/AppIcon.icns"
 
+# Ad-hoc sign the bundle. Cargo's linker stamps a `linker-signed,adhoc` signature
+# on the Mach-O that claims sealed resources are required, but without this step
+# the bundle has no _CodeSignature/CodeResources — Gatekeeper on macOS 26+ rejects
+# the quarantined bundle with "is damaged and can't be opened" instead of the
+# user-bypassable "Apple cannot check it for malicious software" dialog.
+echo "==> Ad-hoc signing bundle ..."
+codesign --force --deep --sign - "${APP_DIR}"
+
 echo "==> Staging .dmg payload ..."
 DMG_PAYLOAD="${STAGING}/dmg-payload"
 rm -rf "${DMG_PAYLOAD}"

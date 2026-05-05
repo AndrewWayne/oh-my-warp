@@ -57,7 +57,7 @@ All eight return zero hits in this build (`scripts/audit-no-cloud.sh`). The bina
 hdiutil attach omw-warp-oss-v0.0.2-aarch64-apple-darwin.dmg
 cp -R "/Volumes/omw-warp-oss v0.0.2/omw-warp-oss.app" /Applications/
 hdiutil detach "/Volumes/omw-warp-oss v0.0.2/"
-xattr -dr com.apple.quarantine /Applications/omw-warp-oss.app
+xattr -d com.apple.quarantine /Applications/omw-warp-oss.app
 open /Applications/omw-warp-oss.app
 ```
 

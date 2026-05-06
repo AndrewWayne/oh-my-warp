@@ -83,6 +83,19 @@ pub struct OmwAgentSessionParams {
     pub approval_mode: Option<String>,
 }
 
+/// Opaque handle to the currently-focused terminal pane. Stored by the
+/// broker so it can route `ExecCommand` to the right PTY.
+///
+/// Phase 5b ships this as a placeholder (`view_id` only). The broker
+/// integration wires in `event_loop_tx` / `pty_reads_rx` when
+/// `TerminalView` plumbing is done (Task 11 stretch).
+#[derive(Clone)]
+pub struct ActiveTerminalHandle {
+    pub view_id: u64,
+    // Future: event_loop_tx, pty_reads_rx — added when the broker
+    // is wired into TerminalView (Task 11 stretch).
+}
+
 /// Process-wide singleton.
 pub struct OmwAgentState {
     inner: Mutex<Inner>,
@@ -91,6 +104,9 @@ pub struct OmwAgentState {
     /// restarts so the same UI subscription can keep listening across
     /// `start` cycles.
     event_tx: broadcast::Sender<OmwAgentEventDown>,
+    /// Currently-focused terminal pane. Set by TerminalView on focus;
+    /// cleared on blur/close. `None` when no pane is active.
+    active_terminal: Mutex<Option<ActiveTerminalHandle>>,
 }
 
 struct Inner {
@@ -123,6 +139,7 @@ impl OmwAgentState {
                     }),
                     status_tx,
                     event_tx,
+                    active_terminal: Mutex::new(None),
                 })
             })
             .clone()
@@ -288,6 +305,46 @@ impl OmwAgentState {
             decision,
         };
         outbound.try_send(frame).map_err(|e| e.to_string())
+    }
+
+    /// Register the currently-focused terminal pane. Called by TerminalView
+    /// on focus (Task 11 stretch for the actual call-site wiring).
+    pub fn register_active_terminal(&self, handle: ActiveTerminalHandle) {
+        *self.active_terminal.lock() = Some(handle);
+    }
+
+    /// Clear the active terminal registration (on blur / pane close).
+    pub fn clear_active_terminal(&self) {
+        *self.active_terminal.lock() = None;
+    }
+
+    /// Snapshot of the currently-registered terminal handle, if any.
+    pub fn active_terminal_clone(&self) -> Option<ActiveTerminalHandle> {
+        self.active_terminal.lock().clone()
+    }
+
+    /// Forward a PTY data chunk back to the kernel for the given command.
+    /// `data` is expected to be base64-encoded by the caller.
+    pub fn send_command_data(&self, command_id: String, data: String) -> Result<(), String> {
+        let outbound = self.inner.lock().outbound.clone()
+            .ok_or_else(|| "no active session".to_string())?;
+        outbound
+            .try_send(OmwAgentEventUp::CommandData { command_id, data })
+            .map_err(|e| e.to_string())
+    }
+
+    /// Signal command completion back to the kernel.
+    pub fn send_command_exit(
+        &self,
+        command_id: String,
+        exit_code: Option<i32>,
+        snapshot: bool,
+    ) -> Result<(), String> {
+        let outbound = self.inner.lock().outbound.clone()
+            .ok_or_else(|| "no active session".to_string())?;
+        outbound
+            .try_send(OmwAgentEventUp::CommandExit { command_id, exit_code, snapshot })
+            .map_err(|e| e.to_string())
     }
 
     fn set_status(&self, status: OmwAgentStatus) {

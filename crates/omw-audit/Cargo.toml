@@ -6,4 +6,15 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
-description = "Audit schema, hash chain, and redaction library for omw. Phase 0 placeholder."
+description = "Append-only hash-chained audit log writer for omw. Single-writer per process; omw-server is the canonical caller (PRD §8.3)."
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+chrono = { workspace = true, features = ["clock", "serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

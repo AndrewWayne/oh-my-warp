@@ -1514,7 +1514,7 @@ impl Workspace {
         ai_client: Arc<dyn AIClient>,
     ) -> ViewHandle<AIAssistantPanelView> {
         ctx.add_typed_action_view(|ctx| {
-            AIAssistantPanelView::new_omw_placeholder(server_api, ai_client, ctx)
+            AIAssistantPanelView::new_omw_panel(server_api, ai_client, ctx)
         })
     }
 

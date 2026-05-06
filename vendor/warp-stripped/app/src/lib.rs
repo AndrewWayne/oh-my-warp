@@ -126,6 +126,12 @@ pub mod test_exports {
         FormError, OmwAgentForm, OmwAgentPageAction, OmwAgentPageState,
         OmwAgentPageView, ProviderKindForm, ProviderRow,
     };
+    #[cfg(feature = "omw_local")]
+    pub use crate::ai_assistant::{
+        omw_protocol::OmwAgentEventDown,
+        omw_transcript::OmwAgentTranscriptModel,
+        omw_agent_state::OmwAgentState,
+    };
 }
 
 pub mod channel;

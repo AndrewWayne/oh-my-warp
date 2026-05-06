@@ -201,3 +201,29 @@ impl OmwAgentTranscriptModel {
         }
     }
 }
+
+#[cfg(any(test, feature = "test-exports"))]
+impl OmwAgentTranscriptModel {
+    /// Test-only: returns true if a tool-call card with the given id exists.
+    pub fn has_tool_call(&self, id: &str) -> bool {
+        self.messages.iter().any(|m| matches!(m,
+            OmwAgentMessage::ToolCall { id: card_id, .. } if card_id == id))
+    }
+
+    /// Test-only: returns true if the named tool-call card has Done status.
+    pub fn tool_call_finished(&self, id: &str) -> bool {
+        self.messages.iter().any(|m| match m {
+            OmwAgentMessage::ToolCall { id: card_id, status, .. }
+                if card_id == id => matches!(status, ToolCallStatus::Done),
+            _ => false,
+        })
+    }
+
+    /// Test-only: returns the text of the most recent Assistant message, if any.
+    pub fn last_assistant_text(&self) -> Option<String> {
+        self.messages.iter().rev().find_map(|m| match m {
+            OmwAgentMessage::Assistant { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+    }
+}

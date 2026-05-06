@@ -131,8 +131,11 @@ pub struct AIAssistantPanelView {
 
     resizable_state_handle: ResizableStateHandle,
     mouse_state_handles: MouseStateHandles,
-    /// When true, render only the omw placeholder message and skip all upstream AI UI.
+    /// When true, render the omw agent panel instead of upstream AI UI.
     is_omw_placeholder: bool,
+    /// Transcript model for the omw agent panel. Populated by `new_omw_panel`.
+    #[cfg(feature = "omw_local")]
+    omw_agent_transcript: super::omw_transcript::OmwAgentTranscriptModel,
 }
 
 #[derive(Debug, Clone)]
@@ -255,6 +258,8 @@ impl AIAssistantPanelView {
             resizable_state_handle,
             mouse_state_handles: Default::default(),
             is_omw_placeholder: false,
+            #[cfg(feature = "omw_local")]
+            omw_agent_transcript: super::omw_transcript::OmwAgentTranscriptModel::new(),
         };
 
         panel.tick(ctx);
@@ -262,20 +267,39 @@ impl AIAssistantPanelView {
         panel
     }
 
-    /// Returns a placeholder panel that displays an omw-local message instead of upstream AI UI.
+    /// Returns the omw agent panel that renders the `OmwAgentTranscriptModel`
+    /// instead of upstream AI UI.
     // NOTE (omw_local): we delegate to `new()` which allocates child views,
     // subscriptions, and a recurring 60-second timer — all unused under the
-    // placeholder. Acceptable v0.1 debt; v0.3 will replace this entire path
+    // omw panel. Acceptable v0.1 debt; v0.3 will replace this entire path
     // when the agent panel is rewired through omw-server. See PRD §13.
     #[cfg(feature = "omw_local")]
-    pub fn new_omw_placeholder(
+    pub fn new_omw_panel(
         server_api: Arc<ServerApi>,
         ai_client: Arc<dyn AIClient>,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
         let mut panel = Self::new(server_api, ai_client, ctx);
         panel.is_omw_placeholder = true;
+        // Best-effort session start. Panel mounts cleanly even if config is
+        // missing or the agent is disabled — the transcript stays empty until
+        // a session is established.
+        if let Err(e) = super::omw_agent_state::OmwAgentState::shared().start_with_config() {
+            log::debug!("omw agent start_with_config: {e}");
+        }
         panel
+    }
+
+    /// Kept for call-site compatibility while callers are migrated.
+    /// Forwards to `new_omw_panel`.
+    #[cfg(feature = "omw_local")]
+    #[deprecated(note = "use new_omw_panel")]
+    pub fn new_omw_placeholder(
+        server_api: Arc<ServerApi>,
+        ai_client: Arc<dyn AIClient>,
+        ctx: &mut ViewContext<Self>,
+    ) -> Self {
+        Self::new_omw_panel(server_api, ai_client, ctx)
     }
 
     fn on_active_session_change(
@@ -1119,31 +1143,12 @@ impl View for AIAssistantPanelView {
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
 
+        #[cfg(feature = "omw_local")]
         if self.is_omw_placeholder {
-            const OMW_PLACEHOLDER_TEXT: &str = "AI is unavailable in this build. Configure providers via `omw provider add` in your terminal \u{2014} full omw integration is coming in v0.3.";
-            let theme = appearance.theme();
-            return Align::new(
-                Container::new(
-                    Shrinkable::new(
-                        1.,
-                        appearance
-                            .ui_builder()
-                            .wrappable_text(OMW_PLACEHOLDER_TEXT.to_string(), true)
-                            .with_style(UiComponentStyles {
-                                font_family_id: Some(appearance.ui_font_family()),
-                                font_size: Some(BODY_FONT_SIZE),
-                                font_color: Some(theme.nonactive_ui_text_color().into()),
-                                ..Default::default()
-                            })
-                            .build()
-                            .finish(),
-                    )
-                    .finish(),
-                )
-                .with_uniform_padding(EDITOR_MARGIN)
-                .finish(),
-            )
-            .finish();
+            return super::omw_panel::render_omw_agent_panel(
+                &self.omw_agent_transcript,
+                appearance,
+            );
         }
 
         let mut panel = Flex::column().with_main_axis_size(MainAxisSize::Max);

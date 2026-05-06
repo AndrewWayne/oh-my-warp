@@ -16,7 +16,9 @@
     "dev": "tsc --watch -p tsconfig.json"
   },
   "dependencies": {
-    "@iarna/toml": "^2.2.5"
+    "@iarna/toml": "^2.2.5",
+    "@mariozechner/pi-ai": "0.70.6",
+    "typebox": "^1.1.24"
   },
   "devDependencies": {
     "@types/node": "^22",

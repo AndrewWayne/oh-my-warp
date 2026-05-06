@@ -10,7 +10,12 @@
     "outDir": "./dist",
     "rootDir": ".",
     "lib": ["ES2022"],
-    "types": ["node"]
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@pi-agent-core": ["./vendor/pi-agent-core/index.ts"],
+      "@pi-agent-core/*": ["./vendor/pi-agent-core/*"]
+    }
   },
-  "include": ["src/**/*", "test/**/*"]
+  "include": ["src/**/*", "test/**/*", "vendor/pi-agent-core/**/*"]
 }

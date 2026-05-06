@@ -30,6 +30,13 @@ pub enum ConfigError {
 
     #[error("watcher error: {0}")]
     Watcher(Box<notify::Error>),
+
+    #[error("could not parse {path:?} with toml_edit: {source}")]
+    TomlEdit {
+        path: std::path::PathBuf,
+        #[source]
+        source: toml_edit::TomlError,
+    },
 }
 
 impl From<notify::Error> for ConfigError {

@@ -21,6 +21,7 @@ mod error;
 mod key_ref;
 mod schema;
 mod watcher;
+mod writer;
 
 pub use error::{ConfigError, ValidationError, ValidationIssue};
 pub use key_ref::{KeyRef, KeyRefParseError};
@@ -29,6 +30,7 @@ pub use schema::{
     ProviderConfig, ProviderId, ProviderIdParseError, SchemaVersion,
 };
 pub use watcher::{watch, ConfigUpdate, WatchHandle};
+pub use writer::save_atomic;
 
 use std::path::{Path, PathBuf};
 
@@ -113,6 +115,13 @@ impl Config {
         } else {
             Err(ValidationError { issues })
         }
+    }
+}
+
+impl Config {
+    /// Save this config to `path` via the round-trip writer. See [`save_atomic`].
+    pub fn save_atomic(&self, path: &std::path::Path) -> Result<(), ConfigError> {
+        crate::writer::save_atomic(path, self)
     }
 }
 

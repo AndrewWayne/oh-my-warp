@@ -226,4 +226,11 @@ impl OmwAgentTranscriptModel {
             _ => None,
         })
     }
+
+    /// Test-only: returns true if an approval card with the given id has Pending decision.
+    pub fn has_pending_approval(&self, approval_id: &str) -> bool {
+        self.messages.iter().any(|m| matches!(m,
+            OmwAgentMessage::Approval { id, decision: ApprovalDecision::Pending, .. }
+                if id == approval_id))
+    }
 }

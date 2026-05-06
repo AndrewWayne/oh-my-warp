@@ -129,7 +129,7 @@ pub mod test_exports {
     #[cfg(feature = "omw_local")]
     pub use crate::ai_assistant::{
         omw_protocol::OmwAgentEventDown,
-        omw_transcript::OmwAgentTranscriptModel,
+        omw_transcript::{ApprovalDecision, OmwAgentMessage, OmwAgentTranscriptModel},
         omw_agent_state::OmwAgentState,
     };
 }

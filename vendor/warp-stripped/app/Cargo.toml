@@ -274,6 +274,9 @@ tokio-tungstenite = { version = "0.24", optional = true }
 # Used by ai_assistant::omw_agent_state::start_with_config to load the user's
 # omw-config and resolve the default provider into session params.
 omw_config = { path = "../../../crates/omw-config", package = "omw-config", optional = true }
+# Used by settings_view::omw_agent_page::OmwAgentPageView::apply to write
+# pending API keys to the OS keychain before serialising the typed Config.
+omw_keychain = { path = "../../../crates/omw-keychain", package = "omw-keychain", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block.workspace = true
@@ -760,6 +763,7 @@ omw_local = [
     "dep:qrcode",
     "dep:tokio-tungstenite",
     "dep:omw_config",
+    "dep:omw_keychain",
 ]
 oz_changelog_updates = []
 personal_cloud_objects = []

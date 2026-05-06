@@ -120,6 +120,8 @@ pub enum SettingsPageViewHandle {
     BillingAndUsage(ViewHandle<BillingAndUsagePageView>),
     MCPServers(ViewHandle<MCPServersSettingsPageView>),
     WarpDrive(ViewHandle<WarpDriveSettingsPageView>),
+    #[cfg(feature = "omw_local")]
+    OmwAgent(ViewHandle<super::omw_agent_page::OmwAgentPageView>),
 }
 
 impl SettingsPageViewHandle {
@@ -143,6 +145,8 @@ impl SettingsPageViewHandle {
             BillingAndUsage(view_handle) => ChildView::new(view_handle).finish(),
             MCPServers(view_handle) => ChildView::new(view_handle).finish(),
             WarpDrive(view_handle) => ChildView::new(view_handle).finish(),
+            #[cfg(feature = "omw_local")]
+            OmwAgent(view_handle) => ChildView::new(view_handle).finish(),
         }
     }
 }

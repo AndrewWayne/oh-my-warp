@@ -241,6 +241,9 @@ pub enum SettingsSection {
     CloudEnvironments,
     #[cfg(not(feature = "omw_local"))]
     OzCloudAPIKeys,
+    // ── omw_local-only Agent settings page ──
+    #[cfg(feature = "omw_local")]
+    OmwAgent,
 }
 
 use crate::util::bindings::custom_tag_to_keystroke;
@@ -273,6 +276,8 @@ impl Display for SettingsSection {
             SettingsSection::CloudEnvironments => write!(f, "Environments"),
             #[cfg(not(feature = "omw_local"))]
             SettingsSection::OzCloudAPIKeys => write!(f, "Oz Cloud API Keys"),
+            #[cfg(feature = "omw_local")]
+            SettingsSection::OmwAgent => write!(f, "Agent"),
             _ => write!(f, "{self:?}"),
         }
     }
@@ -378,16 +383,25 @@ impl SettingsSection {
     }
 
     fn is_visible_in_omw_local_mode(&self) -> bool {
-        matches!(
-            self,
-            Self::Appearance
-                | Self::Features
-                | Self::Keybindings
-                | Self::Code
-                | Self::CodeIndexing
-                | Self::EditorAndCodeReview
-                | Self::About
-        )
+        // Note: when compiled with `feature = "omw_local"`, the omw_local-only
+        // variants below (e.g. `Self::OmwAgent`) are gated; outside that build
+        // they are not part of the enum. The `cfg` arm keeps both targets
+        // happy without needing a separate non-gated variant.
+        #[cfg(feature = "omw_local")]
+        let omw_extra = matches!(self, Self::OmwAgent);
+        #[cfg(not(feature = "omw_local"))]
+        let omw_extra = false;
+        omw_extra
+            || matches!(
+                self,
+                Self::Appearance
+                    | Self::Features
+                    | Self::Keybindings
+                    | Self::Code
+                    | Self::CodeIndexing
+                    | Self::EditorAndCodeReview
+                    | Self::About
+            )
     }
 }
 
@@ -436,6 +450,8 @@ impl FromStr for SettingsSection {
             "CloudEnvironments" => Ok(Self::CloudEnvironments),
             #[cfg(not(feature = "omw_local"))]
             "Oz Cloud API Keys" | "OzCloudAPIKeys" => Ok(Self::OzCloudAPIKeys),
+            #[cfg(feature = "omw_local")]
+            "Agent" | "OmwAgent" => Ok(Self::OmwAgent),
             _ => Err(()),
         }
     }
@@ -1061,6 +1077,8 @@ macro_rules! update_page {
             SettingsPageViewHandle::BillingAndUsage(handle) => $ctx.update_view(handle, $update),
             SettingsPageViewHandle::MCPServers(handle) => $ctx.update_view(handle, $update),
             SettingsPageViewHandle::WarpDrive(handle) => $ctx.update_view(handle, $update),
+            #[cfg(feature = "omw_local")]
+            SettingsPageViewHandle::OmwAgent(handle) => $ctx.update_view(handle, $update),
         }
     };
 }
@@ -1221,6 +1239,10 @@ impl SettingsView {
             me.handle_mcp_servers_page_event(event, ctx);
         });
 
+        // omw_local-only Agent settings page.
+        #[cfg(feature = "omw_local")]
+        let omw_agent_page_handle = ctx.add_view(omw_agent_page::OmwAgentPageView::new);
+
         let font_family = Appearance::as_ref(ctx).ui_font_family();
         let search_editor = ctx.add_typed_action_view(|ctx| {
             let options = SingleLineEditorOptions {
@@ -1280,6 +1302,8 @@ impl SettingsView {
             SettingsPage::new(environments_page_handle.clone()),
             SettingsPage::new(privacy_page_handle),
             SettingsPage::new(about_page_handle),
+            #[cfg(feature = "omw_local")]
+            SettingsPage::new(omw_agent_page_handle),
         ]);
 
         // Build sidebar nav items. AI page is presented as an "Agents" umbrella
@@ -1311,6 +1335,8 @@ impl SettingsView {
             )),
             #[cfg(not(feature = "omw_local"))]
             SettingsNavItem::Page(SettingsSection::Teams),
+            #[cfg(feature = "omw_local")]
+            SettingsNavItem::Page(SettingsSection::OmwAgent),
             SettingsNavItem::Page(SettingsSection::Appearance),
             SettingsNavItem::Page(SettingsSection::Features),
             SettingsNavItem::Page(SettingsSection::Keybindings),
@@ -2126,6 +2152,8 @@ impl SettingsView {
             SettingsPageViewHandle::MCPServers(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::Code(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::WarpDrive(v) => v.as_ref(app).should_render(app),
+            #[cfg(feature = "omw_local")]
+            SettingsPageViewHandle::OmwAgent(v) => v.as_ref(app).should_render(app),
         }
     }
 

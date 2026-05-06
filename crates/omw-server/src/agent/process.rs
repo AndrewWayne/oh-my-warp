@@ -237,6 +237,33 @@ impl AgentProcess {
         }
     }
 
+    /// Send a JSON-RPC notification (no `id`, no response expected). Used
+    /// for fire-and-forget frames like `bash/data` and `bash/finished`
+    /// where the kernel does not reply.
+    pub async fn send_notification(
+        self: &Arc<Self>,
+        method: &str,
+        params: Value,
+    ) -> Result<(), AgentProcessError> {
+        let frame = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        });
+        let line = serde_json::to_string(&frame).map_err(|e| {
+            AgentProcessError::Malformed(format!("serialize notification: {e}"))
+        })?;
+        let mut sink = self.stdin.lock().await;
+        sink.write_all(line.as_bytes()).await.map_err(|e| {
+            AgentProcessError::Malformed(format!("write notification: {e}"))
+        })?;
+        sink.write_all(b"\n").await.map_err(|e| {
+            AgentProcessError::Malformed(format!("write notification newline: {e}"))
+        })?;
+        sink.flush().await.ok();
+        Ok(())
+    }
+
     /// Subscribe to a session's notification stream. The sessionId must
     /// already have been minted via `session/create`. If the session is
     /// not yet known, this allocates the bus eagerly so callers can

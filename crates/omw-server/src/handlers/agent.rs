@@ -10,7 +10,11 @@
 //!     containing the full JSON-RPC notification.
 //!     Client -> server: Text frames carrying `{ "kind": "prompt", "prompt": "..." }`
 //!     or `{ "kind": "cancel" }` translate to `session/prompt` /
-//!     `session/cancel` requests on the kernel.
+//!     `session/cancel` requests on the kernel. `{ "kind":
+//!     "approval_decision", ... }` translates to `approval/decide`.
+//!     `{ "kind": "command_data", ... }` and `{ "kind": "command_exit",
+//!     ... }` translate to `bash/data` / `bash/finished` notifications
+//!     (Phase 5a Pattern B — fire-and-forget, no kernel response).
 
 use std::sync::Arc;
 
@@ -129,9 +133,57 @@ async fn handle_socket(socket: WebSocket, agent: Arc<AgentProcess>, session_id: 
                         )
                         .await;
                 }
+                "approval_decision" => {
+                    let approval_id = parsed
+                        .get("approvalId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let decision = parsed
+                        .get("decision")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let _ = agent_for_inbound
+                        .send_method(
+                            "approval/decide",
+                            json!({
+                                "sessionId": session_id_for_inbound,
+                                "approvalId": approval_id,
+                                "decision": decision,
+                            }),
+                        )
+                        .await;
+                }
+                "command_data" => {
+                    let command_id = parsed
+                        .get("commandId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let bytes = parsed.get("bytes").and_then(|v| v.as_str()).unwrap_or("");
+                    let _ = agent_for_inbound
+                        .send_notification(
+                            "bash/data",
+                            json!({ "commandId": command_id, "bytes": bytes }),
+                        )
+                        .await;
+                }
+                "command_exit" => {
+                    let command_id = parsed
+                        .get("commandId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let mut params = json!({ "commandId": command_id });
+                    if let Some(code) = parsed.get("exitCode") {
+                        params["exitCode"] = code.clone();
+                    }
+                    if parsed.get("snapshot").and_then(|v| v.as_bool()) == Some(true) {
+                        params["snapshot"] = serde_json::Value::Bool(true);
+                    }
+                    let _ = agent_for_inbound
+                        .send_notification("bash/finished", params)
+                        .await;
+                }
                 _ => {
-                    // Unknown kind — silently ignore in v0.4. Future
-                    // additions (approval/decide etc.) extend this match.
+                    // Unknown kind — silently ignore in v0.4.
                 }
             }
         }

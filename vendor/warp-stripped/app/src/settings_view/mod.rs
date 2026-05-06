@@ -93,6 +93,8 @@ mod main_page;
 pub mod mcp_servers;
 pub mod mcp_servers_page;
 mod nav;
+#[cfg(feature = "omw_local")]
+pub mod omw_agent_page;
 pub mod pane_manager;
 mod platform;
 mod platform_page;

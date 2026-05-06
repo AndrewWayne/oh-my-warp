@@ -806,6 +806,7 @@ system_theme = []
 tab_close_button_on_left = []
 team_features_override = []
 team_workflows = ["team_features_override"]
+test-exports = []
 toggle_bootstrap_block = []
 # Feature enabled only when app is compiled for integration tests.
 integration_tests = [

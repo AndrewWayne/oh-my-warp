@@ -114,6 +114,20 @@ mod workspaces;
 // simpler API for integration tests to consume.
 pub mod ai_assistant;
 pub mod appearance;
+
+/// Re-exports of internal types needed by integration tests in
+/// `app/tests/`. Behind a feature flag so the surface stays internal
+/// in shipped binaries.
+#[cfg(any(test, feature = "test-exports"))]
+pub mod test_exports {
+    #[cfg(feature = "omw_local")]
+    pub use crate::settings_view::omw_agent_page::{
+        apply_action, form_from_config, form_to_config, validate_form,
+        FormError, OmwAgentForm, OmwAgentPageAction, OmwAgentPageState,
+        ProviderKindForm, ProviderRow,
+    };
+}
+
 pub mod channel;
 pub mod editor;
 pub mod features;

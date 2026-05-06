@@ -124,10 +124,7 @@ pub enum ApprovalDecision {
     Approve,
     Reject,
     /// Used when the GUI cancels an in-flight approval (e.g. user closes
-    /// the panel mid-prompt). `send_approval_decision` is the only caller
-    /// surface today and most flows take Approve/Reject; tag this variant
-    /// to silence the dead-code lint until Phase 4c4 wires the panel UI.
-    #[allow(dead_code)]
+    /// the panel mid-prompt). Phase 5b wires the cancel path on the GUI side.
     Cancel,
 }
 

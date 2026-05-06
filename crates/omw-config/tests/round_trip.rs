@@ -103,3 +103,94 @@ fn save_atomic_writes_to_temp_then_renames() {
     });
     assert!(!tmp_exists, "leftover .tmp file");
 }
+
+#[test]
+fn save_atomic_scrubs_base_url_when_kind_changes_from_compatible_to_openai() {
+    use omw_config::{KeyRef, ProviderConfig};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[providers.x]
+kind = "openai-compatible"
+key_ref = "keychain:omw/x"
+base_url = "https://example.com/v1"
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = Config::load_from(&path).unwrap();
+    let id = ProviderId::from_str("x").unwrap();
+    cfg.providers.insert(
+        id.clone(),
+        ProviderConfig::OpenAi {
+            key_ref: KeyRef::from_str("keychain:omw/x").unwrap(),
+            default_model: None,
+        },
+    );
+
+    omw_config::save_atomic(&path, &cfg).unwrap();
+
+    // Reload must succeed: if base_url were left in the [providers.x] table,
+    // the schema's deny_unknown_fields would reject the kind="openai" variant.
+    let reloaded = Config::load_from(&path).expect("reload must succeed after scrub");
+    assert!(matches!(
+        reloaded.providers.get(&id).unwrap(),
+        ProviderConfig::OpenAi { .. }
+    ));
+}
+
+#[test]
+fn save_atomic_preserves_user_added_subfields_in_provider_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    // The user has added an unknown subfield `temperature` to a provider
+    // table. Our typed schema doesn't include it (it's deny_unknown_fields
+    // per-variant — but the user's config might not yet be loaded by the
+    // typed path). save_atomic must not erase it.
+    //
+    // Note: deny_unknown_fields_inside_variant means Config::load_from
+    // would reject this fixture. So we cannot use Config::load + mutate.
+    // Instead, we exercise the writer's invariant directly: take a valid
+    // Config, save it onto a TOML document that has the extra field
+    // pre-populated, and verify the field survives.
+    std::fs::write(
+        &path,
+        r#"
+[providers.x]
+kind = "openai"
+key_ref = "keychain:omw/x"
+default_model = "gpt-4o"
+temperature = 0.7
+"#,
+    )
+    .unwrap();
+
+    // Construct a Config that round-trips this provider untouched, then save.
+    // Config::load_from would reject `temperature` per deny_unknown_fields,
+    // so we build the Config by hand.
+    use omw_config::{KeyRef, ProviderConfig};
+    use std::collections::BTreeMap;
+    let mut providers = BTreeMap::new();
+    providers.insert(
+        ProviderId::from_str("x").unwrap(),
+        ProviderConfig::OpenAi {
+            key_ref: KeyRef::from_str("keychain:omw/x").unwrap(),
+            default_model: Some("gpt-4o".to_string()),
+        },
+    );
+    let cfg = Config {
+        providers,
+        ..Config::default()
+    };
+
+    omw_config::save_atomic(&path, &cfg).unwrap();
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.contains("temperature = 0.7"),
+        "user-added temperature subfield was erased; got:\n{written}"
+    );
+}

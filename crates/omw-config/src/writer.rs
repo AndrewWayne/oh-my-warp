@@ -45,7 +45,19 @@ pub fn save_atomic(path: &Path, cfg: &Config) -> Result<(), ConfigError> {
 
     let serialized = doc.to_string();
 
-    let tmp = path.with_extension("toml.tmp");
+    let tmp = {
+        let mut tmp_name = path.file_name()
+            .ok_or_else(|| ConfigError::Io {
+                path: path.to_path_buf(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "config path must have a file name",
+                ),
+            })?
+            .to_os_string();
+        tmp_name.push(".tmp");
+        path.with_file_name(tmp_name)
+    };
     std::fs::write(&tmp, serialized.as_bytes()).map_err(|source| ConfigError::Io {
         path: tmp.clone(),
         source,

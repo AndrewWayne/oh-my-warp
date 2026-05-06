@@ -30,7 +30,7 @@ use tokio::runtime::Builder;
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 
-use super::omw_protocol::{OmwAgentEventDown, OmwAgentEventUp};
+use super::omw_protocol::{ApprovalDecision, OmwAgentEventDown, OmwAgentEventUp};
 
 /// Default omw-server URL. Phase 3b assumes the GUI and the server share
 /// a host. Callers can override via the `OMW_SERVER_URL` env var.
@@ -77,6 +77,10 @@ pub struct OmwAgentSessionParams {
     pub model: String,
     pub system_prompt: Option<String>,
     pub cwd: Option<String>,
+    /// Approval-policy mode forwarded to the kernel as `policy.mode` in
+    /// `session/create`. Wire form: `"read_only" | "ask_before_write" |
+    /// "trusted"`. `None` lets the kernel apply its default.
+    pub approval_mode: Option<String>,
 }
 
 /// Process-wide singleton.
@@ -216,6 +220,74 @@ impl OmwAgentState {
         outbound
             .try_send(OmwAgentEventUp::Cancel)
             .map_err(|e| format!("cancel: {e}"))
+    }
+
+    /// Convenience wrapper around [`start`] that loads `omw-config` and
+    /// resolves the default provider into [`OmwAgentSessionParams`]. Returns
+    /// `Err` if no provider is configured, the agent is disabled, or the
+    /// default provider points to a missing entry.
+    pub fn start_with_config(self: &Arc<Self>) -> Result<(), String> {
+        let cfg = omw_config::Config::load().map_err(|e| e.to_string())?;
+        if !cfg.agent.enabled {
+            return Err("Agent is disabled in settings".into());
+        }
+        let provider_id = cfg
+            .default_provider
+            .as_ref()
+            .ok_or_else(|| "No default provider configured".to_string())?;
+        let provider = cfg
+            .providers
+            .get(provider_id)
+            .ok_or_else(|| format!("default_provider `{provider_id}` not found"))?;
+
+        let approval_mode = match cfg.approval.mode {
+            omw_config::ApprovalMode::ReadOnly => Some("read_only".into()),
+            omw_config::ApprovalMode::AskBeforeWrite => Some("ask_before_write".into()),
+            omw_config::ApprovalMode::Trusted => Some("trusted".into()),
+        };
+
+        let params = OmwAgentSessionParams {
+            provider_kind: provider.kind_str().to_string(),
+            key_ref: provider.key_ref().map(|k| k.to_string()),
+            base_url: match provider {
+                omw_config::ProviderConfig::OpenAiCompatible { base_url, .. } => {
+                    Some(base_url.as_str().to_string())
+                }
+                omw_config::ProviderConfig::Ollama { base_url, .. } => {
+                    base_url.as_ref().map(|u| u.as_str().to_string())
+                }
+                _ => None,
+            },
+            model: provider
+                .default_model()
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
+            system_prompt: None,
+            cwd: None,
+            approval_mode,
+        };
+
+        self.start(params)
+    }
+
+    /// Send an approval decision (Approve / Reject / Cancel) for an
+    /// approval request the kernel emitted. Idempotent against duplicate
+    /// decisions for the same approvalId — the kernel resolves only once.
+    pub fn send_approval_decision(
+        &self,
+        approval_id: String,
+        decision: ApprovalDecision,
+    ) -> Result<(), String> {
+        let outbound = {
+            let g = self.inner.lock();
+            g.outbound.clone()
+        };
+        let outbound = outbound.ok_or_else(|| "no active agent session".to_string())?;
+        let frame = OmwAgentEventUp::ApprovalDecision {
+            approval_id,
+            decision,
+        };
+        outbound.blocking_send(frame).map_err(|e| e.to_string())
     }
 
     fn set_status(&self, status: OmwAgentStatus) {
@@ -418,6 +490,9 @@ async fn create_session(
     }
     if let Some(cwd) = &params.cwd {
         body["cwd"] = serde_json::Value::String(cwd.clone());
+    }
+    if let Some(mode) = &params.approval_mode {
+        body["policy"] = serde_json::json!({ "mode": mode });
     }
 
     let url = format!("{}/api/v1/agent/sessions", server_url.trim_end_matches('/'));

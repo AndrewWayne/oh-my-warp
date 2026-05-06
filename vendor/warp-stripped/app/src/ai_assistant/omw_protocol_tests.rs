@@ -3,7 +3,7 @@
 //! These tests pin the JSON wire shape so a future serde refactor can't
 //! silently change what omw-server sends or what the GUI accepts.
 
-use super::omw_protocol::{OmwAgentEventDown, OmwAgentEventUp};
+use super::omw_protocol::{ApprovalDecision, OmwAgentEventDown, OmwAgentEventUp};
 
 fn assert_round_trip<T>(value: &T, expected: serde_json::Value)
 where
@@ -202,7 +202,7 @@ fn up_prompt_and_cancel_round_trip() {
 fn up_approval_decision_round_trips() {
     let evt = OmwAgentEventUp::ApprovalDecision {
         approval_id: "a1".into(),
-        decision: "approve".into(),
+        decision: ApprovalDecision::Approve,
     };
     assert_round_trip(
         &evt,

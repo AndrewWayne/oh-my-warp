@@ -271,6 +271,9 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"], optio
 # Pin matches omw-remote's tokio-tungstenite to avoid duplicate-version bloat
 # in the workspace lockfile.
 tokio-tungstenite = { version = "0.24", optional = true }
+# Used by ai_assistant::omw_agent_state::start_with_config to load the user's
+# omw-config and resolve the default provider into session params.
+omw_config = { path = "../../../crates/omw-config", package = "omw-config", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block.workspace = true
@@ -756,6 +759,7 @@ omw_local = [
     "dep:omw_pty",
     "dep:qrcode",
     "dep:tokio-tungstenite",
+    "dep:omw_config",
 ]
 oz_changelog_updates = []
 personal_cloud_objects = []

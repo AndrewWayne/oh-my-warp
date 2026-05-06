@@ -113,6 +113,24 @@ pub enum OmwAgentEventDown {
     },
 }
 
+/// Approval decision the GUI sends back to the kernel for a previously
+/// emitted `approval/request`. Wire form mirrors
+/// `apps/omw-agent/src/policy-hook.ts:35`'s `"approve" | "reject" | "cancel"`
+/// — the snake_case rename yields exactly those single-word lowercase
+/// strings.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalDecision {
+    Approve,
+    Reject,
+    /// Used when the GUI cancels an in-flight approval (e.g. user closes
+    /// the panel mid-prompt). `send_approval_decision` is the only caller
+    /// surface today and most flows take Approve/Reject; tag this variant
+    /// to silence the dead-code lint until Phase 4c4 wires the panel UI.
+    #[allow(dead_code)]
+    Cancel,
+}
+
 /// GUI → server event over the WS. Phase 3 supports prompt + cancel;
 /// approval-decision and bash variants are dormant (Phase 4 / 5).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -124,7 +142,7 @@ pub enum OmwAgentEventUp {
     ApprovalDecision {
         #[serde(rename = "approvalId")]
         approval_id: String,
-        decision: String,
+        decision: ApprovalDecision,
     },
     /// Phase 5 — pane bash broker reply: pane PTY chunk back to the agent.
     CommandData {

@@ -24,6 +24,14 @@ import {
 } from "../vendor/pi-agent-core/index.js";
 import { getModel, type Message, type Model } from "@mariozechner/pi-ai";
 
+import { DEFAULT_POLICY, type PolicyConfig } from "./policy.js";
+import {
+	makeBeforeToolCallHook,
+	type ApprovalDecision,
+	type ApprovalRequestNotification,
+	type PendingApprovalMap,
+} from "./policy-hook.js";
+
 export type ProviderKind = "openai" | "anthropic" | "openai-compatible" | "ollama";
 
 export interface ProviderConfig {
@@ -43,6 +51,17 @@ export interface SessionSpec {
 	model: string;
 	systemPrompt?: string;
 	cwd?: string;
+	/** Per-session policy. Falls back to AskBeforeWrite if omitted. */
+	policy?: PolicyConfig;
+}
+
+/** Per-session callbacks injected by the JSON-RPC layer. */
+export interface SessionDeps {
+	getApiKey: GetApiKey;
+	/** Emit an approval/request notification upstream. The handler
+	 * (serve.ts::runPrompt) wraps this around its `notify` so the
+	 * caller-supplied JSON-RPC writer sees a proper notification frame. */
+	notifyApprovalRequest: (req: ApprovalRequestNotification) => void;
 }
 
 /**
@@ -65,15 +84,20 @@ export class Session {
 	private readonly model: Model<any>;
 	private readonly systemPrompt: string;
 	private readonly getApiKey: GetApiKey;
+	private readonly policy: PolicyConfig;
+	private readonly notifyApprovalRequest: (req: ApprovalRequestNotification) => void;
+	private readonly pendingApprovals: PendingApprovalMap = new Map();
 	private readonly messages: AgentMessage[] = [];
 	private currentAbort?: AbortController;
 
-	constructor(spec: SessionSpec, getApiKey: GetApiKey) {
+	constructor(spec: SessionSpec, deps: SessionDeps) {
 		this.id = spec.sessionId;
 		this.cwd = spec.cwd;
 		this.providerConfig = spec.providerConfig;
 		this.systemPrompt = spec.systemPrompt ?? "";
-		this.getApiKey = getApiKey;
+		this.getApiKey = deps.getApiKey;
+		this.policy = spec.policy ?? DEFAULT_POLICY;
+		this.notifyApprovalRequest = deps.notifyApprovalRequest;
 		this.model = buildModel(spec.providerConfig, spec.model);
 	}
 
@@ -87,6 +111,12 @@ export class Session {
 		const abort = new AbortController();
 		this.currentAbort = abort;
 
+		const beforeToolCall = makeBeforeToolCallHook({
+			policy: this.policy,
+			pendingApprovals: this.pendingApprovals,
+			notifyApprovalRequest: this.notifyApprovalRequest,
+		});
+
 		const config: AgentLoopConfig = {
 			model: this.model,
 			// AgentMessage = Message in our config (no CustomAgentMessages
@@ -97,6 +127,7 @@ export class Session {
 				if (!keyRef) return undefined;
 				return this.getApiKey(keyRef);
 			},
+			beforeToolCall,
 		};
 
 		const userMessage: AgentMessage = {
@@ -134,6 +165,22 @@ export class Session {
 
 	cancel(): void {
 		this.currentAbort?.abort();
+		// Resolve every in-flight approval as "cancel" so beforeToolCall
+		// hooks unblock and the agent loop can finish abort-cleanly.
+		for (const [id, resolve] of this.pendingApprovals) {
+			this.pendingApprovals.delete(id);
+			resolve("cancel");
+		}
+	}
+
+	/** Resolve a pending approval. Returns true if the approvalId was
+	 * known. Called by serve.ts when the GUI replies with approval/decide. */
+	applyApprovalDecision(approvalId: string, decision: ApprovalDecision): boolean {
+		const resolve = this.pendingApprovals.get(approvalId);
+		if (!resolve) return false;
+		this.pendingApprovals.delete(approvalId);
+		resolve(decision);
+		return true;
 	}
 
 	/** True while a prompt is in flight. Used by serve.ts to reject a

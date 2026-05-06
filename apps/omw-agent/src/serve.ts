@@ -32,6 +32,8 @@ import { createInterface } from "node:readline";
 
 import type { AgentEvent } from "../vendor/pi-agent-core/index.js";
 
+import type { ApprovalDecision } from "./policy-hook.js";
+import type { PolicyConfig } from "./policy.js";
 import { Session, type GetApiKey, type ProviderConfig, type SessionSpec } from "./session.js";
 
 export interface RunStdioServerOptions {
@@ -105,15 +107,13 @@ export async function runStdioServer(opts: RunStdioServerOptions): Promise<void>
 		try {
 			switch (req.method) {
 				case "session/create":
-					return handleSessionCreate(req, id, sessions, opts.getApiKey, reply, replyError);
+					return handleSessionCreate(req, id, sessions, opts.getApiKey, notify, reply, replyError);
 				case "session/prompt":
 					return handleSessionPrompt(req, id, sessions, reply, replyError, notify);
 				case "session/cancel":
 					return handleSessionCancel(req, id, sessions, reply, replyError);
 				case "approval/decide":
-					// Phase 1 stub — approval ids are produced in Phase 5. We accept
-					// the call so the protocol is round-trippable today.
-					return reply(id, { ok: true });
+					return handleApprovalDecide(req, id, sessions, reply, replyError);
 				default:
 					return replyError(id, -32601, `unknown method: ${req.method}`);
 			}
@@ -149,6 +149,7 @@ function handleSessionCreate(
 	id: string | number | null,
 	sessions: Map<string, Session>,
 	getApiKey: GetApiKey,
+	notify: (method: string, params: unknown) => void,
 	reply: (id: string | number | null, result: unknown) => void,
 	replyError: (id: string | number | null, code: number, message: string) => void,
 ): void {
@@ -167,19 +168,55 @@ function handleSessionCreate(
 			: randomUUID();
 	const cwd = typeof params.cwd === "string" ? params.cwd : undefined;
 	const systemPrompt = typeof params.systemPrompt === "string" ? params.systemPrompt : undefined;
+	const policy = parsePolicy(params.policy);
 
 	if (sessions.has(sessionId)) {
 		return replyError(id, -32602, `sessionId already exists: ${sessionId}`);
 	}
-	const spec: SessionSpec = { sessionId, providerConfig, model, cwd, systemPrompt };
+	const spec: SessionSpec = { sessionId, providerConfig, model, cwd, systemPrompt, policy };
 	let session: Session;
 	try {
-		session = new Session(spec, getApiKey);
+		session = new Session(spec, {
+			getApiKey,
+			notifyApprovalRequest: ({ approvalId, toolCall }) => {
+				notify("approval/request", { sessionId, approvalId, toolCall });
+			},
+		});
 	} catch (e) {
 		return replyError(id, -32602, errMessage(e));
 	}
 	sessions.set(sessionId, session);
 	reply(id, { sessionId });
+}
+
+function handleApprovalDecide(
+	req: JsonRpcRequest,
+	id: string | number | null,
+	sessions: Map<string, Session>,
+	reply: (id: string | number | null, result: unknown) => void,
+	replyError: (id: string | number | null, code: number, message: string) => void,
+): void {
+	const params = (req.params ?? {}) as Record<string, unknown>;
+	const sessionId = params.sessionId;
+	const approvalId = params.approvalId;
+	const decision = params.decision;
+	if (
+		typeof sessionId !== "string" ||
+		typeof approvalId !== "string" ||
+		(decision !== "approve" && decision !== "reject" && decision !== "cancel")
+	) {
+		return replyError(
+			id,
+			-32602,
+			"approval/decide requires { sessionId, approvalId, decision: 'approve' | 'reject' | 'cancel' }",
+		);
+	}
+	const session = sessions.get(sessionId);
+	if (!session) {
+		return replyError(id, -32602, `unknown sessionId: ${sessionId}`);
+	}
+	const matched = session.applyApprovalDecision(approvalId, decision as ApprovalDecision);
+	reply(id, { matched });
 }
 
 function handleSessionPrompt(
@@ -303,6 +340,22 @@ function parseProviderConfig(raw: unknown): ProviderConfig | null {
 	if (typeof obj.key_ref === "string") cfg.key_ref = obj.key_ref;
 	if (typeof obj.base_url === "string") cfg.base_url = obj.base_url;
 	return cfg;
+}
+
+function parsePolicy(raw: unknown): PolicyConfig | undefined {
+	if (!raw || typeof raw !== "object") return undefined;
+	const obj = raw as Record<string, unknown>;
+	const mode = obj.mode;
+	if (mode !== "read_only" && mode !== "ask_before_write" && mode !== "trusted") {
+		return undefined;
+	}
+	const allow = Array.isArray(obj.allow)
+		? obj.allow.filter((s): s is string => typeof s === "string")
+		: undefined;
+	const deny = Array.isArray(obj.deny)
+		? obj.deny.filter((s): s is string => typeof s === "string")
+		: undefined;
+	return { mode, allow, deny };
 }
 
 function errMessage(e: unknown): string {

@@ -6,6 +6,7 @@
 //! (agent endpoints).
 
 pub mod agent;
+pub mod audit;
 pub mod input;
 pub mod sessions;
 pub mod ws_pty;

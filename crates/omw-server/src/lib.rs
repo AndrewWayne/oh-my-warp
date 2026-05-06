@@ -81,3 +81,14 @@ pub fn agent_router(agent: Arc<AgentProcess>) -> Router {
         .route("/ws/v1/agent/:id", get(handlers::agent::ws_handler))
         .with_state(agent)
 }
+
+/// Build the axum [`Router`] for the audit-append surface.
+///
+/// Single route: `POST /api/v1/audit/append`. The shared
+/// [`omw_audit::AuditWriter`] is passed in as state. Compose with
+/// [`router`] / [`agent_router`] via [`axum::Router::merge`].
+pub fn audit_router(audit: handlers::audit::AuditState) -> Router {
+    Router::new()
+        .route("/api/v1/audit/append", post(handlers::audit::append))
+        .with_state(audit)
+}

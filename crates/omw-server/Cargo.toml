@@ -10,6 +10,8 @@ description = "Local backend shim for the forked client; sole audit writer."
 
 [dependencies]
 omw-pty = { path = "../omw-pty" }
+omw-audit = { path = "../omw-audit" }
+omw-policy = { path = "../omw-policy" }
 axum = { version = "0.7", features = ["ws", "macros"] }
 tokio = { version = "1", features = [
     "rt-multi-thread",
@@ -34,6 +36,7 @@ futures-util = "0.3"
 vt100 = { workspace = true }
 
 [dev-dependencies]
+tempfile = "3"
 tokio = { version = "1", features = [
     "rt-multi-thread",
     "macros",

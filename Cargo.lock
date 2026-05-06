@@ -1267,6 +1267,15 @@ version = "0.0.0"
 [[package]]
 name = "omw-audit"
 version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "uuid",
+]
 
 [[package]]
 name = "omw-cli"
@@ -1327,6 +1336,10 @@ dependencies = [
 [[package]]
 name = "omw-policy"
 version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "omw-pty"
@@ -1386,9 +1399,12 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "omw-audit",
+ "omw-policy",
  "omw-pty",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "tokio-tungstenite",

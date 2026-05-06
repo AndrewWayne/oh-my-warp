@@ -265,10 +265,23 @@ async fn run_session(
     status_tx: watch::Sender<OmwAgentStatus>,
     weak_self: std::sync::Weak<OmwAgentState>,
 ) {
+    // Route every status transition through the singleton so the cached
+    // `inner.status` (returned by `OmwAgentState::status()`) stays in
+    // sync with the watch channel. If the singleton has already been
+    // dropped, fall back to the watch channel — receivers may still be
+    // listening even though the snapshot accessor is gone.
+    let set_status = |status: OmwAgentStatus| {
+        if let Some(state) = weak_self.upgrade() {
+            state.set_status(status);
+        } else {
+            status_tx.send_replace(status);
+        }
+    };
+
     let session_id = match create_session(&server_url, &params).await {
         Ok(id) => id,
         Err(e) => {
-            status_tx.send_replace(OmwAgentStatus::Failed { error: e });
+            set_status(OmwAgentStatus::Failed { error: e });
             return;
         }
     };
@@ -278,7 +291,7 @@ async fn run_session(
         None => match server_url.strip_prefix("https://") {
             Some(rest) => format!("wss://{rest}/ws/v1/agent/{session_id}"),
             None => {
-                status_tx.send_replace(OmwAgentStatus::Failed {
+                set_status(OmwAgentStatus::Failed {
                     error: "OMW_SERVER_URL must start with http:// or https://".into(),
                 });
                 return;
@@ -289,14 +302,14 @@ async fn run_session(
     let connect = match tokio_tungstenite::connect_async(&ws_url).await {
         Ok((stream, _)) => stream,
         Err(e) => {
-            status_tx.send_replace(OmwAgentStatus::Failed {
+            set_status(OmwAgentStatus::Failed {
                 error: format!("ws connect: {e}"),
             });
             return;
         }
     };
 
-    status_tx.send_replace(OmwAgentStatus::Connected {
+    set_status(OmwAgentStatus::Connected {
         session_id: session_id.clone(),
     });
 
@@ -323,24 +336,29 @@ async fn run_session(
                 };
                 if let Ok(event) = serde_json::from_str::<OmwAgentEventDown>(&text) {
                     // Status transitions: Streaming on first delta /
-                    // tool_call; Connected on turn_finished.
+                    // tool_call; Connected on turn_finished. Both go
+                    // through `set_status` so the cached snapshot stays
+                    // in lockstep with the watch channel.
                     match &event {
                         OmwAgentEventDown::AssistantDelta { .. }
                         | OmwAgentEventDown::ToolCallStarted { .. } => {
-                            status_tx.send_if_modified(|s| {
-                                if !matches!(s, OmwAgentStatus::Streaming { .. }) {
-                                    *s = OmwAgentStatus::Streaming {
-                                        session_id: current_session.clone(),
-                                    };
-                                    true
-                                } else {
-                                    false
-                                }
-                            });
+                            // Avoid bouncing Streaming -> Streaming on
+                            // every delta: only transition when not
+                            // already streaming.
+                            let already_streaming = if let Some(state) = weak_self.upgrade() {
+                                matches!(state.status(), OmwAgentStatus::Streaming { .. })
+                            } else {
+                                matches!(*status_tx.borrow(), OmwAgentStatus::Streaming { .. })
+                            };
+                            if !already_streaming {
+                                set_status(OmwAgentStatus::Streaming {
+                                    session_id: current_session.clone(),
+                                });
+                            }
                         }
                         OmwAgentEventDown::TurnFinished { session_id: sid, .. } => {
                             current_session = sid.clone();
-                            status_tx.send_replace(OmwAgentStatus::Connected {
+                            set_status(OmwAgentStatus::Connected {
                                 session_id: current_session.clone(),
                             });
                         }
@@ -365,7 +383,7 @@ async fn run_session(
     }
 
     // Stream ended — clear status.
-    status_tx.send_replace(OmwAgentStatus::Idle);
+    set_status(OmwAgentStatus::Idle);
     let _ = sink.close().await;
     if let Some(state) = weak_self.upgrade() {
         let mut g = state.inner.lock();

@@ -9057,6 +9057,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "omw-audit"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.63",
+ "uuid",
+]
+
+[[package]]
+name = "omw-policy"
+version = "0.0.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "omw-pty"
 version = "0.0.0"
 dependencies = [
@@ -9103,6 +9122,8 @@ dependencies = [
  "bytes",
  "chrono",
  "futures-util",
+ "omw-audit",
+ "omw-policy",
  "omw-pty",
  "serde",
  "serde_json",

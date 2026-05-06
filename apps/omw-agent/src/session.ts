@@ -12,13 +12,16 @@
 //   returns the raw secret to pi-ai's stream layer, which uses it for the
 //   Authorization header and discards it.
 
+// Path: relative imports into the vendored pi-agent-core directory so the
+// emitted ESM resolves at runtime. tsconfig `paths` is compile-only — Node
+// cannot follow `@pi-agent-core` without a real package or imports map.
 import {
 	agentLoop,
 	type AgentContext,
 	type AgentEvent,
 	type AgentLoopConfig,
 	type AgentMessage,
-} from "@pi-agent-core";
+} from "../vendor/pi-agent-core/index.js";
 import { getModel, type Message, type Model } from "@mariozechner/pi-ai";
 
 export type ProviderKind = "openai" | "anthropic" | "openai-compatible" | "ollama";
@@ -131,6 +134,13 @@ export class Session {
 
 	cancel(): void {
 		this.currentAbort?.abort();
+	}
+
+	/** True while a prompt is in flight. Used by serve.ts to reject a
+	 * second `session/prompt` synchronously rather than emit a synthetic
+	 * `error` + `turn/finished` after the fact. */
+	get isStreaming(): boolean {
+		return this.currentAbort !== undefined;
 	}
 
 	/** Snapshot of the durable message log (defensive copy). */

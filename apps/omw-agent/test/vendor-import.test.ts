@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { agentLoop, runAgentLoop } from "@pi-agent-core";
+import { agentLoop, runAgentLoop } from "../vendor/pi-agent-core/index.js";
 import { streamSimple } from "@mariozechner/pi-ai";
 
 describe("vendored pi-agent-core kernel", () => {

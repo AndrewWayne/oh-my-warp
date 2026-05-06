@@ -30,7 +30,7 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 
-import type { AgentEvent } from "@pi-agent-core";
+import type { AgentEvent } from "../vendor/pi-agent-core/index.js";
 
 import { Session, type GetApiKey, type ProviderConfig, type SessionSpec } from "./session.js";
 
@@ -200,9 +200,17 @@ function handleSessionPrompt(
 	if (!session) {
 		return replyError(id, -32602, `unknown sessionId: ${sessionId}`);
 	}
-	// Acknowledge the request synchronously, then run the loop in the
-	// background. Notifications fire as the loop streams; the final
-	// `turn/finished` notification signals completion.
+	// Reject a second prompt while the first is still streaming, BEFORE
+	// the OK response. Otherwise Session.prompt throws asynchronously
+	// and we'd emit a synthetic `error` + `turn/finished` for the active
+	// turn — clients then mis-attribute later deltas to a new turn.
+	if (session.isStreaming) {
+		return replyError(
+			id,
+			-32000,
+			`session ${sessionId} is already streaming a prompt; cancel first`,
+		);
+	}
 	reply(id, { ok: true });
 	void runPrompt(session, prompt, notify);
 }

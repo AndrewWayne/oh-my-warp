@@ -13,9 +13,10 @@ use crate::key_ref::KeyRef;
 ///
 /// `#[serde(default)]` on the type lets an empty TOML file deserialize to
 /// `Config::default()`. The top level intentionally does NOT use
-/// `deny_unknown_fields` — v0.2 will add `[routing]`, `[approval]`, `[audit]`
-/// blocks; we want a v0.1 binary to ignore them gracefully rather than refuse
-/// to start.
+/// `deny_unknown_fields` — v0.2 added `[approval]` and `[agent]` as
+/// first-class typed blocks; `[routing]` and `[audit]` remain forward-compat
+/// reservations. We want a binary to ignore unknown top-level tables
+/// gracefully rather than refuse to start.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct Config {
@@ -260,7 +261,7 @@ impl ProviderConfig {
 // ---------------- Approval ----------------
 
 /// Mirrors `omw_policy::ApprovalMode` and `apps/omw-agent/src/policy.ts:11`.
-/// The kebab-case wire form is what the kernel sees in `session/create.policy.mode`.
+/// The snake_case wire form is what the kernel sees in `session/create.policy.mode`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalMode {
@@ -526,8 +527,9 @@ mystery = "field"
 
     #[test]
     fn unknown_top_level_table_is_tolerated_for_forward_compat() {
-        // v0.2 will add [routing], [approval], etc. A v0.1 binary must not
-        // crash on a v0.2 config.
+        // v0.2 added [approval] and [agent] (now first-class typed). [routing]
+        // remains a forward-compat reservation. A binary must not crash on
+        // unknown top-level tables.
         let toml = r#"
 version = 1
 

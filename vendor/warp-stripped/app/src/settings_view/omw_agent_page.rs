@@ -380,6 +380,12 @@ pub struct OmwAgentPageView {
 
 impl OmwAgentPageView {
     pub fn new(_ctx: &mut ViewContext<Self>) -> Self {
+        Self::new_inner()
+    }
+
+    /// App-context-free constructor. Used by integration tests in
+    /// `app/tests/` to mount the view without a full `warpui::App`.
+    pub fn new_inner() -> Self {
         let cfg = omw_config::Config::load().unwrap_or_default();
         let form = form_from_config(&cfg);
         Self {

@@ -124,7 +124,7 @@ pub mod test_exports {
     pub use crate::settings_view::omw_agent_page::{
         apply_action, form_from_config, form_to_config, validate_form,
         FormError, OmwAgentForm, OmwAgentPageAction, OmwAgentPageState,
-        ProviderKindForm, ProviderRow,
+        OmwAgentPageView, ProviderKindForm, ProviderRow,
     };
 }
 

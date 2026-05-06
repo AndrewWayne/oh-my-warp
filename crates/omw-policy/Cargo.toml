@@ -6,4 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
-description = "Approval mode + allowlist configuration; wired into pi-agent's beforeToolCall hook. Phase 0 placeholder."
+description = "Approval mode + allowlist policy. Wired into pi-agent's beforeToolCall hook via omw-server's policy/classify JSON-RPC."
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

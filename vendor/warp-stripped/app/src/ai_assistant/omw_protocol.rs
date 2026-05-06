@@ -1,0 +1,144 @@
+//! Wire protocol types for the GUI ↔ omw-server agent WebSocket.
+//!
+//! `OmwAgentEventDown` is a typed view of the JSON-RPC notification frames
+//! omw-server forwards from the omw-agent stdio kernel. The notifications
+//! carry a `method` discriminator (e.g. `"assistant/delta"`) and a `params`
+//! payload; `serde(tag = "method", content = "params")` matches that shape
+//! 1:1 so deserialising a raw kernel frame into this enum is a single
+//! `serde_json::from_str` call.
+//!
+//! `OmwAgentEventUp` is the GUI → server direction. Today (Phase 3) the
+//! handler accepts `{kind:"prompt", prompt:"..."}` and `{kind:"cancel"}`.
+//! Approval-decision and bash-broker variants land dormant here so Phase 4
+//! (approvals) and Phase 5 (bash) only need to flip serde tags, not redefine
+//! the type.
+
+use serde::{Deserialize, Serialize};
+
+/// Server → GUI event.
+///
+/// The variant payloads mirror `apps/omw-agent/src/serve.ts` notification
+/// shapes. JSON-RPC framing fields (`jsonrpc`, `id`) are not modelled —
+/// serde silently drops unknown fields, so the raw notification frames
+/// from the WS round-trip cleanly.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "params")]
+pub enum OmwAgentEventDown {
+    #[serde(rename = "assistant/delta")]
+    AssistantDelta {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        delta: String,
+    },
+    #[serde(rename = "tool/call_started")]
+    ToolCallStarted {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "toolName")]
+        tool_name: String,
+        args: serde_json::Value,
+    },
+    #[serde(rename = "tool/call_finished")]
+    ToolCallFinished {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "toolName")]
+        tool_name: String,
+        #[serde(rename = "isError")]
+        is_error: bool,
+    },
+    #[serde(rename = "turn/finished")]
+    TurnFinished {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        cancelled: bool,
+    },
+    /// Phase 5 — approval queue. Variant exists today so future flips
+    /// don't require a protocol re-serialize. The `tool_call` payload is
+    /// kept as `serde_json::Value` because its shape (pi-ai `ToolCall`)
+    /// is owned by the kernel; the GUI only renders metadata + name.
+    #[serde(rename = "approval/request")]
+    ApprovalRequest {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "approvalId")]
+        approval_id: String,
+        #[serde(rename = "toolCall")]
+        tool_call: serde_json::Value,
+    },
+    /// Phase 5 — bash broker outbound. Same dormancy rationale.
+    #[serde(rename = "bash/exec")]
+    ExecCommand {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "commandId")]
+        command_id: String,
+        command: String,
+        cwd: Option<String>,
+    },
+    #[serde(rename = "bash/data")]
+    CommandData {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "commandId")]
+        command_id: String,
+        /// base64-encoded byte chunk from the pane PTY.
+        data: String,
+    },
+    #[serde(rename = "bash/finished")]
+    CommandExit {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "commandId")]
+        command_id: String,
+        exit_code: Option<i32>,
+        #[serde(default)]
+        snapshot: bool,
+    },
+    /// Process-level crash signal. Fan-out from omw-server's reader task
+    /// when the agent stdio child exits unexpectedly.
+    #[serde(rename = "agent/crashed")]
+    AgentCrashed,
+    /// Generic error notification. `session_id` may be missing for
+    /// process-scoped errors.
+    #[serde(rename = "error")]
+    Error {
+        #[serde(rename = "sessionId", default)]
+        session_id: Option<String>,
+        message: String,
+    },
+}
+
+/// GUI → server event over the WS. Phase 3 supports prompt + cancel;
+/// approval-decision and bash variants are dormant (Phase 4 / 5).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OmwAgentEventUp {
+    Prompt { prompt: String },
+    Cancel,
+    /// Phase 5.
+    ApprovalDecision {
+        #[serde(rename = "approvalId")]
+        approval_id: String,
+        decision: String,
+    },
+    /// Phase 5 — pane bash broker reply: pane PTY chunk back to the agent.
+    CommandData {
+        #[serde(rename = "commandId")]
+        command_id: String,
+        /// base64-encoded byte chunk.
+        data: String,
+    },
+    /// Phase 5 — pane bash broker reply: command lifecycle terminator.
+    CommandExit {
+        #[serde(rename = "commandId")]
+        command_id: String,
+        exit_code: Option<i32>,
+        #[serde(default)]
+        snapshot: bool,
+    },
+}

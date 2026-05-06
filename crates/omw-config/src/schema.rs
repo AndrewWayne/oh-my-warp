@@ -22,6 +22,8 @@ pub struct Config {
     pub version: SchemaVersion,
     pub default_provider: Option<ProviderId>,
     pub providers: BTreeMap<ProviderId, ProviderConfig>,
+    pub approval: ApprovalConfig,
+    pub agent: AgentConfig,
 }
 
 // ---------------- SchemaVersion ----------------
@@ -252,6 +254,46 @@ impl ProviderConfig {
             | Self::OpenAiCompatible { default_model, .. }
             | Self::Ollama { default_model, .. } => default_model.as_deref(),
         }
+    }
+}
+
+// ---------------- Approval ----------------
+
+/// Mirrors `omw_policy::ApprovalMode` and `apps/omw-agent/src/policy.ts:11`.
+/// The kebab-case wire form is what the kernel sees in `session/create.policy.mode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalMode {
+    ReadOnly,
+    AskBeforeWrite,
+    Trusted,
+}
+
+impl Default for ApprovalMode {
+    fn default() -> Self {
+        Self::AskBeforeWrite
+    }
+}
+
+/// `[approval]` block. Reserved as a forward-compat block in v0.1; first-class in v0.2.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct ApprovalConfig {
+    pub mode: ApprovalMode,
+}
+
+// ---------------- Agent ----------------
+
+/// `[agent]` block. Master enable/disable for the inline agent panel.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct AgentConfig {
+    pub enabled: bool,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self { enabled: true }
     }
 }
 
@@ -533,5 +575,58 @@ base_url = "file:///etc/passwd"
             msg.contains("scheme"),
             "expected scheme rejection, got: {msg}"
         );
+    }
+
+    #[test]
+    fn approval_mode_default_is_ask_before_write() {
+        assert_eq!(ApprovalMode::default(), ApprovalMode::AskBeforeWrite);
+    }
+
+    #[test]
+    fn approval_mode_serializes_kebab_case() {
+        let v = serde_json::to_string(&ApprovalMode::AskBeforeWrite).unwrap();
+        assert_eq!(v, "\"ask_before_write\"");
+        let r: ApprovalMode = serde_json::from_str("\"read_only\"").unwrap();
+        assert_eq!(r, ApprovalMode::ReadOnly);
+        let t: ApprovalMode = serde_json::from_str("\"trusted\"").unwrap();
+        assert_eq!(t, ApprovalMode::Trusted);
+    }
+
+    #[test]
+    fn approval_block_round_trips() {
+        let toml = r#"
+[approval]
+mode = "trusted"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.approval.mode, ApprovalMode::Trusted);
+        let s = toml::to_string(&cfg).unwrap();
+        let round: Config = toml::from_str(&s).unwrap();
+        assert_eq!(round.approval.mode, ApprovalMode::Trusted);
+    }
+
+    #[test]
+    fn approval_block_default_when_missing() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(cfg.approval.mode, ApprovalMode::AskBeforeWrite);
+    }
+
+    #[test]
+    fn agent_block_default_enabled_true() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert!(cfg.agent.enabled);
+    }
+
+    #[test]
+    fn agent_block_round_trips() {
+        let toml = r#"
+[agent]
+enabled = false
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert!(!cfg.agent.enabled);
+        let s = toml::to_string(&cfg).unwrap();
+        let round: Config = toml::from_str(&s).unwrap();
+        assert!(!round.agent.enabled);
     }
 }

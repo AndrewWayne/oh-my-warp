@@ -287,7 +287,7 @@ impl OmwAgentState {
             approval_id,
             decision,
         };
-        outbound.blocking_send(frame).map_err(|e| e.to_string())
+        outbound.try_send(frame).map_err(|e| e.to_string())
     }
 
     fn set_status(&self, status: OmwAgentStatus) {

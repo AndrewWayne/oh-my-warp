@@ -26,9 +26,11 @@ pub mod requests;
 pub mod transcript;
 pub mod utils;
 
-// Inline-agent (omw_local) protocol + transcript model. Phase 3a lands these
-// compiled-but-unwired; Phase 3b adds omw_agent_state.rs (WS client) and
-// flips panel.rs's omw_local placeholder to render the omw transcript.
+// Inline-agent (omw_local) protocol + transcript model + WS state. Phase 3a/3b
+// land these compiled-but-unwired; Phase 3c flips panel.rs's omw_local
+// placeholder to render the omw transcript and call OmwAgentState::start.
+#[cfg(feature = "omw_local")]
+pub mod omw_agent_state;
 #[cfg(feature = "omw_local")]
 pub mod omw_protocol;
 #[cfg(feature = "omw_local")]

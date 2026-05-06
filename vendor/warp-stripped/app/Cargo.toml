@@ -267,6 +267,10 @@ omw_pty = { path = "../../../crates/omw-pty", package = "omw-pty", optional = tr
 # strips the `image` crate's raster encoders; we keep the `svg` feature so the
 # pair modal can embed a crisp scalable preview.
 qrcode = { version = "0.14", default-features = false, features = ["svg"], optional = true }
+# Used by ai_assistant::omw_agent_state to dial /ws/v1/agent/:id on omw-server.
+# Pin matches omw-remote's tokio-tungstenite to avoid duplicate-version bloat
+# in the workspace lockfile.
+tokio-tungstenite = { version = "0.24", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block.workspace = true
@@ -751,6 +755,7 @@ omw_local = [
     "dep:omw_remote",
     "dep:omw_pty",
     "dep:qrcode",
+    "dep:tokio-tungstenite",
 ]
 oz_changelog_updates = []
 personal_cloud_objects = []

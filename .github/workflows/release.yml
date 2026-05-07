@@ -87,7 +87,13 @@ jobs:
     name: macOS aarch64
     runs-on: macos-14
     needs: prepare
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.targets != 'windows'
+    # v0.0.3 ships the locally-built .dmg as the canonical Mac asset (the
+    # build script's omw-keychain-helper bundling fix was verified there
+    # first); skip the CI rebuild + clobber for that one tag. Future tags
+    # fall through to the standard tag-push / workflow_dispatch behavior.
+    if: >-
+      needs.prepare.outputs.ref != 'omw-local-preview-v0.0.3'
+      && (github.event_name != 'workflow_dispatch' || github.event.inputs.targets != 'windows')
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -115,7 +121,13 @@ jobs:
     name: Windows x86_64
     runs-on: windows-latest
     needs: prepare
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.targets != 'mac'
+    # v0.0.3 is macOS-only: the Windows zip script does not bundle the
+    # omw-agent kernel or omw-keychain-helper.exe, so a Windows build at
+    # this tag would ship without the v0.0.3 inline-agent feature working
+    # at runtime. Skip until build-windows-zip.ps1 is brought to parity.
+    if: >-
+      needs.prepare.outputs.ref != 'omw-local-preview-v0.0.3'
+      && (github.event_name != 'workflow_dispatch' || github.event.inputs.targets != 'mac')
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4

@@ -64,6 +64,21 @@ command -v npm  >/dev/null || { echo "ERROR: npm not on PATH (required for omw-a
 [[ -f "${OMW_AGENT_DIR}/dist/src/serve.js" ]] \
     || { echo "ERROR: omw-agent build did not produce dist/src/serve.js" >&2; exit 1; }
 
+# Build the keychain helper from the umbrella workspace. The agent kernel
+# (Node) spawns this binary to resolve `keychain:omw/<provider>` refs into
+# API keys. Without it, the v0.0.3 Settings → Apply flow leaves the agent
+# unable to read keys it just wrote — so the .app bundle is not self-
+# contained. omw_inproc_server.rs locates it at
+# <exe_dir>/../Resources/omw-keychain-helper.
+echo "==> Building omw-keychain-helper release binary ..."
+(
+    cd "${REPO_ROOT}"
+    cargo build --release -p omw-keychain-helper
+)
+KEYCHAIN_HELPER_BIN="${REPO_ROOT}/target/release/omw-keychain-helper"
+[[ -f "${KEYCHAIN_HELPER_BIN}" ]] \
+    || { echo "ERROR: omw-keychain-helper build did not produce ${KEYCHAIN_HELPER_BIN}" >&2; exit 1; }
+
 echo "==> Auditing binary for forbidden hostnames ..."
 (
     cd "${VENDOR_DIR}"
@@ -120,6 +135,11 @@ ditto "${OMW_AGENT_DIR}/vendor"        "${KERNEL_RESOURCES}/vendor"
 [[ -d "${OMW_AGENT_DIR}/node_modules" ]] \
     || { echo "ERROR: missing ${OMW_AGENT_DIR}/node_modules (run npm install first)" >&2; exit 1; }
 ditto "${OMW_AGENT_DIR}/node_modules" "${KERNEL_RESOURCES}/node_modules"
+
+# Place the keychain helper at the path omw_inproc_server.rs probes for
+# the .app bundle layout (<exe_dir>/../Resources/omw-keychain-helper).
+cp "${KEYCHAIN_HELPER_BIN}" "${KERNEL_RESOURCES}/omw-keychain-helper"
+chmod +x "${KERNEL_RESOURCES}/omw-keychain-helper"
 
 # Ad-hoc sign the bundle. Cargo's linker stamps a `linker-signed,adhoc` signature
 # on the Mach-O that claims sealed resources are required, but without this step

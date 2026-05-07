@@ -27,7 +27,7 @@ use std::time::Duration;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use tokio::task::JoinHandle;
 
-use super::omw_agent_state::{ActiveTerminalHandle, OmwAgentState};
+use super::omw_agent_state::{ActiveTerminalHandle, OmwAgentState, PaneSession};
 use super::omw_protocol::OmwAgentEventDown;
 use crate::terminal::writeable_pty::Message;
 
@@ -59,35 +59,83 @@ pub fn spawn_command_broker(
     runtime.spawn(async move {
         while let Ok(event) = events.recv().await {
             if let OmwAgentEventDown::ExecCommand {
+                session_id,
                 command_id,
                 command,
                 cwd: _,
-                ..
             } = event
             {
-                // Snapshot the focused pane at exec time. None → no live
-                // pane, fire snapshot:true immediately so the kernel's
-                // tool call doesn't hang for the full COMMAND_TIMEOUT.
-                let handle = match state.active_terminal_clone() {
-                    Some(h) => h,
-                    None => {
-                        let _ = state.send_command_exit(command_id, None, true);
-                        continue;
-                    }
+                // Resolve which pane and reply-channel this exec belongs
+                // to. Order matters:
+                //   1. Try the per-pane PaneSession that owns
+                //      `session_id` (the inline `# foo` flow). Replies
+                //      MUST go back over THAT pane's WS, not the
+                //      singleton outbound, or the kernel session that
+                //      issued bash/exec never sees them.
+                //   2. Fall back to the singleton/last-focused
+                //      ActiveTerminal (the AI-panel session). This
+                //      preserves the original Phase 5b behavior and
+                //      keeps the existing `register_active_terminal`
+                //      tests passing.
+                let routed = match state.pane_session_by_id(&session_id) {
+                    Some((view_id, pane_session)) => state
+                        .pane_io_clone(view_id)
+                        .map(|h| (h, ReplyTarget::Pane(pane_session))),
+                    None => state
+                        .active_terminal_clone()
+                        .map(|h| (h, ReplyTarget::Singleton)),
                 };
-                let state_for_task = state.clone();
+                let Some((handle, reply)) = routed else {
+                    // No live pane for this session. Fire a snapshot
+                    // exit immediately so the kernel's tool call
+                    // doesn't sit on COMMAND_TIMEOUT for nothing.
+                    match &reply_for_missing(&state, &session_id) {
+                        ReplyTarget::Pane(s) => {
+                            let _ = s.send_command_exit(command_id, None, true);
+                        }
+                        ReplyTarget::Singleton => {
+                            let _ = state.send_command_exit(command_id, None, true);
+                        }
+                    }
+                    continue;
+                };
                 tokio::spawn(async move {
-                    handle_exec(state_for_task, handle, command_id, command).await;
+                    handle_exec(handle, reply, command_id, command).await;
                 });
             }
         }
     })
 }
 
+/// Where the broker should send `command_data` / `command_exit`
+/// replies for a given exec. Picked once at exec time and held by the
+/// per-command task — focus changes mid-execution don't redirect the
+/// reply channel.
+enum ReplyTarget {
+    /// Per-pane WS — used by the inline `# foo` flow. Each pane has
+    /// its own kernel session and its own outbound mpsc.
+    Pane(Arc<PaneSession>),
+    /// Singleton outbound — used by the AI panel session and by
+    /// existing broker tests.
+    Singleton,
+}
+
+/// Variant picker for the "no live pane" branch. We can't do an
+/// `unwrap_or_else` with a closure that captures `state` (would need
+/// MoveOnce semantics), so this small helper prefers the per-pane
+/// reply channel when one exists for the session_id, falling back to
+/// the singleton otherwise.
+fn reply_for_missing(state: &OmwAgentState, session_id: &str) -> ReplyTarget {
+    match state.pane_session_by_id(session_id) {
+        Some((_, pane_session)) => ReplyTarget::Pane(pane_session),
+        None => ReplyTarget::Singleton,
+    }
+}
+
 /// Drive a single `bash/exec` to completion against the captured pane.
 async fn handle_exec(
-    state: Arc<OmwAgentState>,
     handle: ActiveTerminalHandle,
+    reply: ReplyTarget,
     command_id: String,
     command: String,
 ) {
@@ -105,7 +153,7 @@ async fn handle_exec(
         .send(Message::Input(Cow::Owned(bytes)));
     if let Err(e) = send_result {
         log::warn!("omw command_broker: event_loop_tx send failed: {e}");
-        let _ = state.send_command_exit(command_id, None, true);
+        send_exit(&reply, command_id, None, true);
         return;
     }
 
@@ -115,23 +163,45 @@ async fn handle_exec(
     loop {
         tokio::select! {
             _ = &mut timeout => {
-                let _ = state.send_command_exit(command_id, None, true);
+                send_exit(&reply, command_id, None, true);
                 return;
             }
             chunk = rx.recv() => {
                 let Ok(bytes) = chunk else {
                     // Sender dropped (pane closed). Treat as snapshot.
-                    let _ = state.send_command_exit(command_id, None, true);
+                    send_exit(&reply, command_id, None, true);
                     return;
                 };
                 let encoded = BASE64_STANDARD.encode(bytes.as_slice());
-                let _ = state.send_command_data(command_id.clone(), encoded);
+                send_data(&reply, command_id.clone(), encoded);
                 if let Some(code) = detect_osc133_prompt_end(&bytes) {
-                    let _ = state.send_command_exit(command_id, code, false);
+                    send_exit(&reply, command_id, code, false);
                     return;
                 }
             }
         }
+    }
+}
+
+fn send_data(reply: &ReplyTarget, command_id: String, data: String) {
+    let result = match reply {
+        ReplyTarget::Pane(s) => s.send_command_data(command_id, data),
+        ReplyTarget::Singleton => OmwAgentState::shared().send_command_data(command_id, data),
+    };
+    if let Err(e) = result {
+        log::warn!("omw command_broker: send_command_data failed: {e}");
+    }
+}
+
+fn send_exit(reply: &ReplyTarget, command_id: String, exit_code: Option<i32>, snapshot: bool) {
+    let result = match reply {
+        ReplyTarget::Pane(s) => s.send_command_exit(command_id, exit_code, snapshot),
+        ReplyTarget::Singleton => {
+            OmwAgentState::shared().send_command_exit(command_id, exit_code, snapshot)
+        }
+    };
+    if let Err(e) = result {
+        log::warn!("omw command_broker: send_command_exit failed: {e}");
     }
 }
 

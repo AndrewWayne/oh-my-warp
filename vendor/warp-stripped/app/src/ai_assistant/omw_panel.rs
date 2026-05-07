@@ -61,11 +61,12 @@ pub fn render_omw_agent_panel(
         // fall through to the text-summary path below.
         if let OmwAgentMessage::Approval {
             id,
+            session_id,
             summary,
             decision: TranscriptApprovalDecision::Pending,
         } = message
         {
-            col.add_child(render_approval_card(appearance, id, summary));
+            col.add_child(render_approval_card(appearance, id, session_id, summary));
             continue;
         }
 
@@ -119,13 +120,17 @@ fn format_message_summary(message: &OmwAgentMessage) -> String {
 }
 
 /// Render the approval card row for a pending decision. Two buttons —
-/// `Approve` and `Reject` — call into [`OmwAgentState::send_approval_decision`]
-/// from their `on_click` closures. We don't optimistically update the
-/// local transcript model here; the kernel resolves the decision and the
-/// next turn surfaces any follow-up state.
+/// `Approve` and `Reject` — call into the kernel session that issued the
+/// `approval/request`. When that session is a per-pane `# foo` session
+/// the decision routes via [`PaneSession::send_approval_decision`]; the
+/// AI-panel singleton session falls back to
+/// [`OmwAgentState::send_approval_decision`]. We don't optimistically
+/// update the local transcript model here; the kernel resolves the
+/// decision and the next turn surfaces any follow-up state.
 fn render_approval_card(
     appearance: &Appearance,
     approval_id: &str,
+    session_id: &str,
     summary: &str,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
@@ -144,26 +149,26 @@ fn render_approval_card(
         .finish();
 
     let approve_id = approval_id.to_string();
+    let approve_session = session_id.to_string();
     let approve_btn = appearance
         .ui_builder()
         .button(ButtonVariant::Accent, MouseStateHandle::default())
         .with_text_label("Approve".to_owned())
         .build()
         .on_click(move |_ctx, _app, _pt| {
-            let _ = OmwAgentState::shared()
-                .send_approval_decision(approve_id.clone(), ProtocolApprovalDecision::Approve);
+            send_decision(&approve_session, &approve_id, ProtocolApprovalDecision::Approve);
         })
         .finish();
 
     let reject_id = approval_id.to_string();
+    let reject_session = session_id.to_string();
     let reject_btn = appearance
         .ui_builder()
         .button(ButtonVariant::Text, MouseStateHandle::default())
         .with_text_label("Reject".to_owned())
         .build()
         .on_click(move |_ctx, _app, _pt| {
-            let _ = OmwAgentState::shared()
-                .send_approval_decision(reject_id.clone(), ProtocolApprovalDecision::Reject);
+            send_decision(&reject_session, &reject_id, ProtocolApprovalDecision::Reject);
         })
         .finish();
 
@@ -182,4 +187,20 @@ fn render_approval_card(
     .with_margin_top(6.)
     .with_margin_bottom(6.)
     .finish()
+}
+
+/// Pick the right WS for the approval and dispatch the decision. Per-pane
+/// sessions own their own outbound mpsc (each `# foo` flow); the
+/// singleton [`OmwAgentState`] outbound is only correct for the AI-panel
+/// session. Looking up by `session_id` ensures the kernel session that
+/// asked for approval is the one that hears the answer.
+fn send_decision(session_id: &str, approval_id: &str, decision: ProtocolApprovalDecision) {
+    let state = OmwAgentState::shared();
+    let result = match state.pane_session_by_id(session_id) {
+        Some((_, pane)) => pane.send_approval_decision(approval_id.to_string(), decision),
+        None => state.send_approval_decision(approval_id.to_string(), decision),
+    };
+    if let Err(e) = result {
+        log::warn!("omw approval: send decision failed: {e}");
+    }
 }

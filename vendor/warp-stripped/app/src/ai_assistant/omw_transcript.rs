@@ -52,6 +52,12 @@ pub enum OmwAgentMessage {
     },
     Approval {
         id: String,
+        /// Kernel session that issued the `approval/request`. The panel's
+        /// click handler uses this to route the user's Approve/Reject
+        /// decision back over the correct pane WS — the `# foo` flow
+        /// gives each pane its own kernel session, so the singleton
+        /// outbound is the wrong channel for inline approvals.
+        session_id: String,
         /// Human-readable summary (e.g. the bash command). Phase 5
         /// derives this from the `tool_call` JSON.
         summary: String,
@@ -150,9 +156,9 @@ impl OmwAgentTranscriptModel {
                 }
             }
             OmwAgentEventDown::ApprovalRequest {
+                session_id,
                 approval_id,
                 tool_call,
-                ..
             } => {
                 let summary = tool_call
                     .get("name")
@@ -161,6 +167,7 @@ impl OmwAgentTranscriptModel {
                     .to_string();
                 self.messages.push(OmwAgentMessage::Approval {
                     id: approval_id.clone(),
+                    session_id: session_id.clone(),
                     summary,
                     decision: ApprovalDecision::Pending,
                 });

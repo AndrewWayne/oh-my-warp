@@ -155,6 +155,52 @@ impl PaneSession {
             .map_err(|e| format!("send_prompt (pane {}): {e}", self.session_id))
     }
 
+    /// Forward a captured PTY chunk back to *this pane's* kernel session.
+    /// Mirrors [`OmwAgentState::send_command_data`] but routes via the
+    /// per-pane outbound — required by the bash broker so the kernel
+    /// session that issued `bash/exec` is the one that receives the
+    /// stdout, regardless of which pane is currently focused.
+    pub fn send_command_data(&self, command_id: String, data: String) -> Result<(), String> {
+        self.outbound
+            .try_send(OmwAgentEventUp::CommandData { command_id, data })
+            .map_err(|e| format!("send_command_data (pane {}): {e}", self.session_id))
+    }
+
+    /// Per-pane analogue of [`OmwAgentState::send_command_exit`]. Same
+    /// rationale as [`Self::send_command_data`].
+    pub fn send_command_exit(
+        &self,
+        command_id: String,
+        exit_code: Option<i32>,
+        snapshot: bool,
+    ) -> Result<(), String> {
+        self.outbound
+            .try_send(OmwAgentEventUp::CommandExit {
+                command_id,
+                exit_code,
+                snapshot,
+            })
+            .map_err(|e| format!("send_command_exit (pane {}): {e}", self.session_id))
+    }
+
+    /// Per-pane analogue of [`OmwAgentState::send_approval_decision`].
+    /// The panel's Approve/Reject click handlers route through here when
+    /// the approval was issued by a per-pane kernel session — sending
+    /// via the singleton outbound would land the decision on the wrong
+    /// WS, leaving the per-pane session waiting forever.
+    pub fn send_approval_decision(
+        &self,
+        approval_id: String,
+        decision: ApprovalDecision,
+    ) -> Result<(), String> {
+        self.outbound
+            .try_send(OmwAgentEventUp::ApprovalDecision {
+                approval_id,
+                decision,
+            })
+            .map_err(|e| format!("send_approval_decision (pane {}): {e}", self.session_id))
+    }
+
     /// Tear down the WS task. Called on pane close.
     pub fn stop(&self) {
         if let Some(t) = self.ws_task.lock().take() {
@@ -352,204 +398,28 @@ impl OmwAgentState {
         Ok(())
     }
 
-    /// Send a prompt and pump the streaming assistant response into the
-    /// supplied terminal pane's PTY-read broadcast so the renderer shows
-    /// it inline. Used by the `# `-prefix interception path so the user
-    /// sees the agent's reply in the same block list they typed in,
-    /// without having to open the agent panel.
-    ///
-    /// The pump runs on the agent runtime as a one-shot task — it
-    /// subscribes to events at function entry, writes each
-    /// `AssistantDelta` to the captured `pty_reads_tx` (so focus changes
-    /// don't redirect the response), and exits on the first
-    /// `TurnFinished`. Tool-call cards / approval cards are NOT mirrored
-    /// here; they remain in the panel transcript.
-    pub fn send_prompt_inline(
-        self: &Arc<Self>,
-        prompt: String,
-        target: ActiveTerminalHandle,
-    ) -> Result<(), String> {
-        log::info!(
-            "omw# state: send_prompt_inline entry view_id={:?} pty_recv_count={}",
-            target.view_id,
-            target.pty_reads_tx.receiver_count()
-        );
-        // Subscribe before sending so the first deltas can't race past
-        // the receiver registration.
-        let mut events = self.subscribe_events();
-        log::info!(
-            "omw# state: subscribed events; broadcast_recv_count={}",
-            self.event_tx.receiver_count()
-        );
-        let runtime = self
-            .inner
-            .lock()
-            .runtime_handle
-            .clone()
-            .ok_or_else(|| "agent runtime not yet initialised".to_string())?;
-
-        // Echo the user's prompt above the streaming response so the
-        // block list shows what they typed. CRLF + ESC[2K (erase to end
-        // of line) keeps any active shell prompt redraw from clobbering
-        // the echo. Sent through the same `Message::InjectBytes`
-        // channel as the streaming response so the renderer treats the
-        // echo + reply as a single contiguous block.
-        let event_loop_tx = target.event_loop_tx.clone();
-        let inject = |bytes: Vec<u8>| -> Result<(), String> {
-            let n = bytes.len();
-            let msg = crate::terminal::writeable_pty::Message::InjectBytes(
-                std::borrow::Cow::Owned(bytes),
-            );
-            match event_loop_tx.lock().send(msg) {
-                Ok(_) => {
-                    log::trace!("omw# pump: injected {n} bytes into event_loop_tx");
-                    Ok(())
-                }
-                Err(e) => {
-                    log::warn!("omw# pump: inject {n} bytes FAILED: {e:?}");
-                    Err(format!("inject into local-tty event loop: {e:?}"))
-                }
-            }
-        };
-
-        let echo = format!("\r\n\x1b[2K# {prompt}\r\n");
-        match inject(echo.into_bytes()) {
-            Ok(_) => log::info!("omw# state: echo injected OK"),
-            Err(e) => log::warn!("omw# state: echo inject FAILED: {e}"),
-        }
-
-        // Send the prompt before spawning the pump — order matters: a
-        // missed first delta is preferable to a missed TurnFinished.
-        self.send_prompt(prompt)?;
-        log::info!("omw# state: send_prompt returned OK; spawning pump");
-
-        runtime.spawn(async move {
-            log::info!("omw# pump: started, awaiting events");
-            // ANSI palette: dim cyan for tool framing, dim yellow for
-            // approvals, dim grey for status, red for errors. Each event
-            // ends with `\x1b[0m` to reset before the assistant's text
-            // resumes.
-            const FRAME_DIM_CYAN: &str = "\x1b[2;36m";
-            const FRAME_YELLOW: &str = "\x1b[33m";
-            const FRAME_DIM: &str = "\x1b[2m";
-            const FRAME_RED: &str = "\x1b[31m";
-            const RESET: &str = "\x1b[0m";
-
-            let send = |bytes: Vec<u8>| {
-                let n = bytes.len();
-                let msg = crate::terminal::writeable_pty::Message::InjectBytes(
-                    std::borrow::Cow::Owned(bytes),
-                );
-                match event_loop_tx.lock().send(msg) {
-                    Ok(_) => log::trace!("omw# pump: injected {n} bytes"),
-                    Err(e) => log::warn!("omw# pump: inject {n} bytes FAILED: {e:?}"),
-                }
-            };
-            while let Ok(event) = events.recv().await {
-                let kind = match &event {
-                    super::omw_protocol::OmwAgentEventDown::AssistantDelta { .. } => "AssistantDelta",
-                    super::omw_protocol::OmwAgentEventDown::ToolCallStarted { .. } => "ToolCallStarted",
-                    super::omw_protocol::OmwAgentEventDown::ToolCallFinished { .. } => "ToolCallFinished",
-                    super::omw_protocol::OmwAgentEventDown::ApprovalRequest { .. } => "ApprovalRequest",
-                    super::omw_protocol::OmwAgentEventDown::Error { .. } => "Error",
-                    super::omw_protocol::OmwAgentEventDown::AgentCrashed => "AgentCrashed",
-                    super::omw_protocol::OmwAgentEventDown::TurnFinished { .. } => "TurnFinished",
-                    super::omw_protocol::OmwAgentEventDown::ExecCommand { .. } => "ExecCommand",
-                    super::omw_protocol::OmwAgentEventDown::CommandData { .. } => "CommandData",
-                    super::omw_protocol::OmwAgentEventDown::CommandExit { .. } => "CommandExit",
-                };
-                log::info!("omw# pump: recv event={kind}");
-                match event {
-                    super::omw_protocol::OmwAgentEventDown::AssistantDelta { delta, .. } => {
-                        send(delta.into_bytes());
-                    }
-                    super::omw_protocol::OmwAgentEventDown::ToolCallStarted {
-                        tool_name,
-                        args,
-                        ..
-                    } => {
-                        let summary = summarize_tool_args(&tool_name, &args);
-                        let line = format!(
-                            "\r\n{FRAME_DIM_CYAN}┌─ tool: {tool_name}{summary}{RESET}\r\n"
-                        );
-                        send(line.into_bytes());
-                    }
-                    super::omw_protocol::OmwAgentEventDown::ToolCallFinished {
-                        tool_name,
-                        is_error,
-                        ..
-                    } => {
-                        let marker = if is_error { "✗ failed" } else { "✓ done" };
-                        let color = if is_error { FRAME_RED } else { FRAME_DIM_CYAN };
-                        let line = format!("{color}└─ {tool_name}: {marker}{RESET}\r\n");
-                        send(line.into_bytes());
-                    }
-                    super::omw_protocol::OmwAgentEventDown::ApprovalRequest {
-                        approval_id,
-                        tool_call,
-                        ..
-                    } => {
-                        let tool_name = tool_call
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("(unknown)");
-                        let line = format!(
-                            "\r\n{FRAME_YELLOW}⚠  approval needed for {tool_name} (id={approval_id})\r\n   open the agent panel to Approve / Reject{RESET}\r\n"
-                        );
-                        send(line.into_bytes());
-                    }
-                    super::omw_protocol::OmwAgentEventDown::Error { message, .. } => {
-                        // Surface kernel/transport errors inline so the
-                        // user doesn't have to dig through the log to see
-                        // why a prompt produced no response.
-                        let line = format!("\r\n{FRAME_RED}omw agent error: {message}{RESET}\r\n");
-                        send(line.into_bytes());
-                    }
-                    super::omw_protocol::OmwAgentEventDown::AgentCrashed => {
-                        send(format!(
-                            "\r\n{FRAME_RED}omw agent kernel crashed (check ~/Library/Logs/warp-oss.log){RESET}\r\n"
-                        ).into_bytes());
-                        return;
-                    }
-                    super::omw_protocol::OmwAgentEventDown::TurnFinished { .. } => {
-                        // Trailing newline + status hint so the user
-                        // knows the turn is over before the next shell
-                        // prompt re-draws.
-                        send(format!("{FRAME_DIM}\r\n[turn finished]{RESET}\r\n").into_bytes());
-                        return;
-                    }
-                    // bash/* events are routed via the command broker
-                    // directly into the pane's PTY and don't need
-                    // re-rendering here.
-                    super::omw_protocol::OmwAgentEventDown::ExecCommand { .. }
-                    | super::omw_protocol::OmwAgentEventDown::CommandData { .. }
-                    | super::omw_protocol::OmwAgentEventDown::CommandExit { .. } => {}
-                }
-            }
-            log::warn!("omw# pump: events.recv() returned Err — channel closed/lagged; exiting");
-        });
-        Ok(())
-    }
-
-    /// Cancel the current in-flight prompt.
-    pub fn cancel(&self) -> Result<(), String> {
-        let outbound = self
-            .inner
-            .lock()
-            .outbound
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| "no active agent session".to_string())?;
-        outbound
-            .try_send(OmwAgentEventUp::Cancel)
-            .map_err(|e| format!("cancel: {e}"))
-    }
-
     /// Look up the [`PaneSession`] for a given pane. Returns `None` if
     /// the pane hasn't started a session yet (or has had its session
     /// removed via [`Self::remove_pane_session`]).
     pub fn pane_session(&self, view_id: warpui::EntityId) -> Option<Arc<PaneSession>> {
         self.pane_sessions.lock().get(&view_id).cloned()
+    }
+
+    /// Reverse lookup: find the pane that owns the given kernel
+    /// `session_id`. Used by the bash broker to route `bash/exec`
+    /// frames back to the correct pane — the event carries the kernel
+    /// session id, but the broker needs the pane's `view_id` to fetch
+    /// the right PTY handles. Linear scan; pane count is bounded by
+    /// simultaneous open terminals (single digits in practice).
+    pub fn pane_session_by_id(
+        &self,
+        session_id: &str,
+    ) -> Option<(warpui::EntityId, Arc<PaneSession>)> {
+        self.pane_sessions
+            .lock()
+            .iter()
+            .find(|(_, s)| s.session_id == session_id)
+            .map(|(view_id, s)| (*view_id, s.clone()))
     }
 
     /// Provision (or retrieve cached) a fresh kernel session bound to

@@ -27,15 +27,31 @@ const PANEL_PADDING: f32 = 16.;
 
 /// Render the agent panel.
 ///
-/// Minimal v0 render: status line + transcript messages as text rows.
-/// Prompt editor and click handlers are scoped for Task 11.
+/// Reads from `OmwAgentState::shared().transcript_snapshot()` rather
+/// than the panel's locally-held [`OmwAgentTranscriptModel`] because
+/// the kernel's WS readers (in `boot_pane_session` and `run_session`)
+/// fan every event into the shared transcript. The local model
+/// remains for backward compat but goes unused on this path.
+///
+/// The panel re-renders on each `ctx.notify()` from the panel's tick;
+/// `OmwAgentState::transcript_revision_rx` carries a counter that
+/// bumps on every event so callers can poll for changes without
+/// crossing tokio↔gpui thread boundaries directly.
 pub fn render_omw_agent_panel(
-    transcript: &OmwAgentTranscriptModel,
+    _transcript: &OmwAgentTranscriptModel,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
+    let state = OmwAgentState::shared();
 
-    let status_text = format!("Agent status: {:?}", OmwAgentState::shared().status());
+    // Combined status + transcript-revision counter so the user can
+    // see the panel is alive and tracking events.
+    let status_text = format!(
+        "Agent status: {:?}   (events: {})",
+        state.status(),
+        state.transcript_revision()
+    );
+    let messages = state.transcript_snapshot();
 
     let mut col = Flex::column().with_main_axis_size(MainAxisSize::Min);
 
@@ -55,7 +71,7 @@ pub fn render_omw_agent_panel(
     );
 
     // Message rows.
-    for message in transcript.messages() {
+    for message in messages.iter() {
         // Pending approvals get a card with Approve/Reject buttons. Other
         // states (Approved/Rejected/Cancelled) and other message variants
         // fall through to the text-summary path below.

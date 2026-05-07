@@ -180,6 +180,21 @@ pub struct OmwAgentState {
     /// panes. Keyed by the pane's [`warpui::EntityId`]. Populated
     /// lazily on the first `# `-prefix submission per pane.
     pane_sessions: Mutex<std::collections::HashMap<warpui::EntityId, Arc<PaneSession>>>,
+    /// Shared transcript the agent panel renders. Every event the
+    /// kernel emits is fanned through `apply_event` here in addition
+    /// to the per-pane pumps and the global broadcast bus, so the
+    /// panel sees a unified view across panes (and across sessions
+    /// started without going through a pane, e.g. via the panel's
+    /// own editor in a future iteration). Locked briefly per event;
+    /// the panel's render path takes a snapshot via
+    /// [`Self::transcript_snapshot`].
+    transcript: Mutex<super::omw_transcript::OmwAgentTranscriptModel>,
+    /// Monotonic counter incremented on every `apply_event`. The
+    /// panel observes the watch via [`Self::transcript_revision_rx`]
+    /// and triggers a redraw on each tick — without this, kernel
+    /// events would update the transcript but the panel would never
+    /// know to call `ctx.notify()`.
+    transcript_revision_tx: watch::Sender<u64>,
 }
 
 struct Inner {
@@ -207,6 +222,7 @@ impl OmwAgentState {
             .get_or_init(|| {
                 let (status_tx, _rx) = watch::channel(OmwAgentStatus::Idle);
                 let (event_tx, _ev_rx) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+                let (transcript_revision_tx, _) = watch::channel(0u64);
                 Arc::new(Self {
                     inner: Mutex::new(Inner {
                         status: OmwAgentStatus::Idle,
@@ -220,6 +236,10 @@ impl OmwAgentState {
                     event_tx,
                     active_terminal: Mutex::new(None),
                     pane_sessions: Mutex::new(std::collections::HashMap::new()),
+                    transcript: Mutex::new(
+                        super::omw_transcript::OmwAgentTranscriptModel::new(),
+                    ),
+                    transcript_revision_tx,
                 })
             })
             .clone()
@@ -540,6 +560,53 @@ impl OmwAgentState {
         self.pane_sessions.lock().get(&view_id).cloned()
     }
 
+    /// Snapshot of the shared transcript for rendering. Returns a
+    /// clone of the current message vector — the underlying lock is
+    /// released immediately so kernel events keep flowing into the
+    /// transcript while the panel renders.
+    pub fn transcript_snapshot(&self) -> Vec<super::omw_transcript::OmwAgentMessage> {
+        self.transcript.lock().messages().to_vec()
+    }
+
+    /// Subscribe to the transcript-revision watch channel. The number
+    /// increments on every `apply_event`. The agent panel observes
+    /// this counter via its own tick mechanism so it can re-render on
+    /// each kernel event without needing per-event `ctx.notify()`
+    /// across thread boundaries.
+    pub fn transcript_revision_rx(&self) -> watch::Receiver<u64> {
+        self.transcript_revision_tx.subscribe()
+    }
+
+    /// Current transcript-revision number. Cheap snapshot for the
+    /// panel's tick to compare against and decide whether to redraw.
+    pub fn transcript_revision(&self) -> u64 {
+        *self.transcript_revision_tx.borrow()
+    }
+
+    /// Push a user-typed prompt onto the shared transcript before
+    /// dispatching it. Reserves an empty assistant slot so streaming
+    /// deltas have somewhere to accumulate. Used by the inline pane
+    /// path (so the panel mirrors what the user typed) and by any
+    /// future panel-side editor.
+    pub fn transcript_push_user(&self, text: String) {
+        self.transcript.lock().push_user(text);
+        self.bump_transcript_revision();
+    }
+
+    /// Apply a kernel event to the shared transcript and bump the
+    /// revision. Called by the WS readers in [`run_session`] /
+    /// [`boot_pane_session`] so every event reaches the transcript
+    /// regardless of which pane it belongs to.
+    pub(crate) fn apply_to_transcript(&self, event: &OmwAgentEventDown) {
+        self.transcript.lock().apply_event(event);
+        self.bump_transcript_revision();
+    }
+
+    fn bump_transcript_revision(&self) {
+        let next = self.transcript_revision_tx.borrow().wrapping_add(1);
+        let _ = self.transcript_revision_tx.send(next);
+    }
+
     /// Provision (or retrieve cached) a fresh kernel session bound to
     /// `view_id`. Each pane owns its own [`PaneSession`] so that
     /// `# `-prefix prompts in different panes don't share conversation
@@ -682,6 +749,12 @@ impl OmwAgentState {
 
         let echo = format!("\r\n\x1b[2K# {prompt}\r\n");
         let _ = inject(echo.into_bytes());
+
+        // Mirror the user's prompt into the shared transcript so the
+        // agent panel shows the same conversation the inline pane is
+        // streaming. Without this, panel viewers would see only the
+        // assistant's deltas without the user prompt that triggered them.
+        self.transcript_push_user(prompt.clone());
 
         pane_session.send_prompt(prompt)?;
         log::info!("omw# state: send_prompt_inline_for_pane prompt sent; spawning pump");
@@ -1137,6 +1210,9 @@ async fn run_session(
                         }
                         _ => {}
                     }
+                    if let Some(state) = weak_self.upgrade() {
+                        state.apply_to_transcript(&event);
+                    }
                     let n = event_tx.send(event).map(|n| n as i64).unwrap_or(-1);
                     log::trace!("omw# session: ws-> broadcast subscribers={n}");
                 }
@@ -1253,6 +1329,12 @@ async fn boot_pane_session(
                                 });
                             }
                             _ => {}
+                        }
+                        // Update the shared transcript so the agent
+                        // panel sees this event, regardless of which
+                        // pane originated it.
+                        if let Some(state) = weak_self.upgrade() {
+                            state.apply_to_transcript(&event);
                         }
                         // Per-pane fan-out — only this pane's pump sees it.
                         let _ = event_tx_for_task.send(event.clone());

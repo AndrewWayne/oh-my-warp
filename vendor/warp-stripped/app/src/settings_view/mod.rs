@@ -1239,9 +1239,16 @@ impl SettingsView {
             me.handle_mcp_servers_page_event(event, ctx);
         });
 
-        // omw_local-only Agent settings page.
+        // omw_local-only Agent settings page. Registered via
+        // `add_typed_action_view` (not `add_view`) so the page's
+        // `TypedActionView<Action = OmwAgentPageAction>` impl is wired
+        // into the responder chain. Without this, `dispatch_typed_action`
+        // calls from the rendered Apply / Discard / Add Provider /
+        // Set Default / Remove / kind-toggle buttons fail with
+        // "Dispatched action has no handlers" — every click is a no-op.
         #[cfg(feature = "omw_local")]
-        let omw_agent_page_handle = ctx.add_view(omw_agent_page::OmwAgentPageView::new);
+        let omw_agent_page_handle =
+            ctx.add_typed_action_view(omw_agent_page::OmwAgentPageView::new);
 
         let font_family = Appearance::as_ref(ctx).ui_font_family();
         let search_editor = ctx.add_typed_action_view(|ctx| {

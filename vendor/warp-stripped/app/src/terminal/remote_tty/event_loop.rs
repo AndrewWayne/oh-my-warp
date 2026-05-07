@@ -144,6 +144,12 @@ impl EventLoop {
                         }
                         // TODO(alokedesai): Implement shutdown on the network backed PTY.
                         EventLoopMessage::Shutdown | EventLoopMessage::ChildExited => {}
+                        // Inline-agent inject is local-tty-only — remote
+                        // SSH panes don't carry an `omw_local` agent
+                        // surface. Drop silently to keep the variant
+                        // exhaustive without affecting the remote path.
+                        #[cfg(feature = "omw_local")]
+                        EventLoopMessage::InjectBytes(_) => {}
                     }
                 }
             })

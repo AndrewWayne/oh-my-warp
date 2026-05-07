@@ -9199,6 +9199,7 @@ dependencies = [
  "bytes",
  "chrono",
  "futures-util",
+ "log",
  "omw-audit",
  "omw-policy",
  "omw-pty",

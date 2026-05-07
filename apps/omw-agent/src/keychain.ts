@@ -90,6 +90,28 @@ async function spawnHelper(
 
 	const child = spawn(binary, ["get", keyRef], { env });
 
+	// CRITICAL: attach error listeners synchronously, BEFORE any other
+	// code path can yield to the event loop. Node 25's child_process
+	// emits 'error' for spawn failures (ENOENT, EACCES, …) via
+	// `process.nextTick`. If the event fires before any listener is
+	// attached, Node treats it as an uncaughtException and kills the
+	// process. Even though the Promise constructor below also adds an
+	// 'error' listener, getting here via `readAll`/`drain` first
+	// involves microtask scheduling that — empirically — can lose the
+	// race. Attaching no-op listeners up front guarantees the EE has
+	// at least one subscriber regardless of when the error arrives.
+	// The "real" close/error handling still flows through closePromise.
+	const captured: { err: NodeJS.ErrnoException | null } = { err: null };
+	child.on("error", (err: NodeJS.ErrnoException) => {
+		captured.err = err;
+	});
+	child.stdout?.on("error", () => {
+		/* absorbed by the readAll for-await */
+	});
+	child.stderr?.on("error", () => {
+		/* absorbed by the drain for-await */
+	});
+
 	// Read stdout eagerly via async iteration. We must drain the stream
 	// regardless of exit code, otherwise the test mock's `Readable.from`
 	// never flushes synchronously and we end up reading nothing. Consume
@@ -107,7 +129,18 @@ async function spawnHelper(
 		| { kind: "signal" }
 		| { kind: "error"; err: NodeJS.ErrnoException }
 	>((resolveOuter) => {
+		// If the early no-op listener already captured an error, settle
+		// immediately — `'close'` may not fire when spawn fails before
+		// the child even starts.
+		if (captured.err) {
+			resolveOuter({ kind: "error", err: captured.err });
+			return;
+		}
 		child.on("close", (code: number | null) => {
+			if (captured.err) {
+				resolveOuter({ kind: "error", err: captured.err });
+				return;
+			}
 			if (code === null) {
 				// Process killed by signal — partial stdout is not a valid
 				// secret. Reject with a sentinel exit code; do NOT include

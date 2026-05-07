@@ -58,10 +58,17 @@ pub enum AgentProcessError {
 
 /// Spawn configuration. Production callers fill this from `OMW_AGENT_BIN`
 /// + `$PATH`; tests pass an explicit path to a fixture .mjs.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AgentProcessConfig {
     pub command: String,
     pub args: Vec<String>,
+    /// Extra environment variables passed to the kernel child. Inherits the
+    /// parent's environment too — `cmd.env(k, v)` overrides only the
+    /// supplied keys. The in-process server uses this to inject
+    /// `OMW_KEYCHAIN_HELPER` so the kernel finds the helper binary even
+    /// when it's not on `$PATH` (a common case in dev/.app-bundle
+    /// builds).
+    pub env: Vec<(String, String)>,
 }
 
 impl AgentProcessConfig {
@@ -73,10 +80,12 @@ impl AgentProcessConfig {
             Ok(bin) => Self {
                 command: "node".into(),
                 args: vec![bin, "--serve-stdio".into()],
+                env: Vec::new(),
             },
             Err(_) => Self {
                 command: "omw-agent".into(),
                 args: vec!["--serve-stdio".into()],
+                env: Vec::new(),
             },
         }
     }
@@ -113,6 +122,9 @@ impl AgentProcess {
     pub async fn spawn(config: AgentProcessConfig) -> Result<Arc<Self>, AgentProcessError> {
         let mut cmd = tokio::process::Command::new(&config.command);
         cmd.args(&config.args);
+        for (k, v) in &config.env {
+            cmd.env(k, v);
+        }
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
@@ -146,6 +158,9 @@ impl AgentProcess {
 
         // Drain stderr without folding it into errors (I-1 defense in
         // depth — a buggy/malicious agent could leak secrets there).
+        // While debugging, also tee each line to our own stderr with a
+        // prefix so it's visible in the warp-oss log alongside the
+        // omw# trace.
         let stderr_drain = tokio::spawn(async move {
             let mut reader = BufReader::new(stderr);
             let mut buf = Vec::new();
@@ -153,7 +168,12 @@ impl AgentProcess {
                 buf.clear();
                 match reader.read_until(b'\n', &mut buf).await {
                     Ok(0) | Err(_) => break,
-                    Ok(_) => {}
+                    Ok(_) => {
+                        let line = String::from_utf8_lossy(&buf);
+                        let trimmed = line.trim_end();
+                        log::error!("omw# kernel-stderr: {trimmed}");
+                        crate::omw_debug(format!("omw# kernel-stderr: {trimmed}"));
+                    }
                 }
             }
         });
@@ -195,6 +215,20 @@ impl AgentProcess {
             watcher: Mutex::new(Some(watcher)),
             _child_guard: Mutex::new(None),
         }))
+    }
+
+    /// Returns `true` while the underlying child process is still
+    /// running. The watcher task spawned in [`spawn`] runs `child.wait()`
+    /// to completion and then returns, so a finished watcher is a
+    /// reliable proxy for "the kernel exited" (whether by clean exit or
+    /// crash). Used by `omw_inproc_server::ensure_running` to decide
+    /// whether to re-boot the kernel transparently.
+    pub fn is_alive(&self) -> bool {
+        let g = self.watcher.lock().expect("watcher lock poisoned");
+        match g.as_ref() {
+            Some(handle) => !handle.is_finished(),
+            None => false,
+        }
     }
 
     /// Bash broker handle. Public so future code (e.g. integration tests
@@ -338,8 +372,34 @@ async fn run_reader(
         }
         let frame: Value = match serde_json::from_str(line) {
             Ok(v) => v,
-            Err(_) => continue, // ignore non-JSON noise
+            Err(_) => {
+                let preview = line.chars().take(200).collect::<String>();
+                log::warn!(
+                    "omw# kernel-stdout: non-JSON line ({} bytes): {preview}",
+                    line.len()
+                );
+                crate::omw_debug(format!(
+                    "omw# kernel-stdout: non-JSON line ({} bytes): {preview}",
+                    line.len()
+                ));
+                continue; // ignore non-JSON noise
+            }
         };
+        if let Some(id) = frame.get("id").and_then(|v| v.as_u64()) {
+            let kind = if frame.get("error").is_some() {
+                "error"
+            } else {
+                "result"
+            };
+            let body = serde_json::to_string(&frame).unwrap_or_default();
+            log::error!("omw# kernel-stdout: response id={id} kind={kind} body={body}");
+            crate::omw_debug(format!(
+                "omw# kernel-stdout: response id={id} kind={kind} body={body}"
+            ));
+        } else if let Some(method) = frame.get("method").and_then(|v| v.as_str()) {
+            log::error!("omw# kernel-stdout: notification method={method}");
+            crate::omw_debug(format!("omw# kernel-stdout: notification method={method}"));
+        }
         route_frame(frame, &pending, &sessions, &bash_broker).await;
     }
 }
@@ -437,6 +497,7 @@ mod tests {
         AgentProcessConfig {
             command: "node".into(),
             args: vec!["-e".into(), script.into()],
+            env: Vec::new(),
         }
     }
 
@@ -485,6 +546,7 @@ mod tests {
                     process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:req.id,error:{code:-32601,message:'no'}}) + '\n');
                 });"#.into(),
             ],
+            env: Vec::new(),
         };
         let agent = AgentProcess::spawn(cfg).await.unwrap();
         let err = agent.send_method("bogus", json!({})).await.unwrap_err();

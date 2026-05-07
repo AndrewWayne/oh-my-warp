@@ -372,6 +372,26 @@ function translateEvent(
 			}
 			break;
 		}
+		case "message_end": {
+			// pi-ai surfaces provider errors (e.g. OpenAI 401 on a
+			// missing/invalid API key) via the AssistantMessage's
+			// `stopReason: "error"` + `errorMessage` rather than as a
+			// separate AgentEvent variant. Without this branch the
+			// error is silently dropped and the client only sees
+			// `turn/finished` — leaving the user staring at an empty
+			// pane with no explanation. Surface it as an `error`
+			// notification so the inline-pump renders it visibly.
+			const msg = event.message as { role?: string; stopReason?: string; errorMessage?: string };
+			if (
+				msg.role === "assistant" &&
+				(msg.stopReason === "error" || msg.stopReason === "aborted") &&
+				typeof msg.errorMessage === "string" &&
+				msg.errorMessage.length > 0
+			) {
+				notify("error", { sessionId, message: msg.errorMessage });
+			}
+			break;
+		}
 		case "tool_execution_start":
 			notify("tool/call_started", {
 				sessionId,
@@ -389,8 +409,8 @@ function translateEvent(
 			});
 			break;
 		// Other events (agent_start, agent_end, turn_start, turn_end,
-		// message_start, message_end, tool_execution_update) are not
-		// surfaced as notifications in v0.1. The synthetic `turn/finished`
+		// message_start, tool_execution_update) are not surfaced as
+		// notifications in v0.1. The synthetic `turn/finished`
 		// notification signals completion to the client.
 	}
 }

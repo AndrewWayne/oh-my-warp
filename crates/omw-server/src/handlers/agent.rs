@@ -33,18 +33,36 @@ pub async fn create_session(
     State(agent): State<Arc<AgentProcess>>,
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let body_str = serde_json::to_string(&body).unwrap_or_else(|_| "<unserialisable>".into());
+    log::error!("omw# server: POST /agent/sessions body={body_str}");
+    crate::omw_debug(format!("omw# server: POST /agent/sessions body={body_str}"));
     let result = agent
         .send_method("session/create", body)
         .await
-        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
+        .map_err(|e| {
+            log::error!("omw# server: agent.send_method FAILED: {e}");
+            crate::omw_debug(format!("omw# server: agent.send_method FAILED: {e}"));
+            (StatusCode::SERVICE_UNAVAILABLE, e.to_string())
+        })?;
+    let result_str = serde_json::to_string(&result).unwrap_or_else(|_| "<unserialisable>".into());
+    log::error!("omw# server: kernel session/create result={result_str}");
+    crate::omw_debug(format!("omw# server: kernel session/create result={result_str}"));
     let session_id = result
         .get("sessionId")
         .and_then(|v| v.as_str())
-        .ok_or((
-            StatusCode::BAD_GATEWAY,
-            "kernel did not return sessionId".to_string(),
-        ))?
+        .ok_or_else(|| {
+            log::error!("omw# server: 502 — result has no sessionId; raw={result_str}");
+            crate::omw_debug(format!(
+                "omw# server: 502 — result has no sessionId; raw={result_str}"
+            ));
+            (
+                StatusCode::BAD_GATEWAY,
+                "kernel did not return sessionId".to_string(),
+            )
+        })?
         .to_string();
+    log::error!("omw# server: session_id={session_id}; replying 201");
+    crate::omw_debug(format!("omw# server: session_id={session_id}; replying 201"));
     Ok((StatusCode::CREATED, Json(json!({ "sessionId": session_id }))))
 }
 

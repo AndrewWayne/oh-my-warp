@@ -128,6 +128,7 @@ base_url = "https://example.com/v1"
         ProviderConfig::OpenAi {
             key_ref: KeyRef::from_str("keychain:omw/x").unwrap(),
             default_model: None,
+            base_url: None,
         },
     );
 
@@ -179,6 +180,7 @@ temperature = 0.7
         ProviderConfig::OpenAi {
             key_ref: KeyRef::from_str("keychain:omw/x").unwrap(),
             default_model: Some("gpt-4o".to_string()),
+            base_url: None,
         },
     );
     let cfg = Config {

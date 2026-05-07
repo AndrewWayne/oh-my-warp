@@ -210,8 +210,19 @@ fn osc133_prompt_end_emits_command_exit_with_exit_code() {
     });
     std::thread::sleep(Duration::from_millis(50));
 
-    // Send an OSC 133 prompt-end marker with exit code 1.
-    let chunk = b"\x1b]133;D;1\x07".to_vec();
+    // Send the actual end-of-command marker Warp's shell hooks emit on
+    // macOS / Linux: a DCS-wrapped hex-encoded JSON `CommandFinished`
+    // message (see `assets/bundled/bootstrap/zsh_body.sh`'s
+    // `warp_send_json_message` function). The earlier test stub used a
+    // synthetic OSC 133 sequence that no real shell ever emitted, so
+    // the broker's detector was untested against production traffic.
+    let json = "{\"hook\":\"CommandFinished\",\"value\":{\"exit_code\":1}}";
+    let mut chunk: Vec<u8> = Vec::new();
+    chunk.extend_from_slice(b"\x1b\x50\x24\x64");
+    for byte in json.as_bytes() {
+        chunk.extend_from_slice(format!("{byte:02x}").as_bytes());
+    }
+    chunk.push(0x9c);
     let _ = pane.pty_reads_tx.try_broadcast(Arc::new(chunk));
 
     // First event is CommandData (the broker forwards every chunk before

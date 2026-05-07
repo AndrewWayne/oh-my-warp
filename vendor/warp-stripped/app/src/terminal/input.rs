@@ -5952,30 +5952,88 @@ impl Input {
         // is the inline-agent prompt sigil per inline-agent-command-execution-report.md §4.
         // `## …` escapes back to a literal shell comment. We intercept
         // before the rest of the shell pipeline so the kernel — not the
-        // shell — sees the user's natural-language prompt.
+        // shell — sees the user's natural-language prompt, and the
+        // streaming response is pumped back into the same pane's PTY
+        // broadcast so the user sees the reply inline (no need to open
+        // the agent panel).
         #[cfg(feature = "omw_local")]
         {
             if let Some(prompt) = parse_inline_agent_prompt(command) {
+                log::info!("omw# input: intercepting prompt={prompt:?}");
                 let state = crate::ai_assistant::omw_agent_state::OmwAgentState::shared();
+                let active = state.active_terminal_clone();
+                log::info!(
+                    "omw# input: status={:?} active_pane={}",
+                    state.status(),
+                    if active.is_some() { "Some" } else { "None" }
+                );
                 // Lazy-start the in-process kernel + WS session if the
                 // user's first interaction is a `#` prompt rather than
-                // opening the panel. Errors land on the panel header as
-                // `OmwAgentStatus::Failed` for the user to see.
+                // opening the panel.
                 if matches!(
                     state.status(),
                     crate::ai_assistant::omw_agent_state::OmwAgentStatus::Idle
                         | crate::ai_assistant::omw_agent_state::OmwAgentStatus::Failed { .. }
                 ) {
+                    log::info!("omw# input: status is Idle/Failed; calling start_with_config");
                     if let Err(e) = state.start_with_config() {
-                        log::warn!("omw # prompt: start_with_config failed: {e}");
-                        // Fall through to shell execution — `# foo` becomes a comment.
-                        return self.try_execute_command_inner(command, ctx);
+                        log::warn!("omw# input: start_with_config failed: {e}");
+                        // Surface the error inline so the user doesn't
+                        // have to check the log file.
+                        if let Some(h) = active.as_ref() {
+                            let line = format!("\r\n\x1b[31momw # prompt failed: {e}\x1b[0m\r\n");
+                            let _ = h.pty_reads_tx.try_broadcast(std::sync::Arc::new(line.into_bytes()));
+                        }
+                        // Clear input + claim the line so it doesn't end
+                        // up as a shell comment in the user's history.
+                        self.editor.update(ctx, |ed, ctx| {
+                            ed.set_buffer_text("", ctx);
+                        });
+                        return true;
                     }
+                    log::info!("omw# input: start_with_config OK; status={:?}", state.status());
                 }
-                if let Err(e) = state.send_prompt(prompt.to_string()) {
-                    log::warn!("omw # prompt: send_prompt failed: {e}");
-                    return self.try_execute_command_inner(command, ctx);
+                // Capture the focused pane's PTY broadcast at submit
+                // time so the response stays in the same pane even if
+                // the user shifts focus mid-stream. If no local-tty pane
+                // is registered (e.g. immediately after app launch
+                // before the first pane focus has fired), refuse the
+                // prompt with a visible warning in the editor — the
+                // panel-only path is silent in this state and would
+                // produce the exact "no response, no error" experience
+                // we're trying to eliminate.
+                let send_result = match active.clone() {
+                    Some(handle) => {
+                        log::info!("omw# input: dispatching to send_prompt_inline");
+                        state.send_prompt_inline(prompt.to_string(), handle)
+                    }
+                    None => {
+                        log::warn!(
+                            "omw# input: no active local terminal pane registered; refusing prompt"
+                        );
+                        self.editor.update(ctx, |ed, ctx| {
+                            ed.set_buffer_text(
+                                &format!(
+                                    "# {prompt}    ⚠ no active terminal pane — click a pane and retry"
+                                ),
+                                ctx,
+                            );
+                        });
+                        return true;
+                    }
+                };
+                if let Err(e) = send_result {
+                    log::warn!("omw# input: send failed: {e}");
+                    if let Some(h) = active.as_ref() {
+                        let line = format!("\r\n\x1b[31momw # prompt send failed: {e}\x1b[0m\r\n");
+                        let _ = h.pty_reads_tx.try_broadcast(std::sync::Arc::new(line.into_bytes()));
+                    }
+                    self.editor.update(ctx, |ed, ctx| {
+                        ed.set_buffer_text("", ctx);
+                    });
+                    return true;
                 }
+                log::info!("omw# input: send dispatch OK; clearing editor");
                 // Clear the input box so the prompt doesn't linger.
                 self.editor.update(ctx, |ed, ctx| {
                     ed.set_buffer_text("", ctx);

@@ -169,6 +169,23 @@ where
                 }
                 Message::Resize(size) => self.pty.on_resize(&size),
                 Message::ChildExited => return ChannelResult::TerminateLoop { child_exited: true },
+                #[cfg(feature = "omw_local")]
+                Message::InjectBytes(bytes) => {
+                    // Feed synthetic bytes through the same ANSI parser
+                    // pipeline `pty_read` uses, with the same terminal
+                    // lock + writer. From the renderer's perspective
+                    // these are indistinguishable from real PTY output:
+                    // they get parsed, update the terminal model, and
+                    // are surfaced as block content + a wakeup redraw.
+                    let mut terminal = self.terminal.lock();
+                    state.parser.parse_bytes(
+                        terminal.deref_mut(),
+                        &bytes,
+                        &mut self.pty.writer(),
+                    );
+                    drop(terminal);
+                    self.event_listener.send_wakeup_event();
+                }
             }
         }
 

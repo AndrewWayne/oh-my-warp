@@ -297,4 +297,90 @@ describe("runStdioServer protocol round-trip", () => {
 			await server.stop();
 		}
 	});
+
+	// Regression: when the upstream provider rejects (e.g. OpenAI 401
+	// because the keychain entry was empty / not configured), pi-ai
+	// folds the error into an AssistantMessage with `stopReason:
+	// "error"` and `errorMessage`. The agent loop emits a `message_end`
+	// event for that message; `translateEvent` previously dropped it,
+	// leaving the WS client with only `turn/finished` and no idea why
+	// nothing rendered. The fix surfaces the embedded errorMessage as
+	// an `error` notification so the inline-pump can render it.
+	it("provider 401 surfaces as an `error` notification (not silent turn/finished)", async () => {
+		const provider = await startMockProvider401();
+		const server = startServer({ getApiKey: async () => undefined });
+		try {
+			send(server.stdin, {
+				jsonrpc: "2.0",
+				id: 1,
+				method: "session/create",
+				params: {
+					providerConfig: {
+						kind: "openai-compatible",
+						key_ref: "omw/test",
+						base_url: provider.url,
+					},
+					model: "test-model",
+				},
+			});
+			const createReply = await server.pendingFrame();
+			expect(createReply.id).toBe(1);
+			const sessionId = (createReply.result as { sessionId: string }).sessionId;
+
+			send(server.stdin, {
+				jsonrpc: "2.0",
+				id: 2,
+				method: "session/prompt",
+				params: { sessionId, prompt: "say hi" },
+			});
+			const ack = await server.pendingFrame();
+			expect(ack.id).toBe(2);
+			expect(ack.result).toEqual({ ok: true });
+
+			// Collect notifications until turn/finished. We expect to
+			// see an `error` notification BEFORE turn/finished, with a
+			// non-empty message that mentions auth / 401 / unauthorized.
+			let errorNotif: JsonRpcFrame | null = null;
+			let turnFinished: JsonRpcFrame | null = null;
+			while (turnFinished === null) {
+				const frame = await server.pendingFrame();
+				if (frame.method === "error") {
+					errorNotif = frame;
+				} else if (frame.method === "turn/finished") {
+					turnFinished = frame;
+				}
+			}
+			expect(errorNotif, "expected an error notification before turn/finished").not.toBeNull();
+			const errParams = errorNotif!.params as { sessionId: string; message: string };
+			expect(errParams.sessionId).toBe(sessionId);
+			expect(errParams.message.length).toBeGreaterThan(0);
+			expect(turnFinished.params).toMatchObject({ sessionId });
+		} finally {
+			await server.stop();
+			await provider.close();
+		}
+	}, 15000);
 });
+
+/// Mock provider that always returns HTTP 401 — simulates an OpenAI
+/// endpoint rejecting an empty/invalid API key.
+function startMockProvider401(): Promise<MockServer> {
+	return new Promise((resolve) => {
+		const server = createServer((req, res) => {
+			req.on("data", () => undefined);
+			req.on("end", () => {
+				res.statusCode = 401;
+				res.setHeader("Content-Type", "application/json");
+				res.end(JSON.stringify({ error: { message: "Invalid API key", type: "invalid_request_error" } }));
+			});
+		});
+		server.listen(0, "127.0.0.1", () => {
+			const addr = server.address() as AddressInfo;
+			resolve({
+				server,
+				url: `http://127.0.0.1:${addr.port}`,
+				close: () => new Promise((r) => server.close(() => r())),
+			});
+		});
+	});
+}

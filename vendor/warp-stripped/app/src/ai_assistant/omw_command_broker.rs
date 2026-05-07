@@ -135,54 +135,194 @@ async fn handle_exec(
     }
 }
 
-/// Detect OSC 133 prompt-end (`ESC ] 133 ; D ; <code> BEL`).
+/// Detect Warp's `CommandFinished` shell-integration message and return the
+/// reported exit code.
 ///
-/// Returns `Some(Some(code))` when a code is present, `Some(None)` when
-/// the marker has no exit code, and `None` when no marker is present in
-/// the chunk. Warp's bundled shell hooks emit this at command end.
+/// Warp's bundled shell hooks (`assets/bundled/bootstrap/{zsh,bash}_body.sh`)
+/// emit a hex-encoded JSON payload wrapped in either:
+///
+///   - **DCS** (macOS, Linux): `ESC P $ d <hex> ST` — bytes
+///     `\x1b\x50\x24\x64<hex>\x9c`. This is what the `warp_send_json_message`
+///     function picks on non-Windows.
+///   - **OSC 9278** (WSL / Windows): `ESC ] 9278 ; d ; <hex> BEL` — bytes
+///     `\x1b]9278;d;<hex>\x07`.
+///
+/// The hex payload decodes to a JSON document whose `hook` field is
+/// `"CommandFinished"` for command-end events. The corresponding
+/// `value.exit_code` carries the shell's `$?` after the user command.
+///
+/// Returns:
+///   - `Some(Some(code))` — `CommandFinished` JSON found with `exit_code`.
+///   - `Some(None)` — `CommandFinished` JSON found but no parseable exit code.
+///   - `None` — no Warp shell-integration end-of-command marker in the chunk.
+///
+/// Other hooks (`InitShell`, `Precmd`, `Preexec`, `InputBuffer`, …) ride the
+/// same envelope but with different `hook` values; we deliberately ignore
+/// them here so the broker only resolves on a real command boundary.
 pub fn detect_osc133_prompt_end(bytes: &[u8]) -> Option<Option<i32>> {
-    let s = String::from_utf8_lossy(bytes);
-    let needle = "\x1b]133;D";
-    if let Some(idx) = s.find(needle) {
-        let tail = &s[idx + needle.len()..];
-        if let Some(end) = tail.find('\x07') {
-            let inner = &tail[..end];
-            if inner.is_empty() {
-                return Some(None);
-            }
-            if let Some(stripped) = inner.strip_prefix(';') {
-                return Some(stripped.parse::<i32>().ok());
-            }
+    // Try DCS first (the macOS / Linux path). The DCS payload is bytes
+    // between `ESC P $ d` and the ST byte `\x9c`.
+    if let Some(payload) = extract_dcs_warp_payload(bytes) {
+        if let Some(code) = parse_command_finished_from_hex(payload) {
+            return Some(code);
+        }
+    }
+    // Fall back to OSC 9278 (Windows / WSL). Payload is between
+    // `ESC ] 9278 ; d ;` and the BEL byte `\x07`.
+    if let Some(payload) = extract_osc_9278_warp_payload(bytes) {
+        if let Some(code) = parse_command_finished_from_hex(payload) {
+            return Some(code);
         }
     }
     None
+}
+
+/// Find `\x1b\x50\x24\x64...\x9c` and return the inner bytes.
+fn extract_dcs_warp_payload(bytes: &[u8]) -> Option<&[u8]> {
+    let prefix: &[u8] = b"\x1b\x50\x24\x64";
+    let start = find_subslice(bytes, prefix)? + prefix.len();
+    let after = &bytes[start..];
+    let end = find_subslice(after, b"\x9c")?;
+    Some(&after[..end])
+}
+
+/// Find `\x1b]9278;d;...\x07` and return the inner bytes.
+fn extract_osc_9278_warp_payload(bytes: &[u8]) -> Option<&[u8]> {
+    let prefix: &[u8] = b"\x1b]9278;d;";
+    let start = find_subslice(bytes, prefix)? + prefix.len();
+    let after = &bytes[start..];
+    let end = find_subslice(after, b"\x07")?;
+    Some(&after[..end])
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .position(|w| w == needle)
+}
+
+/// Decode a hex-encoded JSON payload and, if it's a `CommandFinished` hook,
+/// return its `exit_code` (or `Some(None)` when the field is missing).
+fn parse_command_finished_from_hex(hex_bytes: &[u8]) -> Option<Option<i32>> {
+    // Hex-decode (case-insensitive, two-char nibbles, ignore any
+    // accidental whitespace from the shell `od`/`tr` pipeline).
+    let mut out: Vec<u8> = Vec::with_capacity(hex_bytes.len() / 2);
+    let mut hi: Option<u8> = None;
+    for &b in hex_bytes {
+        if b.is_ascii_whitespace() {
+            continue;
+        }
+        let nibble = match b {
+            b'0'..=b'9' => b - b'0',
+            b'a'..=b'f' => 10 + (b - b'a'),
+            b'A'..=b'F' => 10 + (b - b'A'),
+            _ => return None,
+        };
+        match hi {
+            None => hi = Some(nibble),
+            Some(h) => {
+                out.push((h << 4) | nibble);
+                hi = None;
+            }
+        }
+    }
+    if hi.is_some() {
+        return None; // odd-length hex
+    }
+    let json_str = std::str::from_utf8(&out).ok()?;
+    let value: serde_json::Value = serde_json::from_str(json_str).ok()?;
+    if value.get("hook").and_then(|v| v.as_str()) != Some("CommandFinished") {
+        return None;
+    }
+    let exit_code = value
+        .get("value")
+        .and_then(|v| v.get("exit_code"))
+        .and_then(|v| v.as_i64())
+        .and_then(|n| i32::try_from(n).ok());
+    Some(exit_code)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn detects_osc133_with_exit_code_zero() {
-        let bytes = b"hello\x1b]133;D;0\x07world";
-        assert_eq!(detect_osc133_prompt_end(bytes), Some(Some(0)));
+    /// Helper: build the wire bytes the shell emits via DCS for a given
+    /// CommandFinished payload — mirrors `warp_send_json_message` on
+    /// non-Windows.
+    fn dcs_command_finished(exit_code: i32) -> Vec<u8> {
+        let json = format!(
+            "{{\"hook\":\"CommandFinished\",\"value\":{{\"exit_code\":{exit_code}}}}}"
+        );
+        let mut out = Vec::new();
+        out.extend_from_slice(b"\x1b\x50\x24\x64");
+        for byte in json.as_bytes() {
+            out.extend_from_slice(format!("{byte:02x}").as_bytes());
+        }
+        out.push(0x9c);
+        out
+    }
+
+    fn osc_9278_command_finished(exit_code: i32) -> Vec<u8> {
+        let json = format!(
+            "{{\"hook\":\"CommandFinished\",\"value\":{{\"exit_code\":{exit_code}}}}}"
+        );
+        let mut out = Vec::new();
+        out.extend_from_slice(b"\x1b]9278;d;");
+        for byte in json.as_bytes() {
+            out.extend_from_slice(format!("{byte:02x}").as_bytes());
+        }
+        out.push(0x07);
+        out
     }
 
     #[test]
-    fn detects_osc133_with_exit_code_127() {
-        let bytes = b"hello\x1b]133;D;127\x07";
-        assert_eq!(detect_osc133_prompt_end(bytes), Some(Some(127)));
+    fn detects_dcs_command_finished_zero() {
+        let bytes = dcs_command_finished(0);
+        assert_eq!(detect_osc133_prompt_end(&bytes), Some(Some(0)));
     }
 
     #[test]
-    fn detects_osc133_without_exit_code() {
-        let bytes = b"\x1b]133;D\x07";
-        assert_eq!(detect_osc133_prompt_end(bytes), Some(None));
+    fn detects_dcs_command_finished_nonzero() {
+        let bytes = dcs_command_finished(127);
+        assert_eq!(detect_osc133_prompt_end(&bytes), Some(Some(127)));
     }
 
     #[test]
-    fn no_osc133_returns_none() {
+    fn detects_osc_9278_command_finished() {
+        let bytes = osc_9278_command_finished(2);
+        assert_eq!(detect_osc133_prompt_end(&bytes), Some(Some(2)));
+    }
+
+    #[test]
+    fn ignores_init_shell_dcs_message() {
+        // Same envelope but `hook = "InitShell"` — must NOT terminate
+        // the broker's wait loop.
+        let json = "{\"hook\":\"InitShell\",\"value\":{\"session_id\":1}}";
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"\x1b\x50\x24\x64");
+        for b in json.as_bytes() {
+            bytes.extend_from_slice(format!("{b:02x}").as_bytes());
+        }
+        bytes.push(0x9c);
+        assert_eq!(detect_osc133_prompt_end(&bytes), None);
+    }
+
+    #[test]
+    fn no_marker_returns_none() {
         let bytes = b"plain output, no marker";
         assert_eq!(detect_osc133_prompt_end(bytes), None);
+    }
+
+    #[test]
+    fn embedded_in_larger_chunk() {
+        // The DCS marker may arrive interleaved with command stdout;
+        // the broker must still extract it.
+        let mut bytes = b"hello world\n".to_vec();
+        bytes.extend_from_slice(&dcs_command_finished(0));
+        bytes.extend_from_slice(b"\nuser@host:~$ ");
+        assert_eq!(detect_osc133_prompt_end(&bytes), Some(Some(0)));
     }
 }

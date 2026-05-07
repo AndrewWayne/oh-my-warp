@@ -199,6 +199,17 @@ pub enum ProviderConfig {
         key_ref: KeyRef,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         default_model: Option<String>,
+        /// Optional override for the OpenAI API endpoint. Lets users
+        /// route through Azure OpenAI deployments, regional CDN
+        /// fronts, or a local intercepting proxy without having to
+        /// switch the provider variant to `openai-compatible`. When
+        /// `None` (the default), pi-ai uses `https://api.openai.com/v1`.
+        /// The kernel reads this in `session.ts::buildModel` and
+        /// passes it to `manualOpenAICompletions` for unknown model
+        /// ids — registered models in pi-ai's registry still use
+        /// their hard-coded endpoint.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base_url: Option<BaseUrl>,
     },
     #[serde(rename = "anthropic")]
     Anthropic {

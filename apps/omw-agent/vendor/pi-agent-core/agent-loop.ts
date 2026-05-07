@@ -46,11 +46,53 @@ export function agentLoop(
 		},
 		signal,
 		streamFn,
-	).then((messages) => {
-		stream.end(messages);
-	});
+	)
+		.then((messages) => {
+			stream.end(messages);
+		})
+		// CRITICAL: a missing .catch() lets `runAgentLoop`'s rejection
+		// escape as an unhandled promise rejection, which on Node 25
+		// (default `--unhandled-rejections=throw`) is fatal — the
+		// kernel process exits, leaving the next session/create POST
+		// to write into closed stdin (502/503 in the omw-server). We
+		// observed this when `config.getApiKey` rejects (e.g. spawn
+		// ENOENT for the keychain helper).
+		//
+		// Recovery: stash the error on the stream (via the
+		// `_omwError` property — see `agentStreamError`/`agentStreamFail`)
+		// and end the stream cleanly. Consumers (session.ts) inspect
+		// the stream after iteration and re-throw, so runPrompt's
+		// catch can convert it into an `error` notification that
+		// reaches the WS client.
+		.catch((err) => {
+			agentStreamFail(stream, err);
+			stream.end([]);
+		});
 
 	return stream;
+}
+
+/// Property bag attached to streams returned by [`agentLoop`] /
+/// [`agentLoopContinue`] when the underlying `runAgentLoop` rejects.
+/// Consumers retrieve it via [`agentStreamError`] after iteration; we
+/// keep this off the EventStream type surface to avoid mutating the
+/// upstream pi-ai package interface.
+const STREAM_ERROR = Symbol.for("omw-agent.agentStream.error");
+
+function agentStreamFail(
+	stream: EventStream<AgentEvent, AgentMessage[]>,
+	err: unknown,
+): void {
+	(stream as unknown as Record<symbol, unknown>)[STREAM_ERROR] = err;
+}
+
+/// Returns the captured error from a stream that failed mid-loop, or
+/// `undefined` if the loop completed normally. Stable surface used by
+/// `session.ts` to re-throw after iteration.
+export function agentStreamError(
+	stream: EventStream<AgentEvent, AgentMessage[]>,
+): unknown {
+	return (stream as unknown as Record<symbol, unknown>)[STREAM_ERROR];
 }
 
 /**
@@ -85,9 +127,15 @@ export function agentLoopContinue(
 		},
 		signal,
 		streamFn,
-	).then((messages) => {
-		stream.end(messages);
-	});
+	)
+		.then((messages) => {
+			stream.end(messages);
+		})
+		// Mirror agentLoop's recovery — see the long comment there.
+		.catch((err) => {
+			agentStreamFail(stream, err);
+			stream.end([]);
+		});
 
 	return stream;
 }

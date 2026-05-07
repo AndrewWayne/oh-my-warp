@@ -92,6 +92,7 @@ async fn spawn_server_and_mock_agent() -> (Server, MockHandle) {
     let cfg = AgentProcessConfig {
         command: "node".into(),
         args: vec![mock_fixture_path().to_string_lossy().into_owned()],
+        env: Vec::new(),
     };
     let agent = AgentProcess::spawn(cfg).await.expect("agent spawn failed");
     // Subscribe to the mock-control bus *before* binding the router so we

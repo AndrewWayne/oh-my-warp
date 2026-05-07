@@ -72,7 +72,26 @@ pub fn router(registry: Arc<SessionRegistry>) -> Router {
 /// ```ignore
 /// let app = router(registry).merge(agent_router(agent));
 /// ```
+/// Write a line to /tmp/omw-debug.log unconditionally. Bypasses the log
+/// facade so we can verify code paths even if env_logger's filter or
+/// target routing is dropping our log:: calls. Best-effort — errors are
+/// silently ignored so debug instrumentation never breaks the request
+/// path.
+pub(crate) fn omw_debug(line: impl AsRef<str>) {
+    use std::io::Write;
+    let now = chrono::Local::now().format("%H:%M:%S%.3f");
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/omw-debug.log")
+        .and_then(|mut f| writeln!(f, "{now} {}", line.as_ref()));
+}
+
 pub fn agent_router(agent: Arc<AgentProcess>) -> Router {
+    log::error!(
+        "omw# server: agent_router built (probe — confirms omw_server log:: routes to warp logger)"
+    );
+    omw_debug("omw# server: agent_router built (probe — direct file write)");
     Router::new()
         .route(
             "/api/v1/agent/sessions",
@@ -93,11 +112,11 @@ pub fn audit_router(audit: handlers::audit::AuditState) -> Router {
         .with_state(audit)
 }
 
-/// Bind a loopback listener and serve the agent surface to completion.
+/// Bind the loopback listener and serve the agent surface to completion.
 ///
 /// Used by the bundled-in-warp-oss in-process server so the GUI doesn't
-/// need a sidecar process. The function consumes the supplied `bind_addr`
-/// (typically `127.0.0.1:8788`) and serves [`agent_router`] against the
+/// need a sidecar process. The function binds `bind_addr` (typically
+/// `127.0.0.1:8788`) inline and serves [`agent_router`] against the
 /// supplied [`AgentProcess`] until the future is dropped or the underlying
 /// listener errors.
 ///
@@ -112,6 +131,28 @@ pub async fn serve_agent_loopback(
     let listener = tokio::net::TcpListener::bind(bind_addr)
         .await
         .map_err(|e| format!("bind {bind_addr}: {e}"))?;
+    serve_agent_on_listener(listener, agent).await
+}
+
+/// Bind only — return a [`tokio::net::TcpListener`] so the caller can
+/// confirm the port is up before doing anything else (e.g. dialing the
+/// loopback themselves). Pair with [`serve_agent_on_listener`] to drive
+/// the server to completion.
+pub async fn bind_agent_loopback(
+    bind_addr: &str,
+) -> std::result::Result<tokio::net::TcpListener, String> {
+    tokio::net::TcpListener::bind(bind_addr)
+        .await
+        .map_err(|e| format!("bind {bind_addr}: {e}"))
+}
+
+/// Serve the agent surface against a pre-bound listener. Used by the
+/// in-process server so the bind step finishes synchronously (eliminating
+/// the listener-not-yet-up race against the GUI's first session POST).
+pub async fn serve_agent_on_listener(
+    listener: tokio::net::TcpListener,
+    agent: Arc<AgentProcess>,
+) -> std::result::Result<(), String> {
     let app = agent_router(agent);
     axum::serve(listener, app.into_make_service())
         .await

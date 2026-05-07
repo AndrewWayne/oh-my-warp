@@ -21,6 +21,7 @@ VENDOR_DIR="${REPO_ROOT}/vendor/warp-stripped"
 DIST_DIR="${REPO_ROOT}/dist"
 ICON_SRC="${REPO_ROOT}/assets/omw-warp-oss-icon.png"
 PLIST_TEMPLATE="${REPO_ROOT}/scripts/release/Info.plist.template"
+OMW_AGENT_DIR="${REPO_ROOT}/apps/omw-agent"
 
 # Host check: aarch64-apple-darwin only.
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
@@ -32,6 +33,7 @@ fi
 [[ -f "${ICON_SRC}" ]] || { echo "ERROR: missing icon at ${ICON_SRC}" >&2; exit 2; }
 [[ -f "${PLIST_TEMPLATE}" ]] || { echo "ERROR: missing plist template at ${PLIST_TEMPLATE}" >&2; exit 2; }
 [[ -d "${VENDOR_DIR}" ]] || { echo "ERROR: missing vendor at ${VENDOR_DIR}" >&2; exit 2; }
+[[ -d "${OMW_AGENT_DIR}" ]] || { echo "ERROR: missing omw-agent at ${OMW_AGENT_DIR}" >&2; exit 2; }
 
 # cargo on PATH.
 [[ -f "${HOME}/.cargo/env" ]] && source "${HOME}/.cargo/env"
@@ -47,6 +49,20 @@ echo "==> Building omw_local release binary (version ${VERSION}) ..."
 )
 BINARY="${VENDOR_DIR}/target/release/warp-oss"
 [[ -f "${BINARY}" ]] || { echo "ERROR: build did not produce ${BINARY}" >&2; exit 1; }
+
+echo "==> Building omw-agent kernel (TypeScript -> dist/) ..."
+command -v node >/dev/null || { echo "ERROR: node not on PATH (required for omw-agent build)" >&2; exit 2; }
+command -v npm  >/dev/null || { echo "ERROR: npm not on PATH (required for omw-agent build)"  >&2; exit 2; }
+(
+    cd "${OMW_AGENT_DIR}"
+    if [[ ! -d node_modules ]]; then
+        echo "    omw-agent: installing dependencies (first build)"
+        npm install --no-fund --no-audit
+    fi
+    npm run build
+)
+[[ -f "${OMW_AGENT_DIR}/dist/src/serve.js" ]] \
+    || { echo "ERROR: omw-agent build did not produce dist/src/serve.js" >&2; exit 1; }
 
 echo "==> Auditing binary for forbidden hostnames ..."
 (
@@ -82,6 +98,28 @@ sips -z 512 512   "${ICON_SRC}" --out "${ICONSET}/icon_256x256@2x.png">/dev/null
 sips -z 512 512   "${ICON_SRC}" --out "${ICONSET}/icon_512x512.png"   >/dev/null
 sips -z 1024 1024 "${ICON_SRC}" --out "${ICONSET}/icon_512x512@2x.png">/dev/null
 iconutil -c icns "${ICONSET}" -o "${APP_DIR}/Contents/Resources/AppIcon.icns"
+
+# Bundle the omw-agent kernel into Contents/Resources/ so the in-process
+# server (vendor/warp-stripped/app/src/ai_assistant/omw_inproc_server.rs)
+# can lazy-spawn `node Resources/bin/omw-agent.mjs --serve-stdio` without
+# touching $PATH or the user's filesystem outside the .app.
+#
+# The .mjs entry point dynamic-imports `../dist/src/serve.js` and
+# `../dist/src/keychain.js`, so the layout under Resources/ must mirror
+# the apps/omw-agent/ source tree exactly: bin/, dist/, vendor/,
+# node_modules/, and package.json (the latter for "type": "module").
+echo "==> Bundling omw-agent kernel into Resources/ ..."
+KERNEL_RESOURCES="${APP_DIR}/Contents/Resources"
+mkdir -p "${KERNEL_RESOURCES}/bin"
+cp "${OMW_AGENT_DIR}/bin/omw-agent.mjs" "${KERNEL_RESOURCES}/bin/omw-agent.mjs"
+cp "${OMW_AGENT_DIR}/package.json" "${KERNEL_RESOURCES}/package.json"
+# Use ditto to preserve symlinks inside node_modules (some packages have
+# symlinked binaries) and to avoid the resource-fork warnings cp emits.
+ditto "${OMW_AGENT_DIR}/dist"          "${KERNEL_RESOURCES}/dist"
+ditto "${OMW_AGENT_DIR}/vendor"        "${KERNEL_RESOURCES}/vendor"
+[[ -d "${OMW_AGENT_DIR}/node_modules" ]] \
+    || { echo "ERROR: missing ${OMW_AGENT_DIR}/node_modules (run npm install first)" >&2; exit 1; }
+ditto "${OMW_AGENT_DIR}/node_modules" "${KERNEL_RESOURCES}/node_modules"
 
 # Ad-hoc sign the bundle. Cargo's linker stamps a `linker-signed,adhoc` signature
 # on the Mach-O that claims sealed resources are required, but without this step

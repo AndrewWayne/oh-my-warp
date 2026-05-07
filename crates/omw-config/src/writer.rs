@@ -133,11 +133,10 @@ fn approval_mode_str(m: ApprovalMode) -> &'static str {
 fn write_provider_into_table(pcfg: &ProviderConfig, table: &mut toml_edit::Table) {
     table["kind"] = value(pcfg.kind_str());
     match pcfg {
-        ProviderConfig::OpenAi { key_ref, default_model } => {
+        ProviderConfig::OpenAi { key_ref, default_model, base_url } => {
             table["key_ref"] = value(key_ref.to_string());
             update_optional(table, "default_model", default_model.as_deref());
-            // Strip fields that don't belong on this variant.
-            table.remove("base_url");
+            update_optional(table, "base_url", base_url.as_ref().map(|u| u.as_str()));
         }
         ProviderConfig::Anthropic { key_ref, default_model } => {
             table["key_ref"] = value(key_ref.to_string());

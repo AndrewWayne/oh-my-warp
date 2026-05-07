@@ -118,6 +118,9 @@ fn base_url_from_config(pcfg: &ProviderConfig) -> Option<String> {
         ProviderConfig::Ollama { base_url, .. } => {
             base_url.as_ref().map(|u| u.as_str().to_string())
         }
+        ProviderConfig::OpenAi { base_url, .. } => {
+            base_url.as_ref().map(|u| u.as_str().to_string())
+        }
         _ => None,
     }
 }
@@ -145,7 +148,20 @@ pub fn validate_form(form: &OmwAgentForm) -> Result<(), Vec<FormError>> {
                     errs.push(FormError::ApiKeyRequired(row.id.clone()));
                 }
             }
-            ProviderKindForm::OpenAi | ProviderKindForm::Anthropic => {
+            ProviderKindForm::OpenAi => {
+                // base_url is optional for the official OpenAI variant —
+                // empty means "use https://api.openai.com/v1". A
+                // non-empty value lets users route through Azure OpenAI
+                // deployments / regional fronts / a local intercepting
+                // proxy without switching to `openai-compatible`.
+                if !row.base_url.is_empty() && BaseUrl::from_str(&row.base_url).is_err() {
+                    errs.push(FormError::BaseUrlInvalid(row.id.clone()));
+                }
+                if row.key_ref_token.is_empty() && row.api_key_input.is_empty() {
+                    errs.push(FormError::ApiKeyRequired(row.id.clone()));
+                }
+            }
+            ProviderKindForm::Anthropic => {
                 if row.key_ref_token.is_empty() && row.api_key_input.is_empty() {
                     errs.push(FormError::ApiKeyRequired(row.id.clone()));
                 }
@@ -205,6 +221,13 @@ pub fn form_to_config(
                 key_ref: key_ref
                     .ok_or_else(|| vec![FormError::ApiKeyRequired(row.id.clone())])?,
                 default_model: model,
+                base_url: if row.base_url.is_empty() {
+                    None
+                } else {
+                    Some(BaseUrl::from_str(&row.base_url).map_err(|_| {
+                        vec![FormError::BaseUrlInvalid(row.id.clone())]
+                    })?)
+                },
             },
             ProviderKindForm::Anthropic => ProviderConfig::Anthropic {
                 key_ref: key_ref
@@ -342,9 +365,11 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
 // is intentionally simple — full inline editing widgets land later.
 
 use crate::appearance::Appearance;
+use crate::view_components::{SubmittableTextInput, SubmittableTextInputEvent};
 use warpui::{
     elements::{
-        Container, CrossAxisAlignment, Element, Flex, MouseStateHandle, ParentElement, Text,
+        ChildView, Container, CrossAxisAlignment, Element, Flex, MainAxisAlignment, MouseStateHandle,
+        ParentElement, Text,
     },
     ui_components::{
         button::ButtonVariant,
@@ -352,6 +377,33 @@ use warpui::{
     },
     AppContext, Entity, TypedActionView, View, ViewContext, ViewHandle,
 };
+
+/// Maximum number of provider rows the editable UI pre-allocates input
+/// widgets for. Beyond this, users fall back to editing
+/// `~/.config/omw/config.toml` directly. Keeping this static (instead of
+/// growing the editor list dynamically) avoids the significantly more
+/// complex lifecycle wiring that warpui's view-handle model demands for
+/// runtime-spawned children.
+const MAX_PROVIDER_SLOTS: usize = 8;
+
+/// Per-provider editor widgets. Created up-front in [`OmwAgentPageView::new`]
+/// for `MAX_PROVIDER_SLOTS` rows and rendered conditionally based on the
+/// current form's provider count. Each input subscribes to
+/// `SubmittableTextInputEvent::Submit` and dispatches the corresponding
+/// `Set*` action onto the page's typed action stream — same path the
+/// L3a integration tests already exercise.
+pub struct ProviderRowEditors {
+    pub id_input: ViewHandle<SubmittableTextInput>,
+    pub model_input: ViewHandle<SubmittableTextInput>,
+    pub base_url_input: ViewHandle<SubmittableTextInput>,
+    pub api_key_input: ViewHandle<SubmittableTextInput>,
+    pub set_default_button: MouseStateHandle,
+    pub remove_button: MouseStateHandle,
+    /// One toggle per provider kind: openai, anthropic,
+    /// openai-compatible, ollama. Index lines up with
+    /// `[ProviderKindForm::OpenAi, Anthropic, OpenAiCompatible, Ollama]`.
+    pub kind_buttons: [MouseStateHandle; 4],
+}
 
 use super::settings_page::{
     MatchData, PageType, SettingsPageEvent, SettingsPageMeta, SettingsPageViewHandle,
@@ -368,16 +420,37 @@ pub struct OmwAgentPageView {
     pub state: OmwAgentPageState,
     pub apply_button: MouseStateHandle,
     pub discard_button: MouseStateHandle,
+    pub add_provider_button: MouseStateHandle,
+    /// Per-row editor widgets. Empty when constructed via
+    /// [`Self::new_inner`] (used by L3a tests that drive the reducer
+    /// directly without rendering); fully populated when constructed
+    /// via [`Self::new`] inside a real `ViewContext`.
+    pub provider_editors: Vec<ProviderRowEditors>,
     page: PageType<Self>,
 }
 
 impl OmwAgentPageView {
-    pub fn new(_ctx: &mut ViewContext<Self>) -> Self {
-        Self::new_inner()
+    pub fn new(ctx: &mut ViewContext<Self>) -> Self {
+        let mut me = Self::new_inner();
+        // Pre-allocate one editor set per slot. Each set wires its own
+        // Submit subscription that dispatches a Set* action on the page;
+        // the same dispatch path already used by `apply_action` /
+        // `handle_action`. Events for slots > current row count are
+        // simply never rendered, so they're silent until the user adds
+        // more providers.
+        for slot in 0..MAX_PROVIDER_SLOTS {
+            me.provider_editors.push(make_provider_row_editors(slot, ctx));
+        }
+        // Sync the editor buffers to the loaded form so the user sees
+        // the existing values.
+        me.refresh_editor_buffers(ctx);
+        me
     }
 
     /// App-context-free constructor. Used by integration tests in
     /// `app/tests/` to mount the view without a full `warpui::App`.
+    /// Editor handles stay empty; tests dispatch reducer actions
+    /// directly without going through the rendered widgets.
     pub fn new_inner() -> Self {
         let cfg = omw_config::Config::load().unwrap_or_default();
         let form = form_from_config(&cfg);
@@ -391,7 +464,31 @@ impl OmwAgentPageView {
             },
             apply_button: MouseStateHandle::default(),
             discard_button: MouseStateHandle::default(),
+            add_provider_button: MouseStateHandle::default(),
+            provider_editors: Vec::new(),
             page: PageType::new_monolith(OmwAgentPageWidget, Some("Agent"), false),
+        }
+    }
+
+    /// Push the current `form.providers` text values into the editor
+    /// buffers. Called on construction and after `Discard` so the UI
+    /// reflects the model after a non-typing-driven change.
+    pub fn refresh_editor_buffers(&mut self, ctx: &mut ViewContext<Self>) {
+        for (i, editors) in self.provider_editors.iter_mut().enumerate() {
+            let row = self.state.form.providers.get(i);
+            let id_text = row.map(|r| r.id.clone()).unwrap_or_default();
+            let model_text = row.map(|r| r.model.clone()).unwrap_or_default();
+            let base_url_text = row.map(|r| r.base_url.clone()).unwrap_or_default();
+            // Don't show api_key text — it's a secret. Always blank
+            // unless the user is mid-edit; pending_secrets carries
+            // the in-flight value separately.
+            let _ = (&editors.id_input, &editors.model_input, &editors.base_url_input);
+            // Buffer updates require nested view context — defer to a
+            // helper that keeps the borrow scopes manageable.
+            set_input_text(&editors.id_input, &id_text, ctx);
+            set_input_text(&editors.model_input, &model_text, ctx);
+            set_input_text(&editors.base_url_input, &base_url_text, ctx);
+            set_input_text(&editors.api_key_input, "", ctx);
         }
     }
 
@@ -473,6 +570,91 @@ impl OmwAgentPageView {
     }
 }
 
+/// Construct one set of editor widgets for the row at `slot`. Each
+/// SubmittableTextInput subscribes to its own Submit event and
+/// dispatches the corresponding `Set*` action onto the parent page —
+/// the dispatch path is the existing `OmwAgentPageView::handle_action`,
+/// which routes back into `dispatch` and eventually `apply_action`,
+/// keeping the pure-reducer test surface intact.
+fn make_provider_row_editors(
+    slot: usize,
+    ctx: &mut ViewContext<OmwAgentPageView>,
+) -> ProviderRowEditors {
+    let id_input = ctx.add_typed_action_view(|ctx| {
+        let mut input = SubmittableTextInput::new(ctx);
+        input.set_placeholder_text("provider id (e.g. openai-prod)", ctx);
+        input
+    });
+    ctx.subscribe_to_view(&id_input, move |_, _, event, ctx| {
+        if let SubmittableTextInputEvent::Submit(s) = event {
+            ctx.dispatch_typed_action(&OmwAgentPageAction::SetProviderId(slot, s.clone()));
+        }
+    });
+
+    let model_input = ctx.add_typed_action_view(|ctx| {
+        let mut input = SubmittableTextInput::new(ctx);
+        input.set_placeholder_text("model id (e.g. gpt-4o)", ctx);
+        input
+    });
+    ctx.subscribe_to_view(&model_input, move |_, _, event, ctx| {
+        if let SubmittableTextInputEvent::Submit(s) = event {
+            ctx.dispatch_typed_action(&OmwAgentPageAction::SetProviderModel(slot, s.clone()));
+        }
+    });
+
+    let base_url_input = ctx.add_typed_action_view(|ctx| {
+        let mut input = SubmittableTextInput::new(ctx);
+        input.set_placeholder_text("https://api.openai.com/v1 (optional)", ctx);
+        input
+    });
+    ctx.subscribe_to_view(&base_url_input, move |_, _, event, ctx| {
+        if let SubmittableTextInputEvent::Submit(s) = event {
+            ctx.dispatch_typed_action(&OmwAgentPageAction::SetProviderBaseUrl(slot, s.clone()));
+        }
+    });
+
+    let api_key_input = ctx.add_typed_action_view(|ctx| {
+        let mut input = SubmittableTextInput::new(ctx);
+        input.set_placeholder_text("API key (will be saved to keychain on Apply)", ctx);
+        input
+    });
+    ctx.subscribe_to_view(&api_key_input, move |_, _, event, ctx| {
+        if let SubmittableTextInputEvent::Submit(s) = event {
+            ctx.dispatch_typed_action(&OmwAgentPageAction::SetProviderApiKey(slot, s.clone()));
+        }
+    });
+
+    ProviderRowEditors {
+        id_input,
+        model_input,
+        base_url_input,
+        api_key_input,
+        set_default_button: MouseStateHandle::default(),
+        remove_button: MouseStateHandle::default(),
+        kind_buttons: [
+            MouseStateHandle::default(),
+            MouseStateHandle::default(),
+            MouseStateHandle::default(),
+            MouseStateHandle::default(),
+        ],
+    }
+}
+
+/// Set the text content of a SubmittableTextInput's underlying editor.
+/// Internally drives `editor.set_buffer_text`. Best-effort — silently
+/// no-ops if the view is no longer alive (shouldn't happen in normal
+/// use but tolerated to keep refresh cheap).
+fn set_input_text(
+    input: &ViewHandle<SubmittableTextInput>,
+    text: &str,
+    ctx: &mut ViewContext<OmwAgentPageView>,
+) {
+    let editor = input.as_ref(ctx).editor().clone();
+    editor.update(ctx, |ed, ctx| {
+        ed.set_buffer_text(text, ctx);
+    });
+}
+
 impl Entity for OmwAgentPageView {
     type Event = SettingsPageEvent;
 }
@@ -495,7 +677,21 @@ impl TypedActionView for OmwAgentPageView {
         // method so the pure reducer + side-effecting `apply` keep their
         // single source of truth. `notify()` so the new state is
         // re-rendered on the next frame.
+        let needs_buffer_refresh = matches!(
+            action,
+            OmwAgentPageAction::Discard
+                | OmwAgentPageAction::AddProvider
+                | OmwAgentPageAction::RemoveProvider(_)
+                | OmwAgentPageAction::SetProviderId(_, _)
+        );
         self.dispatch(action.clone());
+        if needs_buffer_refresh {
+            // Re-sync editor buffers from the (possibly mutated) form so
+            // typed values keep showing the canonical text. The id case
+            // is included because the reducer normalises ids when other
+            // mutations happen (default-provider rename, etc.).
+            self.refresh_editor_buffers(ctx);
+        }
         ctx.notify();
     }
 }
@@ -627,22 +823,51 @@ impl SettingsWidget for OmwAgentPageWidget {
                 .finish(),
             );
         } else {
-            for row in &form.providers {
+            // Per-provider editable rows. Each row exposes id / kind /
+            // model / base_url / api_key inputs + Set Default + Remove
+            // buttons. Editor handles are pre-allocated up to
+            // `MAX_PROVIDER_SLOTS`; we render only the slot indices that
+            // the form currently uses.
+            for (idx, row) in form.providers.iter().enumerate() {
+                if idx >= view.provider_editors.len() {
+                    // More providers than slots — fall back to a hint.
+                    col.add_child(
+                        Container::new(
+                            Text::new(
+                                format!(
+                                    "(provider #{idx} ‘{}’ exceeds editor slot capacity; edit ~/.config/omw/config.toml)",
+                                    row.id
+                                ),
+                                appearance.ui_font_family(),
+                                CONTENT_FONT_SIZE,
+                            )
+                            .with_color(muted)
+                            .finish(),
+                        )
+                        .with_margin_bottom(8.)
+                        .finish(),
+                    );
+                    continue;
+                }
+                let editors = &view.provider_editors[idx];
+                let is_default = form.default_provider.as_deref() == Some(row.id.as_str());
+
                 let kind_str = match row.kind {
                     ProviderKindForm::OpenAi => "openai",
                     ProviderKindForm::Anthropic => "anthropic",
                     ProviderKindForm::OpenAiCompatible => "openai-compat",
                     ProviderKindForm::Ollama => "ollama",
                 };
-                let model = if row.model.is_empty() {
-                    "(default)"
-                } else {
-                    row.model.as_str()
-                };
+                // Header line: id summary + default marker.
                 col.add_child(
                     Container::new(
                         Text::new(
-                            format!("- {} [{}] model={}", row.id, kind_str, model),
+                            format!(
+                                "Provider #{idx}: {} [{}]{}",
+                                row.id,
+                                kind_str,
+                                if is_default { " ★ default" } else { "" }
+                            ),
                             appearance.ui_font_family(),
                             CONTENT_FONT_SIZE,
                         )
@@ -652,8 +877,153 @@ impl SettingsWidget for OmwAgentPageWidget {
                     .with_margin_bottom(4.)
                     .finish(),
                 );
+
+                // Editable inputs. Each is a SubmittableTextInput; the
+                // user types and presses Enter to commit. The label
+                // above the input shows what field it controls.
+                let labeled_input =
+                    |label: &str, input: &ViewHandle<SubmittableTextInput>| -> Box<dyn Element> {
+                        let label_el = Container::new(
+                            Text::new(
+                                label.to_owned(),
+                                appearance.ui_font_family(),
+                                CONTENT_FONT_SIZE,
+                            )
+                            .with_color(muted)
+                            .finish(),
+                        )
+                        .with_margin_top(4.)
+                        .finish();
+                        let input_el = Container::new(ChildView::new(input).finish())
+                            .with_margin_bottom(2.)
+                            .finish();
+                        Flex::column()
+                            .with_cross_axis_alignment(CrossAxisAlignment::Start)
+                            .with_child(label_el)
+                            .with_child(input_el)
+                            .finish()
+                    };
+                col.add_child(labeled_input("    id (press Enter to apply):", &editors.id_input));
+                col.add_child(labeled_input("    model:", &editors.model_input));
+                col.add_child(labeled_input(
+                    "    base_url (optional override):",
+                    &editors.base_url_input,
+                ));
+                col.add_child(labeled_input(
+                    "    api key (will be saved to keychain on Apply):",
+                    &editors.api_key_input,
+                ));
+
+                // Per-row action buttons: Set Default, Remove,
+                // and a kind selector row.
+                let kinds_with_labels = [
+                    (ProviderKindForm::OpenAi, "openai", &editors.kind_buttons[0]),
+                    (ProviderKindForm::Anthropic, "anthropic", &editors.kind_buttons[1]),
+                    (
+                        ProviderKindForm::OpenAiCompatible,
+                        "openai-compatible",
+                        &editors.kind_buttons[2],
+                    ),
+                    (ProviderKindForm::Ollama, "ollama", &editors.kind_buttons[3]),
+                ];
+                let mut kind_row = Flex::row()
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center);
+                kind_row.add_child(
+                    Container::new(
+                        Text::new(
+                            "    kind:".to_owned(),
+                            appearance.ui_font_family(),
+                            CONTENT_FONT_SIZE,
+                        )
+                        .with_color(muted)
+                        .finish(),
+                    )
+                    .with_margin_right(6.)
+                    .finish(),
+                );
+                for (kind, label, handle) in kinds_with_labels {
+                    let selected = row.kind == kind;
+                    let button = appearance
+                        .ui_builder()
+                        .button(
+                            if selected {
+                                ButtonVariant::Accent
+                            } else {
+                                ButtonVariant::Secondary
+                            },
+                            handle.clone(),
+                        )
+                        .with_text_label(label.to_owned())
+                        .build()
+                        .on_click(move |ctx, _, _| {
+                            ctx.dispatch_typed_action(OmwAgentPageAction::SetProviderKind(
+                                idx, kind,
+                            ));
+                        })
+                        .finish();
+                    kind_row.add_child(
+                        Container::new(button).with_margin_right(4.).finish(),
+                    );
+                }
+                col.add_child(Container::new(kind_row.finish()).with_margin_top(4.).finish());
+
+                // Set Default + Remove.
+                let mut action_row = Flex::row()
+                    .with_main_axis_alignment(MainAxisAlignment::Start)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center);
+                let default_button = appearance
+                    .ui_builder()
+                    .button(
+                        if is_default {
+                            ButtonVariant::Accent
+                        } else {
+                            ButtonVariant::Secondary
+                        },
+                        editors.set_default_button.clone(),
+                    )
+                    .with_text_label(if is_default {
+                        "★ default".to_owned()
+                    } else {
+                        "Set default".to_owned()
+                    })
+                    .build()
+                    .on_click(move |ctx, _, _| {
+                        ctx.dispatch_typed_action(OmwAgentPageAction::SetDefault(idx));
+                    })
+                    .finish();
+                action_row.add_child(
+                    Container::new(default_button).with_margin_right(6.).finish(),
+                );
+                let remove_button = appearance
+                    .ui_builder()
+                    .button(ButtonVariant::Secondary, editors.remove_button.clone())
+                    .with_text_label("Remove".to_owned())
+                    .build()
+                    .on_click(move |ctx, _, _| {
+                        ctx.dispatch_typed_action(OmwAgentPageAction::RemoveProvider(idx));
+                    })
+                    .finish();
+                action_row.add_child(remove_button);
+                col.add_child(
+                    Container::new(action_row.finish())
+                        .with_margin_top(4.)
+                        .with_margin_bottom(12.)
+                        .finish(),
+                );
             }
         }
+
+        // Add Provider button.
+        let add_button = appearance
+            .ui_builder()
+            .button(ButtonVariant::Secondary, view.add_provider_button.clone())
+            .with_text_label("+ Add provider".to_owned())
+            .build()
+            .on_click(|ctx, _, _| {
+                ctx.dispatch_typed_action(OmwAgentPageAction::AddProvider);
+            })
+            .finish();
+        col.add_child(Container::new(add_button).with_margin_bottom(12.).finish());
 
         // dirty-state + error indicator.
         col.add_child(

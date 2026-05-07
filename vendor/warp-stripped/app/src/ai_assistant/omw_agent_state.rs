@@ -188,17 +188,26 @@ impl OmwAgentState {
     /// the *current* session: calling `start` while one is already
     /// running stops it first.
     pub fn start(self: &Arc<Self>, params: OmwAgentSessionParams) -> Result<(), String> {
+        log::info!(
+            "omw# state: start entry provider_kind={} model={}",
+            params.provider_kind,
+            params.model
+        );
         let runtime = self.ensure_runtime()?;
+        log::info!("omw# state: runtime ensured");
         // Clear any existing session so we don't leak the prior WS task.
         self.stop();
 
         // Bring up the in-process omw-server on first start so the user
         // doesn't have to launch a sidecar process. Idempotent — only the
         // first call binds the listener; later calls are O(1).
+        log::info!("omw# state: calling inproc_server::ensure_running");
         if let Err(e) = super::omw_inproc_server::ensure_running(&runtime) {
+            log::warn!("omw# state: ensure_running FAILED: {e}");
             self.set_status(OmwAgentStatus::Failed { error: e.clone() });
             return Err(e);
         }
+        log::info!("omw# state: inproc_server ready");
 
         let server_url = std::env::var("OMW_SERVER_URL")
             .unwrap_or_else(|_| DEFAULT_SERVER_URL.to_string());
@@ -210,8 +219,10 @@ impl OmwAgentState {
         let status_tx = self.status_tx.clone();
         let weak_self = Arc::downgrade(self);
 
+        log::info!("omw# state: spawning run_session task");
         let task = runtime.spawn(async move {
             run_session(server_url, params, out_rx, event_tx, status_tx, weak_self).await;
+            log::info!("omw# session: run_session task exited");
         });
 
         // Spawn the Phase 5b command broker once per process. Idempotent on
@@ -221,9 +232,11 @@ impl OmwAgentState {
         g.outbound = Some(out_tx);
         g.ws_task = Some(task);
         if g.command_broker_task.is_none() {
+            log::info!("omw# state: spawning command broker");
             let broker = super::omw_command_broker::spawn_command_broker(self.clone(), &runtime);
             g.command_broker_task = Some(broker);
         }
+        log::info!("omw# state: start returning OK");
         Ok(())
     }
 
@@ -250,9 +263,195 @@ impl OmwAgentState {
             .as_ref()
             .cloned()
             .ok_or_else(|| "no active agent session".to_string())?;
+        log::info!(
+            "omw# state: send_prompt outbound_capacity={} prompt_len={}",
+            outbound.capacity(),
+            prompt.len()
+        );
         outbound
             .try_send(OmwAgentEventUp::Prompt { prompt })
-            .map_err(|e| format!("send_prompt: {e}"))
+            .map_err(|e| format!("send_prompt: {e}"))?;
+        log::info!("omw# state: send_prompt try_send OK");
+        Ok(())
+    }
+
+    /// Send a prompt and pump the streaming assistant response into the
+    /// supplied terminal pane's PTY-read broadcast so the renderer shows
+    /// it inline. Used by the `# `-prefix interception path so the user
+    /// sees the agent's reply in the same block list they typed in,
+    /// without having to open the agent panel.
+    ///
+    /// The pump runs on the agent runtime as a one-shot task — it
+    /// subscribes to events at function entry, writes each
+    /// `AssistantDelta` to the captured `pty_reads_tx` (so focus changes
+    /// don't redirect the response), and exits on the first
+    /// `TurnFinished`. Tool-call cards / approval cards are NOT mirrored
+    /// here; they remain in the panel transcript.
+    pub fn send_prompt_inline(
+        self: &Arc<Self>,
+        prompt: String,
+        target: ActiveTerminalHandle,
+    ) -> Result<(), String> {
+        log::info!(
+            "omw# state: send_prompt_inline entry view_id={:?} pty_recv_count={}",
+            target.view_id,
+            target.pty_reads_tx.receiver_count()
+        );
+        // Subscribe before sending so the first deltas can't race past
+        // the receiver registration.
+        let mut events = self.subscribe_events();
+        log::info!(
+            "omw# state: subscribed events; broadcast_recv_count={}",
+            self.event_tx.receiver_count()
+        );
+        let runtime = self
+            .inner
+            .lock()
+            .runtime_handle
+            .clone()
+            .ok_or_else(|| "agent runtime not yet initialised".to_string())?;
+
+        // Echo the user's prompt above the streaming response so the
+        // block list shows what they typed. CRLF + ESC[2K (erase to end
+        // of line) keeps any active shell prompt redraw from clobbering
+        // the echo. Sent through the same `Message::InjectBytes`
+        // channel as the streaming response so the renderer treats the
+        // echo + reply as a single contiguous block.
+        let event_loop_tx = target.event_loop_tx.clone();
+        let inject = |bytes: Vec<u8>| -> Result<(), String> {
+            let n = bytes.len();
+            let msg = crate::terminal::writeable_pty::Message::InjectBytes(
+                std::borrow::Cow::Owned(bytes),
+            );
+            match event_loop_tx.lock().send(msg) {
+                Ok(_) => {
+                    log::trace!("omw# pump: injected {n} bytes into event_loop_tx");
+                    Ok(())
+                }
+                Err(e) => {
+                    log::warn!("omw# pump: inject {n} bytes FAILED: {e:?}");
+                    Err(format!("inject into local-tty event loop: {e:?}"))
+                }
+            }
+        };
+
+        let echo = format!("\r\n\x1b[2K# {prompt}\r\n");
+        match inject(echo.into_bytes()) {
+            Ok(_) => log::info!("omw# state: echo injected OK"),
+            Err(e) => log::warn!("omw# state: echo inject FAILED: {e}"),
+        }
+
+        // Send the prompt before spawning the pump — order matters: a
+        // missed first delta is preferable to a missed TurnFinished.
+        self.send_prompt(prompt)?;
+        log::info!("omw# state: send_prompt returned OK; spawning pump");
+
+        runtime.spawn(async move {
+            log::info!("omw# pump: started, awaiting events");
+            // ANSI palette: dim cyan for tool framing, dim yellow for
+            // approvals, dim grey for status, red for errors. Each event
+            // ends with `\x1b[0m` to reset before the assistant's text
+            // resumes.
+            const FRAME_DIM_CYAN: &str = "\x1b[2;36m";
+            const FRAME_YELLOW: &str = "\x1b[33m";
+            const FRAME_DIM: &str = "\x1b[2m";
+            const FRAME_RED: &str = "\x1b[31m";
+            const RESET: &str = "\x1b[0m";
+
+            let send = |bytes: Vec<u8>| {
+                let n = bytes.len();
+                let msg = crate::terminal::writeable_pty::Message::InjectBytes(
+                    std::borrow::Cow::Owned(bytes),
+                );
+                match event_loop_tx.lock().send(msg) {
+                    Ok(_) => log::trace!("omw# pump: injected {n} bytes"),
+                    Err(e) => log::warn!("omw# pump: inject {n} bytes FAILED: {e:?}"),
+                }
+            };
+            while let Ok(event) = events.recv().await {
+                let kind = match &event {
+                    super::omw_protocol::OmwAgentEventDown::AssistantDelta { .. } => "AssistantDelta",
+                    super::omw_protocol::OmwAgentEventDown::ToolCallStarted { .. } => "ToolCallStarted",
+                    super::omw_protocol::OmwAgentEventDown::ToolCallFinished { .. } => "ToolCallFinished",
+                    super::omw_protocol::OmwAgentEventDown::ApprovalRequest { .. } => "ApprovalRequest",
+                    super::omw_protocol::OmwAgentEventDown::Error { .. } => "Error",
+                    super::omw_protocol::OmwAgentEventDown::AgentCrashed => "AgentCrashed",
+                    super::omw_protocol::OmwAgentEventDown::TurnFinished { .. } => "TurnFinished",
+                    super::omw_protocol::OmwAgentEventDown::ExecCommand { .. } => "ExecCommand",
+                    super::omw_protocol::OmwAgentEventDown::CommandData { .. } => "CommandData",
+                    super::omw_protocol::OmwAgentEventDown::CommandExit { .. } => "CommandExit",
+                };
+                log::info!("omw# pump: recv event={kind}");
+                match event {
+                    super::omw_protocol::OmwAgentEventDown::AssistantDelta { delta, .. } => {
+                        send(delta.into_bytes());
+                    }
+                    super::omw_protocol::OmwAgentEventDown::ToolCallStarted {
+                        tool_name,
+                        args,
+                        ..
+                    } => {
+                        let summary = summarize_tool_args(&tool_name, &args);
+                        let line = format!(
+                            "\r\n{FRAME_DIM_CYAN}┌─ tool: {tool_name}{summary}{RESET}\r\n"
+                        );
+                        send(line.into_bytes());
+                    }
+                    super::omw_protocol::OmwAgentEventDown::ToolCallFinished {
+                        tool_name,
+                        is_error,
+                        ..
+                    } => {
+                        let marker = if is_error { "✗ failed" } else { "✓ done" };
+                        let color = if is_error { FRAME_RED } else { FRAME_DIM_CYAN };
+                        let line = format!("{color}└─ {tool_name}: {marker}{RESET}\r\n");
+                        send(line.into_bytes());
+                    }
+                    super::omw_protocol::OmwAgentEventDown::ApprovalRequest {
+                        approval_id,
+                        tool_call,
+                        ..
+                    } => {
+                        let tool_name = tool_call
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("(unknown)");
+                        let line = format!(
+                            "\r\n{FRAME_YELLOW}⚠  approval needed for {tool_name} (id={approval_id})\r\n   open the agent panel to Approve / Reject{RESET}\r\n"
+                        );
+                        send(line.into_bytes());
+                    }
+                    super::omw_protocol::OmwAgentEventDown::Error { message, .. } => {
+                        // Surface kernel/transport errors inline so the
+                        // user doesn't have to dig through the log to see
+                        // why a prompt produced no response.
+                        let line = format!("\r\n{FRAME_RED}omw agent error: {message}{RESET}\r\n");
+                        send(line.into_bytes());
+                    }
+                    super::omw_protocol::OmwAgentEventDown::AgentCrashed => {
+                        send(format!(
+                            "\r\n{FRAME_RED}omw agent kernel crashed (check ~/Library/Logs/warp-oss.log){RESET}\r\n"
+                        ).into_bytes());
+                        return;
+                    }
+                    super::omw_protocol::OmwAgentEventDown::TurnFinished { .. } => {
+                        // Trailing newline + status hint so the user
+                        // knows the turn is over before the next shell
+                        // prompt re-draws.
+                        send(format!("{FRAME_DIM}\r\n[turn finished]{RESET}\r\n").into_bytes());
+                        return;
+                    }
+                    // bash/* events are routed via the command broker
+                    // directly into the pane's PTY and don't need
+                    // re-rendering here.
+                    super::omw_protocol::OmwAgentEventDown::ExecCommand { .. }
+                    | super::omw_protocol::OmwAgentEventDown::CommandData { .. }
+                    | super::omw_protocol::OmwAgentEventDown::CommandExit { .. } => {}
+                }
+            }
+            log::warn!("omw# pump: events.recv() returned Err — channel closed/lagged; exiting");
+        });
+        Ok(())
     }
 
     /// Cancel the current in-flight prompt.
@@ -274,7 +473,14 @@ impl OmwAgentState {
     /// `Err` if no provider is configured, the agent is disabled, or the
     /// default provider points to a missing entry.
     pub fn start_with_config(self: &Arc<Self>) -> Result<(), String> {
+        log::info!("omw# state: start_with_config entry");
         let cfg = omw_config::Config::load().map_err(|e| e.to_string())?;
+        log::info!(
+            "omw# state: config loaded; agent.enabled={} default_provider={:?} providers_n={}",
+            cfg.agent.enabled,
+            cfg.default_provider,
+            cfg.providers.len()
+        );
         if !cfg.agent.enabled {
             return Err("Agent is disabled in settings".into());
         }
@@ -286,6 +492,11 @@ impl OmwAgentState {
             .providers
             .get(provider_id)
             .ok_or_else(|| format!("default_provider `{provider_id}` not found"))?;
+        log::info!(
+            "omw# state: selected provider={} kind={}",
+            provider_id,
+            provider.kind_str()
+        );
 
         let approval_mode = match cfg.approval.mode {
             omw_config::ApprovalMode::ReadOnly => Some("read_only".into()),
@@ -301,6 +512,9 @@ impl OmwAgentState {
                     Some(base_url.as_str().to_string())
                 }
                 omw_config::ProviderConfig::Ollama { base_url, .. } => {
+                    base_url.as_ref().map(|u| u.as_str().to_string())
+                }
+                omw_config::ProviderConfig::OpenAi { base_url, .. } => {
                     base_url.as_ref().map(|u| u.as_str().to_string())
                 }
                 _ => None,
@@ -482,9 +696,14 @@ async fn run_session(
         }
     };
 
+    log::info!("omw# session: run_session entry server_url={server_url}");
     let session_id = match create_session(&server_url, &params).await {
-        Ok(id) => id,
+        Ok(id) => {
+            log::info!("omw# session: create_session OK id={id}");
+            id
+        }
         Err(e) => {
+            log::warn!("omw# session: create_session FAILED: {e}");
             set_status(OmwAgentStatus::Failed { error: e });
             return;
         }
@@ -495,6 +714,7 @@ async fn run_session(
         None => match server_url.strip_prefix("https://") {
             Some(rest) => format!("wss://{rest}/ws/v1/agent/{session_id}"),
             None => {
+                log::warn!("omw# session: server_url has no http(s) prefix");
                 set_status(OmwAgentStatus::Failed {
                     error: "OMW_SERVER_URL must start with http:// or https://".into(),
                 });
@@ -503,9 +723,14 @@ async fn run_session(
         },
     };
 
+    log::info!("omw# session: dialing WS at {ws_url}");
     let connect = match tokio_tungstenite::connect_async(&ws_url).await {
-        Ok((stream, _)) => stream,
+        Ok((stream, _)) => {
+            log::info!("omw# session: WS connected");
+            stream
+        }
         Err(e) => {
+            log::warn!("omw# session: WS connect FAILED: {e}");
             set_status(OmwAgentStatus::Failed {
                 error: format!("ws connect: {e}"),
             });
@@ -516,6 +741,7 @@ async fn run_session(
     set_status(OmwAgentStatus::Connected {
         session_id: session_id.clone(),
     });
+    log::info!("omw# session: status=Connected; entering message loop");
 
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -538,7 +764,12 @@ async fn run_session(
                     WsMessage::Close(_) => break,
                     _ => continue,
                 };
-                if let Ok(event) = serde_json::from_str::<OmwAgentEventDown>(&text) {
+                log::trace!("omw# session: ws<- {} bytes", text.len());
+                let parsed = serde_json::from_str::<OmwAgentEventDown>(&text);
+                if let Err(ref e) = parsed {
+                    log::warn!("omw# session: ws frame deserialize FAILED: {e} ; raw_prefix={}", &text.chars().take(120).collect::<String>());
+                }
+                if let Ok(event) = parsed {
                     // Status transitions: Streaming on first delta /
                     // tool_call; Connected on turn_finished. Both go
                     // through `set_status` so the cached snapshot stays
@@ -568,24 +799,38 @@ async fn run_session(
                         }
                         _ => {}
                     }
-                    let _ = event_tx.send(event);
+                    let n = event_tx.send(event).map(|n| n as i64).unwrap_or(-1);
+                    log::trace!("omw# session: ws-> broadcast subscribers={n}");
                 }
             }
 
             // Outbound from UI -> WS as JSON text.
             up = outbound.recv() => {
-                let Some(up) = up else { break };
+                let Some(up) = up else { log::info!("omw# session: outbound channel closed; exiting loop"); break };
+                let kind = match &up {
+                    OmwAgentEventUp::Prompt { .. } => "Prompt",
+                    OmwAgentEventUp::Cancel => "Cancel",
+                    OmwAgentEventUp::ApprovalDecision { .. } => "ApprovalDecision",
+                    OmwAgentEventUp::CommandData { .. } => "CommandData",
+                    OmwAgentEventUp::CommandExit { .. } => "CommandExit",
+                };
+                log::info!("omw# session: outbound frame={kind}");
                 let line = match serde_json::to_string(&up) {
                     Ok(s) => s,
-                    Err(_) => continue,
+                    Err(e) => { log::warn!("omw# session: serialize FAILED: {e}"); continue; }
                 };
-                if sink.send(WsMessage::Text(line)).await.is_err() {
-                    break;
+                match sink.send(WsMessage::Text(line)).await {
+                    Ok(_) => log::info!("omw# session: ws<- frame={kind} sent"),
+                    Err(e) => {
+                        log::warn!("omw# session: ws send FAILED: {e}; exiting loop");
+                        break;
+                    }
                 }
             }
         }
     }
 
+    log::info!("omw# session: loop exited; setting status=Idle");
     // Stream ended — clear status.
     set_status(OmwAgentStatus::Idle);
     let _ = sink.close().await;
@@ -600,7 +845,20 @@ async fn create_session(
     server_url: &str,
     params: &OmwAgentSessionParams,
 ) -> Result<String, String> {
+    // CRITICAL: explicitly disable proxies. The GUI's session/create
+    // POST targets the in-process omw-server on `http://127.0.0.1:8788`
+    // — but reqwest's default builder honors system + env proxy config
+    // (`https_proxy`, macOS network proxy panel). On developer machines
+    // running Clash / Telegram-style local proxies, the request gets
+    // forwarded to the user's HTTP proxy (also on 127.0.0.1, but a
+    // different port), which cannot proxy localhost-to-localhost
+    // traffic and returns 502 Bad Gateway. The result: every `# hi`
+    // appears to fail with a kernel-side bug while the kernel is
+    // perfectly healthy. Using `.no_proxy()` forces reqwest to dial
+    // the loopback directly. (Reproduced 2026-05-07 with
+    // `https_proxy=http://127.0.0.1:6789`.)
     let client = reqwest::Client::builder()
+        .no_proxy()
         .timeout(REQUEST_TIMEOUT)
         .build()
         .map_err(|e| format!("build http client: {e}"))?;
@@ -628,12 +886,14 @@ async fn create_session(
     }
 
     let url = format!("{}/api/v1/agent/sessions", server_url.trim_end_matches('/'));
+    log::info!("omw# session: POST {url}");
     let resp = client
         .post(&url)
         .json(&body)
         .send()
         .await
         .map_err(|e| format!("post session: {e}"))?;
+    log::info!("omw# session: POST status={}", resp.status());
     if !resp.status().is_success() {
         return Err(format!(
             "post session returned {}: {}",
@@ -649,4 +909,29 @@ async fn create_session(
         .and_then(|s| s.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| "response missing sessionId".to_string())
+}
+
+/// Render a one-line preview of a tool call's arguments for the inline
+/// frame. We special-case `bash` (the most common tool) by extracting
+/// `command` and truncating; other tools fall back to a generic
+/// JSON-keys preview. Limited to ~80 chars so the frame stays
+/// terminal-width-safe.
+fn summarize_tool_args(tool_name: &str, args: &serde_json::Value) -> String {
+    const MAX: usize = 80;
+    if tool_name == "bash" {
+        if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
+            let mut s = cmd.replace('\n', " ⏎ ");
+            if s.chars().count() > MAX {
+                s = s.chars().take(MAX).collect::<String>() + "…";
+            }
+            return format!(" `{s}`");
+        }
+    }
+    if let Some(obj) = args.as_object() {
+        let keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
+        if !keys.is_empty() {
+            return format!(" ({})", keys.join(", "));
+        }
+    }
+    String::new()
 }

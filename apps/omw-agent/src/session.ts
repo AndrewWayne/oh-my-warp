@@ -17,6 +17,7 @@
 // cannot follow `@pi-agent-core` without a real package or imports map.
 import {
 	agentLoop,
+	agentStreamError,
 	type AgentContext,
 	type AgentEvent,
 	type AgentLoopConfig,
@@ -140,10 +141,20 @@ export class Session {
 			// AgentMessage = Message in our config (no CustomAgentMessages
 			// declaration merging) — identity is correct.
 			convertToLlm: (msgs) => msgs as Message[],
-			getApiKey: async () => {
+			getApiKey: async (provider) => {
 				const keyRef = this.providerConfig.key_ref;
-				if (!keyRef) return undefined;
-				return this.getApiKey(keyRef);
+				console.error(
+					`[omw# session] getApiKey called provider=${provider} kind=${this.providerConfig.kind} key_ref=${keyRef ?? "(none)"} model.baseUrl=${(this.model as { baseUrl?: string }).baseUrl ?? "(none)"}`,
+				);
+				if (!keyRef) {
+					console.error(`[omw# session] getApiKey returning undefined: no key_ref configured`);
+					return undefined;
+				}
+				const value = await this.getApiKey(keyRef);
+				console.error(
+					`[omw# session] getApiKey lookup of '${keyRef}' returned ${value === undefined ? "undefined (NotFound)" : `string of length ${value.length}`}`,
+				);
+				return value;
 			},
 			beforeToolCall,
 		};
@@ -164,6 +175,17 @@ export class Session {
 		try {
 			for await (const event of stream) {
 				emit(event);
+			}
+			// agent-loop.ts catches all rejections from the underlying
+			// `runAgentLoop` (preventing process-fatal unhandledRejection)
+			// and stashes the error on the stream. Re-throw it here so
+			// `runPrompt`'s outer try/catch can surface it as an
+			// `error` notification to the WS client. Without this hop
+			// the kernel would swallow the failure and the user would
+			// see a `turn/finished` with no explanation.
+			const streamErr = agentStreamError(stream);
+			if (streamErr !== undefined) {
+				throw streamErr instanceof Error ? streamErr : new Error(String(streamErr));
 			}
 			const finalMessages = await stream.result();
 			// The loop already mutates `context.messages` for the streaming
@@ -218,12 +240,24 @@ export class Session {
 function buildModel(cfg: ProviderConfig, modelId: string): Model<any> {
 	switch (cfg.kind) {
 		case "openai": {
-			// Try the registry; fall back to a hand-built openai-completions Model
-			// so unknown ids (e.g. preview models not yet in the generated registry)
-			// still work as long as the upstream API accepts them.
+			// If the user gave an explicit base_url override (Azure
+			// OpenAI deployment, regional CDN, intercepting proxy,
+			// custom OpenAI-compatible backend that prefers
+			// `kind = "openai"` for ergonomics), bypass pi-ai's model
+			// registry entirely — the registry returns models with a
+			// hard-coded `baseUrl: https://api.openai.com/v1`, and
+			// `if (m) return m` would silently send the request to the
+			// real OpenAI rather than the user's endpoint.
+			// Reproduced 2026-05-07 with `base_url = https://bench.physcai.com/openai/v1`.
+			if (cfg.base_url) {
+				return manualOpenAICompletions("openai", modelId, cfg.base_url);
+			}
+			// No override → use pi-ai's registry first (carries
+			// reasoning flags, context window, pricing). Fall back to
+			// a hand-built model for unknown ids.
 			const m = getModel("openai" as never, modelId as never);
 			if (m) return m as Model<any>;
-			return manualOpenAICompletions("openai", modelId, cfg.base_url ?? "https://api.openai.com/v1");
+			return manualOpenAICompletions("openai", modelId, "https://api.openai.com/v1");
 		}
 		case "anthropic": {
 			const m = getModel("anthropic" as never, modelId as never);

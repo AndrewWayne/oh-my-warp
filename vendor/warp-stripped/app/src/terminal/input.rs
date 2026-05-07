@@ -1451,6 +1451,57 @@ pub fn parse_inline_agent_prompt(buffer: &str) -> Option<&str> {
     Some(rest.trim_end())
 }
 
+/// Resolve `OmwAgentSessionParams` from the on-disk omw-config. Mirrors
+/// the body of `OmwAgentState::start_with_config`'s preamble, but
+/// returns the params instead of starting a session — used by the
+/// per-pane session provisioner so the caller picks the target pane.
+#[cfg(feature = "omw_local")]
+fn build_session_params_from_config(
+) -> Result<crate::ai_assistant::omw_agent_state::OmwAgentSessionParams, String> {
+    let cfg = omw_config::Config::load().map_err(|e| e.to_string())?;
+    if !cfg.agent.enabled {
+        return Err("Agent is disabled in settings".into());
+    }
+    let provider_id = cfg
+        .default_provider
+        .as_ref()
+        .ok_or_else(|| "No default provider configured".to_string())?;
+    let provider = cfg
+        .providers
+        .get(provider_id)
+        .ok_or_else(|| format!("default_provider `{provider_id}` not found"))?;
+
+    let approval_mode = match cfg.approval.mode {
+        omw_config::ApprovalMode::ReadOnly => Some("read_only".into()),
+        omw_config::ApprovalMode::AskBeforeWrite => Some("ask_before_write".into()),
+        omw_config::ApprovalMode::Trusted => Some("trusted".into()),
+    };
+
+    Ok(crate::ai_assistant::omw_agent_state::OmwAgentSessionParams {
+        provider_kind: provider.kind_str().to_string(),
+        key_ref: provider.key_ref().map(|k| k.to_string()),
+        base_url: match provider {
+            omw_config::ProviderConfig::OpenAiCompatible { base_url, .. } => {
+                Some(base_url.as_str().to_string())
+            }
+            omw_config::ProviderConfig::Ollama { base_url, .. } => {
+                base_url.as_ref().map(|u| u.as_str().to_string())
+            }
+            omw_config::ProviderConfig::OpenAi { base_url, .. } => {
+                base_url.as_ref().map(|u| u.as_str().to_string())
+            }
+            _ => None,
+        },
+        model: provider
+            .default_model()
+            .map(|s| s.to_string())
+            .unwrap_or_default(),
+        system_prompt: None,
+        cwd: None,
+        approval_mode,
+    })
+}
+
 fn should_show_completions_in_ai_input(buffer_text: &str) -> bool {
     if buffer_text.ends_with(char::is_whitespace) {
         return false;
@@ -5962,66 +6013,66 @@ impl Input {
                 log::info!("omw# input: intercepting prompt={prompt:?}");
                 let state = crate::ai_assistant::omw_agent_state::OmwAgentState::shared();
                 let active = state.active_terminal_clone();
+                let Some(handle) = active.clone() else {
+                    log::warn!(
+                        "omw# input: no active local terminal pane registered; refusing prompt"
+                    );
+                    self.editor.update(ctx, |ed, ctx| {
+                        ed.set_buffer_text(
+                            &format!(
+                                "# {prompt}    ⚠ no active terminal pane — click a pane and retry"
+                            ),
+                            ctx,
+                        );
+                    });
+                    return true;
+                };
+                let view_id = handle.view_id;
+                let existing = state.pane_session(view_id);
                 log::info!(
-                    "omw# input: status={:?} active_pane={}",
-                    state.status(),
-                    if active.is_some() { "Some" } else { "None" }
+                    "omw# input: view_id={view_id:?} pane_session_present={}",
+                    existing.is_some()
                 );
-                // Lazy-start the in-process kernel + WS session if the
-                // user's first interaction is a `#` prompt rather than
-                // opening the panel.
-                if matches!(
-                    state.status(),
-                    crate::ai_assistant::omw_agent_state::OmwAgentStatus::Idle
-                        | crate::ai_assistant::omw_agent_state::OmwAgentStatus::Failed { .. }
-                ) {
-                    log::info!("omw# input: status is Idle/Failed; calling start_with_config");
-                    if let Err(e) = state.start_with_config() {
-                        log::warn!("omw# input: start_with_config failed: {e}");
-                        // Surface the error inline so the user doesn't
-                        // have to check the log file.
-                        if let Some(h) = active.as_ref() {
-                            let line = format!("\r\n\x1b[31momw # prompt failed: {e}\x1b[0m\r\n");
-                            let _ = h.pty_reads_tx.try_broadcast(std::sync::Arc::new(line.into_bytes()));
+
+                // Per-pane session model: each pane has its own kernel
+                // session so its conversation history doesn't leak
+                // into other panes. Provision lazily on first `#` per
+                // pane.
+                if existing.is_none() {
+                    log::info!("omw# input: pane has no session; calling start_pane_session");
+                    let params = match build_session_params_from_config() {
+                        Ok(p) => p,
+                        Err(e) => {
+                            log::warn!("omw# input: load config failed: {e}");
+                            let msg =
+                                format!("\r\n\x1b[31momw # prompt failed: {e}\x1b[0m\r\n");
+                            let _ = handle.event_loop_tx.lock().send(
+                                crate::terminal::writeable_pty::Message::InjectBytes(
+                                    std::borrow::Cow::Owned(msg.into_bytes()),
+                                ),
+                            );
+                            self.editor.update(ctx, |ed, ctx| {
+                                ed.set_buffer_text("", ctx);
+                            });
+                            return true;
                         }
-                        // Clear input + claim the line so it doesn't end
-                        // up as a shell comment in the user's history.
+                    };
+                    if let Err(e) = state.start_pane_session(view_id, params) {
+                        log::warn!("omw# input: start_pane_session failed: {e}");
+                        let msg = format!("\r\n\x1b[31momw # prompt failed: {e}\x1b[0m\r\n");
+                        let _ = handle.event_loop_tx.lock().send(
+                            crate::terminal::writeable_pty::Message::InjectBytes(
+                                std::borrow::Cow::Owned(msg.into_bytes()),
+                            ),
+                        );
                         self.editor.update(ctx, |ed, ctx| {
                             ed.set_buffer_text("", ctx);
                         });
                         return true;
                     }
-                    log::info!("omw# input: start_with_config OK; status={:?}", state.status());
                 }
-                // Capture the focused pane's PTY broadcast at submit
-                // time so the response stays in the same pane even if
-                // the user shifts focus mid-stream. If no local-tty pane
-                // is registered (e.g. immediately after app launch
-                // before the first pane focus has fired), refuse the
-                // prompt with a visible warning in the editor — the
-                // panel-only path is silent in this state and would
-                // produce the exact "no response, no error" experience
-                // we're trying to eliminate.
-                let send_result = match active.clone() {
-                    Some(handle) => {
-                        log::info!("omw# input: dispatching to send_prompt_inline");
-                        state.send_prompt_inline(prompt.to_string(), handle)
-                    }
-                    None => {
-                        log::warn!(
-                            "omw# input: no active local terminal pane registered; refusing prompt"
-                        );
-                        self.editor.update(ctx, |ed, ctx| {
-                            ed.set_buffer_text(
-                                &format!(
-                                    "# {prompt}    ⚠ no active terminal pane — click a pane and retry"
-                                ),
-                                ctx,
-                            );
-                        });
-                        return true;
-                    }
-                };
+
+                let send_result = state.send_prompt_inline_for_pane(prompt.to_string(), handle);
                 if let Err(e) = send_result {
                     log::warn!("omw# input: send failed: {e}");
                     if let Some(h) = active.as_ref() {

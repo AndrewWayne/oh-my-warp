@@ -105,6 +105,65 @@ pub struct ActiveTerminalHandle {
     pub pty_reads_tx: async_broadcast::Sender<std::sync::Arc<Vec<u8>>>,
 }
 
+/// Per-pane agent session. Each pane that uses the `# `-prefix inline
+/// flow gets its own kernel session, WS connection, and event bus —
+/// so prompts in different panes don't share conversation context
+/// (the agent's history grows per pane, not globally).
+///
+/// Keyed by [`warpui::EntityId`] of the [`TerminalView`] in
+/// `OmwAgentState::pane_sessions`. The session is provisioned lazily
+/// on the first `# `-prefix submission within a pane (see
+/// [`OmwAgentState::start_pane_session`]) and torn down on pane
+/// close.
+pub struct PaneSession {
+    /// Kernel-issued sessionId returned by `POST /api/v1/agent/sessions`.
+    pub session_id: String,
+    /// Outbound sender into the per-pane WS writer task. Drops to
+    /// `Err(SendError::Closed)` once `ws_task` exits.
+    outbound: mpsc::Sender<OmwAgentEventUp>,
+    /// WS reader/writer task for `/ws/v1/agent/:session_id`. Aborted
+    /// when the session is replaced or the pane is removed.
+    ws_task: Mutex<Option<JoinHandle<()>>>,
+    /// Per-pane inbound event bus. The pump task spawned by
+    /// [`OmwAgentState::send_prompt_inline`] subscribes here.
+    /// Capacity = [`EVENT_CHANNEL_CAPACITY`].
+    event_tx: broadcast::Sender<OmwAgentEventDown>,
+    /// Per-pane status — the panel header reads this for the pane's
+    /// header tooltip.
+    status_tx: watch::Sender<OmwAgentStatus>,
+}
+
+impl PaneSession {
+    /// Snapshot of the per-pane status.
+    pub fn status(&self) -> OmwAgentStatus {
+        self.status_tx.borrow().clone()
+    }
+
+    /// Subscribe to this pane's inbound event stream. Each subscriber
+    /// gets every event from the moment they subscribe forward — same
+    /// semantics as [`OmwAgentState::subscribe_events`] but scoped to
+    /// the pane's session.
+    pub fn subscribe_events(&self) -> broadcast::Receiver<OmwAgentEventDown> {
+        self.event_tx.subscribe()
+    }
+
+    /// Send a prompt UP to the kernel via this pane's WS. Errors map
+    /// the same as [`OmwAgentState::send_prompt`].
+    pub fn send_prompt(&self, prompt: String) -> Result<(), String> {
+        self.outbound
+            .try_send(OmwAgentEventUp::Prompt { prompt })
+            .map_err(|e| format!("send_prompt (pane {}): {e}", self.session_id))
+    }
+
+    /// Tear down the WS task. Called on pane close.
+    pub fn stop(&self) {
+        if let Some(t) = self.ws_task.lock().take() {
+            t.abort();
+        }
+        let _ = self.status_tx.send(OmwAgentStatus::Idle);
+    }
+}
+
 /// Process-wide singleton.
 pub struct OmwAgentState {
     inner: Mutex<Inner>,
@@ -116,6 +175,11 @@ pub struct OmwAgentState {
     /// Currently-focused terminal pane. Set by TerminalView on focus;
     /// cleared on blur/close. `None` when no pane is active.
     active_terminal: Mutex<Option<ActiveTerminalHandle>>,
+    /// Per-pane agent sessions. Each pane gets its own kernel session
+    /// + WS so its conversation history doesn't bleed into other
+    /// panes. Keyed by the pane's [`warpui::EntityId`]. Populated
+    /// lazily on the first `# `-prefix submission per pane.
+    pane_sessions: Mutex<std::collections::HashMap<warpui::EntityId, Arc<PaneSession>>>,
 }
 
 struct Inner {
@@ -155,6 +219,7 @@ impl OmwAgentState {
                     status_tx,
                     event_tx,
                     active_terminal: Mutex::new(None),
+                    pane_sessions: Mutex::new(std::collections::HashMap::new()),
                 })
             })
             .clone()
@@ -468,6 +533,248 @@ impl OmwAgentState {
             .map_err(|e| format!("cancel: {e}"))
     }
 
+    /// Look up the [`PaneSession`] for a given pane. Returns `None` if
+    /// the pane hasn't started a session yet (or has had its session
+    /// removed via [`Self::remove_pane_session`]).
+    pub fn pane_session(&self, view_id: warpui::EntityId) -> Option<Arc<PaneSession>> {
+        self.pane_sessions.lock().get(&view_id).cloned()
+    }
+
+    /// Provision (or retrieve cached) a fresh kernel session bound to
+    /// `view_id`. Each pane owns its own [`PaneSession`] so that
+    /// `# `-prefix prompts in different panes don't share conversation
+    /// context. The first call per pane:
+    ///
+    /// 1. Boots the in-process omw-server (idempotent — see
+    ///    [`super::omw_inproc_server::ensure_running`]).
+    /// 2. POSTs `/api/v1/agent/sessions` with the supplied params and
+    ///    waits for the kernel-issued sessionId.
+    /// 3. Connects a WS to `/ws/v1/agent/<session_id>` and parks a
+    ///    reader/writer task that pumps frames between the pane's
+    ///    outbound mpsc and a per-pane `event_tx` broadcast.
+    /// 4. Caches the [`PaneSession`] in `pane_sessions[view_id]`.
+    ///
+    /// Subsequent calls with the same `view_id` return the cached
+    /// session unchanged. To force a fresh session (e.g. on provider
+    /// reconfiguration), call [`Self::remove_pane_session`] first.
+    pub fn start_pane_session(
+        self: &Arc<Self>,
+        view_id: warpui::EntityId,
+        params: OmwAgentSessionParams,
+    ) -> Result<Arc<PaneSession>, String> {
+        if let Some(existing) = self.pane_session(view_id) {
+            return Ok(existing);
+        }
+        log::info!(
+            "omw# state: start_pane_session view_id={view_id:?} kind={} model={}",
+            params.provider_kind,
+            params.model
+        );
+        let runtime = self.ensure_runtime()?;
+        super::omw_inproc_server::ensure_running(&runtime)?;
+
+        let server_url = std::env::var("OMW_SERVER_URL")
+            .unwrap_or_else(|_| DEFAULT_SERVER_URL.to_string());
+
+        // Block on session/create + WS connect synchronously so the
+        // caller has a usable PaneSession on return — mirrors the
+        // inproc_server's bind-before-return discipline. Without this,
+        // send_prompt_inline_for_pane could race the WS connect.
+        let (ready_tx, ready_rx) =
+            std::sync::mpsc::sync_channel::<Result<Arc<PaneSession>, String>>(1);
+        let server_url_for_task = server_url.clone();
+        let view_id_for_task = view_id;
+        let weak_self = Arc::downgrade(self);
+        runtime.spawn(async move {
+            let result = boot_pane_session(
+                view_id_for_task,
+                server_url_for_task,
+                params,
+                weak_self,
+            )
+            .await;
+            let _ = ready_tx.send(result);
+        });
+        let pane_session = ready_rx
+            .recv()
+            .map_err(|_| "boot_pane_session channel dropped".to_string())??;
+
+        self.pane_sessions
+            .lock()
+            .insert(view_id, pane_session.clone());
+
+        // Spawn the singleton command broker on first start (it's
+        // process-wide; subscribes to `event_tx`). Per-pane bash
+        // routing is keyed by `terminalSessionId` on the kernel side,
+        // so the existing broker works without modification.
+        {
+            let mut g = self.inner.lock();
+            if g.command_broker_task.is_none() {
+                let broker =
+                    super::omw_command_broker::spawn_command_broker(self.clone(), &runtime);
+                g.command_broker_task = Some(broker);
+            }
+        }
+        Ok(pane_session)
+    }
+
+    /// Tear down a pane's session — aborts its WS task and removes the
+    /// entry from `pane_sessions`. Called from
+    /// [`Self::clear_active_terminal`] when a pane is closed (or
+    /// optionally by callers that want to recycle a session).
+    pub fn remove_pane_session(&self, view_id: warpui::EntityId) {
+        if let Some(s) = self.pane_sessions.lock().remove(&view_id) {
+            s.stop();
+        }
+    }
+
+    /// Pump the streaming response for `prompt` into the supplied
+    /// terminal pane, using *the pane's own* kernel session. Mirrors
+    /// [`Self::send_prompt_inline`] but scoped to one pane's context
+    /// rather than the singleton session, so each pane carries its own
+    /// conversation history.
+    ///
+    /// Resolves the session via `target.view_id` — if the pane has no
+    /// session yet, the caller must call [`Self::start_pane_session`]
+    /// first; this function does NOT auto-provision (the caller has
+    /// the params and needs to surface validation errors).
+    pub fn send_prompt_inline_for_pane(
+        self: &Arc<Self>,
+        prompt: String,
+        target: ActiveTerminalHandle,
+    ) -> Result<(), String> {
+        let pane_session = self
+            .pane_session(target.view_id)
+            .ok_or_else(|| {
+                format!(
+                    "no agent session for pane {:?} — call start_pane_session first",
+                    target.view_id
+                )
+            })?;
+        log::info!(
+            "omw# state: send_prompt_inline_for_pane view_id={:?} session_id={}",
+            target.view_id,
+            pane_session.session_id
+        );
+
+        // Subscribe BEFORE sending so the first deltas can't race past
+        // the receiver registration.
+        let mut events = pane_session.subscribe_events();
+        let runtime = self
+            .inner
+            .lock()
+            .runtime_handle
+            .clone()
+            .ok_or_else(|| "agent runtime not yet initialised".to_string())?;
+
+        let event_loop_tx = target.event_loop_tx.clone();
+        let inject = |bytes: Vec<u8>| -> Result<(), String> {
+            let n = bytes.len();
+            let msg = crate::terminal::writeable_pty::Message::InjectBytes(
+                std::borrow::Cow::Owned(bytes),
+            );
+            event_loop_tx.lock().send(msg).map_err(|e| {
+                log::warn!("omw# pump: inject {n} bytes FAILED: {e:?}");
+                format!("inject into local-tty event loop: {e:?}")
+            })?;
+            Ok(())
+        };
+
+        let echo = format!("\r\n\x1b[2K# {prompt}\r\n");
+        let _ = inject(echo.into_bytes());
+
+        pane_session.send_prompt(prompt)?;
+        log::info!("omw# state: send_prompt_inline_for_pane prompt sent; spawning pump");
+
+        let pty_event_loop_tx = target.event_loop_tx.clone();
+        let pump_session_id = pane_session.session_id.clone();
+        runtime.spawn(async move {
+            log::info!(
+                "omw# pump (per-pane): started view_id={:?} session={pump_session_id}",
+                target.view_id
+            );
+            const FRAME_DIM_CYAN: &str = "\x1b[2;36m";
+            const FRAME_YELLOW: &str = "\x1b[33m";
+            const FRAME_DIM: &str = "\x1b[2m";
+            const FRAME_RED: &str = "\x1b[31m";
+            const RESET: &str = "\x1b[0m";
+
+            let send = |bytes: Vec<u8>| {
+                let msg = crate::terminal::writeable_pty::Message::InjectBytes(
+                    std::borrow::Cow::Owned(bytes),
+                );
+                let _ = pty_event_loop_tx.lock().send(msg);
+            };
+
+            while let Ok(event) = events.recv().await {
+                match event {
+                    super::omw_protocol::OmwAgentEventDown::AssistantDelta { delta, .. } => {
+                        send(delta.into_bytes());
+                    }
+                    super::omw_protocol::OmwAgentEventDown::ToolCallStarted {
+                        tool_name,
+                        args,
+                        ..
+                    } => {
+                        let summary = summarize_tool_args(&tool_name, &args);
+                        let line = format!(
+                            "\r\n{FRAME_DIM_CYAN}┌─ tool: {tool_name}{summary}{RESET}\r\n"
+                        );
+                        send(line.into_bytes());
+                    }
+                    super::omw_protocol::OmwAgentEventDown::ToolCallFinished {
+                        tool_name,
+                        is_error,
+                        ..
+                    } => {
+                        let marker = if is_error { "✗ failed" } else { "✓ done" };
+                        let color = if is_error { FRAME_RED } else { FRAME_DIM_CYAN };
+                        let line = format!("{color}└─ {tool_name}: {marker}{RESET}\r\n");
+                        send(line.into_bytes());
+                    }
+                    super::omw_protocol::OmwAgentEventDown::ApprovalRequest {
+                        approval_id,
+                        tool_call,
+                        ..
+                    } => {
+                        let tool_name = tool_call
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("(unknown)");
+                        let line = format!(
+                            "\r\n{FRAME_YELLOW}⚠  approval needed for {tool_name} (id={approval_id})\r\n   open the agent panel to Approve / Reject{RESET}\r\n"
+                        );
+                        send(line.into_bytes());
+                    }
+                    super::omw_protocol::OmwAgentEventDown::Error { message, .. } => {
+                        let line =
+                            format!("\r\n{FRAME_RED}omw agent error: {message}{RESET}\r\n");
+                        send(line.into_bytes());
+                    }
+                    super::omw_protocol::OmwAgentEventDown::AgentCrashed => {
+                        send(format!(
+                            "\r\n{FRAME_RED}omw agent kernel crashed (check ~/Library/Logs/warp-oss.log){RESET}\r\n"
+                        ).into_bytes());
+                        return;
+                    }
+                    super::omw_protocol::OmwAgentEventDown::TurnFinished { .. } => {
+                        send(
+                            format!("{FRAME_DIM}\r\n[turn finished]{RESET}\r\n").into_bytes(),
+                        );
+                        return;
+                    }
+                    super::omw_protocol::OmwAgentEventDown::ExecCommand { .. }
+                    | super::omw_protocol::OmwAgentEventDown::CommandData { .. }
+                    | super::omw_protocol::OmwAgentEventDown::CommandExit { .. } => {}
+                }
+            }
+            log::warn!(
+                "omw# pump (per-pane): events.recv() returned Err — channel closed/lagged; exiting"
+            );
+        });
+        Ok(())
+    }
+
     /// Convenience wrapper around [`start`] that loads `omw-config` and
     /// resolves the default provider into [`OmwAgentSessionParams`]. Returns
     /// `Err` if no provider is configured, the agent is disabled, or the
@@ -634,6 +941,37 @@ impl OmwAgentState {
     #[cfg(any(test, feature = "test-exports"))]
     pub fn test_ensure_runtime(&self) -> Result<tokio::runtime::Handle, String> {
         self.ensure_runtime()
+    }
+
+    /// Test-only: install a synthetic [`PaneSession`] for `view_id`
+    /// without going through the WS. The supplied outbound mpsc lets
+    /// the test capture `OmwAgentEventUp` frames the per-pane code
+    /// path emits; the returned `event_tx` lets the test inject
+    /// inbound events that simulate the WS reader. Returns
+    /// `(event_tx, replaced)` where `replaced` is `Some(_)` if a prior
+    /// session was overwritten.
+    #[cfg(any(test, feature = "test-exports"))]
+    pub fn test_install_pane_session(
+        &self,
+        view_id: warpui::EntityId,
+        outbound: mpsc::Sender<OmwAgentEventUp>,
+    ) -> (
+        broadcast::Sender<OmwAgentEventDown>,
+        Option<Arc<PaneSession>>,
+    ) {
+        let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+        let (status_tx, _) = watch::channel(OmwAgentStatus::Connected {
+            session_id: format!("test-{view_id:?}"),
+        });
+        let session = Arc::new(PaneSession {
+            session_id: format!("test-{view_id:?}"),
+            outbound,
+            ws_task: Mutex::new(None),
+            event_tx: event_tx.clone(),
+            status_tx,
+        });
+        let replaced = self.pane_sessions.lock().insert(view_id, session);
+        (event_tx, replaced)
     }
 
     fn set_status(&self, status: OmwAgentStatus) {
@@ -839,6 +1177,118 @@ async fn run_session(
         g.outbound = None;
         g.ws_task = None;
     }
+}
+
+/// Provision a fresh kernel session for a pane and park its WS
+/// reader/writer. Returns the [`PaneSession`] only after the WS is
+/// connected, so callers can immediately invoke
+/// [`PaneSession::send_prompt`] without racing.
+async fn boot_pane_session(
+    view_id: warpui::EntityId,
+    server_url: String,
+    params: OmwAgentSessionParams,
+    weak_self: std::sync::Weak<OmwAgentState>,
+) -> Result<Arc<PaneSession>, String> {
+    log::info!("omw# pane-session: boot view_id={view_id:?} server_url={server_url}");
+    let session_id = create_session(&server_url, &params)
+        .await
+        .map_err(|e| format!("create_session: {e}"))?;
+    log::info!("omw# pane-session: create_session OK id={session_id}");
+
+    let ws_url = match server_url.strip_prefix("http://") {
+        Some(rest) => format!("ws://{rest}/ws/v1/agent/{session_id}"),
+        None => match server_url.strip_prefix("https://") {
+            Some(rest) => format!("wss://{rest}/ws/v1/agent/{session_id}"),
+            None => return Err("OMW_SERVER_URL must start with http:// or https://".into()),
+        },
+    };
+    use futures_util::StreamExt as _;
+    let (ws_stream, _) = tokio_tungstenite::connect_async(&ws_url)
+        .await
+        .map_err(|e| format!("ws connect: {e}"))?;
+    let (mut sink, mut stream) = ws_stream.split();
+    log::info!("omw# pane-session: WS connected to {ws_url}");
+
+    let (out_tx, mut out_rx) = mpsc::channel::<OmwAgentEventUp>(OUTBOUND_CHANNEL_CAPACITY);
+    let (event_tx, _) = broadcast::channel::<OmwAgentEventDown>(EVENT_CHANNEL_CAPACITY);
+    let (status_tx, _) = watch::channel(OmwAgentStatus::Connected {
+        session_id: session_id.clone(),
+    });
+
+    let event_tx_for_task = event_tx.clone();
+    let status_tx_for_task = status_tx.clone();
+    let session_id_for_task = session_id.clone();
+    let view_id_for_task = view_id;
+
+    let ws_task = tokio::spawn(async move {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+        loop {
+            tokio::select! {
+                msg = stream.next() => {
+                    let Some(msg) = msg else { break };
+                    let msg = match msg { Ok(m) => m, Err(_) => break };
+                    let text = match msg {
+                        WsMessage::Text(t) => t,
+                        WsMessage::Binary(b) => String::from_utf8_lossy(&b).into_owned(),
+                        WsMessage::Close(_) => break,
+                        _ => continue,
+                    };
+                    if let Ok(event) = serde_json::from_str::<OmwAgentEventDown>(&text) {
+                        // Status-watch: Streaming on first delta /
+                        // tool_call; Connected on turn_finished.
+                        match &event {
+                            OmwAgentEventDown::AssistantDelta { .. }
+                            | OmwAgentEventDown::ToolCallStarted { .. } => {
+                                if !matches!(*status_tx_for_task.borrow(), OmwAgentStatus::Streaming { .. }) {
+                                    let _ = status_tx_for_task.send(OmwAgentStatus::Streaming {
+                                        session_id: session_id_for_task.clone(),
+                                    });
+                                }
+                            }
+                            OmwAgentEventDown::TurnFinished { .. } => {
+                                let _ = status_tx_for_task.send(OmwAgentStatus::Connected {
+                                    session_id: session_id_for_task.clone(),
+                                });
+                            }
+                            _ => {}
+                        }
+                        // Per-pane fan-out — only this pane's pump sees it.
+                        let _ = event_tx_for_task.send(event.clone());
+                        // Also re-publish on the global bus so the
+                        // command broker (singleton, keyed by
+                        // terminalSessionId) can route bash/exec.
+                        if let Some(state) = weak_self.upgrade() {
+                            let _ = state.event_tx.send(event);
+                        }
+                    }
+                }
+                up = out_rx.recv() => {
+                    let Some(up) = up else { break };
+                    let line = match serde_json::to_string(&up) { Ok(s) => s, Err(_) => continue };
+                    if sink.send(WsMessage::Text(line)).await.is_err() { break; }
+                }
+            }
+        }
+        log::info!(
+            "omw# pane-session: WS loop exited view_id={view_id_for_task:?} session={session_id_for_task}"
+        );
+        let _ = status_tx_for_task.send(OmwAgentStatus::Idle);
+        let _ = sink.close().await;
+        // Drop the entry so a future # in this pane re-provisions.
+        if let Some(state) = weak_self.upgrade() {
+            state.pane_sessions.lock().remove(&view_id_for_task);
+        }
+    });
+
+    Ok(Arc::new(PaneSession {
+        session_id,
+        outbound: out_tx,
+        ws_task: Mutex::new(Some(ws_task)),
+        event_tx,
+        status_tx,
+    }))
 }
 
 async fn create_session(

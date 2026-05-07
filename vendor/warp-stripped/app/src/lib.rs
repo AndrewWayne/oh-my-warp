@@ -128,7 +128,7 @@ pub mod test_exports {
     };
     #[cfg(feature = "omw_local")]
     pub use crate::ai_assistant::{
-        omw_agent_state::{ActiveTerminalHandle, OmwAgentState},
+        omw_agent_state::{ActiveTerminalHandle, OmwAgentState, PaneSession},
         omw_command_broker::{detect_osc133_prompt_end, spawn_command_broker},
         omw_protocol::{OmwAgentEventDown, OmwAgentEventUp},
         omw_transcript::{ApprovalDecision, OmwAgentMessage, OmwAgentTranscriptModel},

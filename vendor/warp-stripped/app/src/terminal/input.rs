@@ -1430,6 +1430,27 @@ lazy_static! {
 /// Returns boolean indicating whether completions-as-you-type should pop up, while in AI input.
 /// This is primarily based on the last word in the buffer text, and whether it makes sense to show
 /// filepath completions.
+/// Detect the omw inline-agent prompt sigil — a literal `# ` (hash + space)
+/// at column 0 of a single-line buffer. Returns the trimmed prompt body.
+///
+/// Per `docs/inline-agent-command-execution-report.md` §4.2:
+///   - `# <prompt>` ⇒ inline agent (this function returns Some).
+///   - `## …` ⇒ literal shell comment (returns None — falls through to shell).
+///   - `#` followed by anything other than space (e.g. `#123`) ⇒ shell.
+///   - `# ` mid-buffer (e.g. `echo foo # bar`) ⇒ shell.
+///   - Multi-line buffers ⇒ shell (heredocs, continuation prompts).
+#[cfg(feature = "omw_local")]
+pub fn parse_inline_agent_prompt(buffer: &str) -> Option<&str> {
+    if buffer.contains('\n') {
+        return None;
+    }
+    let rest = buffer.strip_prefix("# ")?;
+    if rest.is_empty() {
+        return None;
+    }
+    Some(rest.trim_end())
+}
+
 fn should_show_completions_in_ai_input(buffer_text: &str) -> bool {
     if buffer_text.ends_with(char::is_whitespace) {
         return false;
@@ -5927,6 +5948,49 @@ impl Input {
     }
 
     pub fn try_execute_command(&mut self, command: &str, ctx: &mut ViewContext<Self>) -> bool {
+        // omw_local: a `#` at column 0 (with at least one space + a body)
+        // is the inline-agent prompt sigil per inline-agent-command-execution-report.md §4.
+        // `## …` escapes back to a literal shell comment. We intercept
+        // before the rest of the shell pipeline so the kernel — not the
+        // shell — sees the user's natural-language prompt.
+        #[cfg(feature = "omw_local")]
+        {
+            if let Some(prompt) = parse_inline_agent_prompt(command) {
+                let state = crate::ai_assistant::omw_agent_state::OmwAgentState::shared();
+                // Lazy-start the in-process kernel + WS session if the
+                // user's first interaction is a `#` prompt rather than
+                // opening the panel. Errors land on the panel header as
+                // `OmwAgentStatus::Failed` for the user to see.
+                if matches!(
+                    state.status(),
+                    crate::ai_assistant::omw_agent_state::OmwAgentStatus::Idle
+                        | crate::ai_assistant::omw_agent_state::OmwAgentStatus::Failed { .. }
+                ) {
+                    if let Err(e) = state.start_with_config() {
+                        log::warn!("omw # prompt: start_with_config failed: {e}");
+                        // Fall through to shell execution — `# foo` becomes a comment.
+                        return self.try_execute_command_inner(command, ctx);
+                    }
+                }
+                if let Err(e) = state.send_prompt(prompt.to_string()) {
+                    log::warn!("omw # prompt: send_prompt failed: {e}");
+                    return self.try_execute_command_inner(command, ctx);
+                }
+                // Clear the input box so the prompt doesn't linger.
+                self.editor.update(ctx, |ed, ctx| {
+                    ed.set_buffer_text("", ctx);
+                });
+                return true;
+            }
+        }
+        self.try_execute_command_inner(command, ctx)
+    }
+
+    fn try_execute_command_inner(
+        &mut self,
+        command: &str,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
         let shared_session_status = self.model.lock().shared_session_status().clone();
         if shared_session_status.is_sharer_or_viewer() {
             // If this is a viewer who isn't also an executor, they should not

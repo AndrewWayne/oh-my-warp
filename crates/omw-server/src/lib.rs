@@ -92,3 +92,28 @@ pub fn audit_router(audit: handlers::audit::AuditState) -> Router {
         .route("/api/v1/audit/append", post(handlers::audit::append))
         .with_state(audit)
 }
+
+/// Bind a loopback listener and serve the agent surface to completion.
+///
+/// Used by the bundled-in-warp-oss in-process server so the GUI doesn't
+/// need a sidecar process. The function consumes the supplied `bind_addr`
+/// (typically `127.0.0.1:8788`) and serves [`agent_router`] against the
+/// supplied [`AgentProcess`] until the future is dropped or the underlying
+/// listener errors.
+///
+/// Lives in `omw-server` (not in warp-stripped) so it uses this crate's
+/// own axum 0.7 — warp-stripped's axum 0.8.4 has a different
+/// `axum::serve` signature and would not link against this crate's
+/// `Router`.
+pub async fn serve_agent_loopback(
+    agent: Arc<AgentProcess>,
+    bind_addr: &str,
+) -> std::result::Result<(), String> {
+    let listener = tokio::net::TcpListener::bind(bind_addr)
+        .await
+        .map_err(|e| format!("bind {bind_addr}: {e}"))?;
+    let app = agent_router(agent);
+    axum::serve(listener, app.into_make_service())
+        .await
+        .map_err(|e| format!("axum serve: {e}"))
+}

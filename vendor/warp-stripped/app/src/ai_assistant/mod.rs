@@ -34,6 +34,8 @@ pub mod omw_agent_state;
 #[cfg(feature = "omw_local")]
 pub mod omw_command_broker;
 #[cfg(feature = "omw_local")]
+pub mod omw_inproc_server;
+#[cfg(feature = "omw_local")]
 pub mod omw_panel;
 #[cfg(feature = "omw_local")]
 pub mod omw_protocol;

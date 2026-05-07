@@ -134,6 +134,8 @@ pub mod test_exports {
         omw_transcript::{ApprovalDecision, OmwAgentMessage, OmwAgentTranscriptModel},
     };
     #[cfg(feature = "omw_local")]
+    pub use crate::terminal::input::parse_inline_agent_prompt;
+    #[cfg(feature = "omw_local")]
     pub mod terminal_io {
         //! Re-exports of the local-PTY channel types so integration tests
         //! in `app/tests/` can build synthetic `ActiveTerminalHandle`s

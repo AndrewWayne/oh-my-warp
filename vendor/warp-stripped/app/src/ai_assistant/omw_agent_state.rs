@@ -192,6 +192,14 @@ impl OmwAgentState {
         // Clear any existing session so we don't leak the prior WS task.
         self.stop();
 
+        // Bring up the in-process omw-server on first start so the user
+        // doesn't have to launch a sidecar process. Idempotent — only the
+        // first call binds the listener; later calls are O(1).
+        if let Err(e) = super::omw_inproc_server::ensure_running(&runtime) {
+            self.set_status(OmwAgentStatus::Failed { error: e.clone() });
+            return Err(e);
+        }
+
         let server_url = std::env::var("OMW_SERVER_URL")
             .unwrap_or_else(|_| DEFAULT_SERVER_URL.to_string());
 

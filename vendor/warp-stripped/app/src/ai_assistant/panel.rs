@@ -287,32 +287,7 @@ impl AIAssistantPanelView {
         if let Err(e) = super::omw_agent_state::OmwAgentState::shared().start_with_config() {
             log::debug!("omw agent start_with_config: {e}");
         }
-        // Kick off the fast-tick so the panel re-renders as kernel
-        // events fan into the shared transcript. Without this, the
-        // panel would only refresh on the upstream 60s tick (and on
-        // user input events bound to its child views), so streaming
-        // assistant deltas would only appear when the user moused
-        // over the panel.
-        panel.omw_tick(ctx);
         panel
-    }
-
-    /// Recurring 200ms tick that keeps the omw transcript view live.
-    /// Cheap: each tick is a `ctx.notify()` + a check against
-    /// [`OmwAgentState::transcript_revision`]; the actual re-render
-    /// only happens when notify causes the view to be re-laid out.
-    #[cfg(feature = "omw_local")]
-    fn omw_tick(&self, ctx: &mut ViewContext<Self>) {
-        ctx.spawn(
-            async move { Timer::after(Duration::from_millis(200)).await },
-            |view, _, ctx| {
-                if !view.is_omw_placeholder {
-                    return;
-                }
-                ctx.notify();
-                view.omw_tick(ctx);
-            },
-        );
     }
 
     /// Kept for call-site compatibility while callers are migrated.

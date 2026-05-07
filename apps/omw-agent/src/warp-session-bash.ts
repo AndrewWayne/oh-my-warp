@@ -9,6 +9,14 @@
 //   3. Emits a bash/exec notification toward the broker (omw-server).
 //   4. Awaits bash/finished, invoking opts.onData on each bash/data event.
 //   5. AbortSignal / timeout triggers bash/cancel and resolves with snapshot.
+//
+// `createBashTool` wraps these operations as an AgentTool consumable by the
+// pi-agent loop. The tool's `execute` constructs a per-call BashOperations
+// so the runtime toolCallId rides along with bash/exec params for audit.
+
+import { Type, type Static } from "typebox";
+
+import type { AgentTool } from "../vendor/pi-agent-core/index.js";
 
 /** Result returned by exec(). */
 export interface ExecResult {
@@ -135,6 +143,77 @@ export function createWarpSessionBashOperations(
                     }, opts.timeout);
                 }
             });
+        },
+    };
+}
+
+/** Schema for the `bash` tool's parameters. Kept minimal in v0.4 — the
+ *  full pi-coding-agent surface is intentionally not vendored. */
+const BashParametersSchema = Type.Object({
+    command: Type.String({ description: "Shell command to execute." }),
+    cwd: Type.Optional(
+        Type.String({ description: "Working directory; defaults to session cwd." }),
+    ),
+    timeout: Type.Optional(
+        Type.Number({ description: "Timeout in milliseconds; default 30000." }),
+    ),
+});
+
+export interface CreateBashToolDeps {
+    rpc: RpcBridge;
+    terminalSessionId: string;
+    agentSessionId: string;
+    /** Default cwd if the model omits it. */
+    defaultCwd?: string;
+}
+
+/**
+ * Build the `bash` AgentTool. Each invocation constructs a fresh
+ * BashOperations carrying the runtime toolCallId so bash/exec params are
+ * traceable in the audit log.
+ */
+export function createBashTool(
+    deps: CreateBashToolDeps,
+): AgentTool<typeof BashParametersSchema, { exitCode: number | null; snapshot: boolean }> {
+    return {
+        name: "bash",
+        label: "Bash",
+        description:
+            "Execute a shell command in the user's active terminal pane and return its output.",
+        parameters: BashParametersSchema,
+        execute: async (
+            toolCallId: string,
+            params: Static<typeof BashParametersSchema>,
+            signal?: AbortSignal,
+        ) => {
+            const ops = createWarpSessionBashOperations({
+                rpc: deps.rpc,
+                terminalSessionId: deps.terminalSessionId,
+                agentSessionId: deps.agentSessionId,
+                toolCallId,
+            });
+            const cwd = params.cwd ?? deps.defaultCwd ?? "";
+            const timeout = typeof params.timeout === "number" ? params.timeout : 30_000;
+            const captured: string[] = [];
+            const result = await ops.exec(params.command, cwd, {
+                timeout,
+                signal,
+                onData: (chunk) => captured.push(chunk),
+            });
+            const stdout = captured.join("");
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text:
+                            stdout +
+                            (result.snapshot
+                                ? "\n[snapshot — process did not finish in time]"
+                                : `\n[exit ${result.exitCode ?? "unknown"}]`),
+                    },
+                ],
+                details: result,
+            };
         },
     };
 }

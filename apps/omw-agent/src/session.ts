@@ -21,6 +21,7 @@ import {
 	type AgentEvent,
 	type AgentLoopConfig,
 	type AgentMessage,
+	type AgentTool,
 } from "../vendor/pi-agent-core/index.js";
 import { getModel, type Message, type Model } from "@mariozechner/pi-ai";
 
@@ -31,6 +32,7 @@ import {
 	type ApprovalRequestNotification,
 	type PendingApprovalMap,
 } from "./policy-hook.js";
+import { createBashTool, type RpcBridge } from "./warp-session-bash.js";
 
 export type ProviderKind = "openai" | "anthropic" | "openai-compatible" | "ollama";
 
@@ -53,6 +55,9 @@ export interface SessionSpec {
 	cwd?: string;
 	/** Per-session policy. Falls back to AskBeforeWrite if omitted. */
 	policy?: PolicyConfig;
+	/** GUI terminal pane this session targets for bash execution. Defaults
+	 *  to `sessionId` for v0.4 (one terminal per agent session). */
+	terminalSessionId?: string;
 }
 
 /** Per-session callbacks injected by the JSON-RPC layer. */
@@ -62,6 +67,10 @@ export interface SessionDeps {
 	 * (serve.ts::runPrompt) wraps this around its `notify` so the
 	 * caller-supplied JSON-RPC writer sees a proper notification frame. */
 	notifyApprovalRequest: (req: ApprovalRequestNotification) => void;
+	/** Bidirectional JSON-RPC bridge used by the bash tool to emit
+	 *  bash/exec notifications and receive bash/data + bash/finished
+	 *  frames per-commandId (Phase 5a). */
+	rpcBridge: RpcBridge;
 }
 
 /**
@@ -88,6 +97,7 @@ export class Session {
 	private readonly notifyApprovalRequest: (req: ApprovalRequestNotification) => void;
 	private readonly pendingApprovals: PendingApprovalMap = new Map();
 	private readonly messages: AgentMessage[] = [];
+	private readonly tools: AgentTool<any>[];
 	private currentAbort?: AbortController;
 
 	constructor(spec: SessionSpec, deps: SessionDeps) {
@@ -99,6 +109,14 @@ export class Session {
 		this.policy = spec.policy ?? DEFAULT_POLICY;
 		this.notifyApprovalRequest = deps.notifyApprovalRequest;
 		this.model = buildModel(spec.providerConfig, spec.model);
+		this.tools = [
+			createBashTool({
+				rpc: deps.rpcBridge,
+				terminalSessionId: spec.terminalSessionId ?? spec.sessionId,
+				agentSessionId: spec.sessionId,
+				defaultCwd: spec.cwd,
+			}),
+		];
 	}
 
 	async prompt(
@@ -139,6 +157,7 @@ export class Session {
 		const context: AgentContext = {
 			systemPrompt: this.systemPrompt,
 			messages: this.messages,
+			tools: this.tools,
 		};
 
 		const stream = agentLoop([userMessage], context, config, abort.signal);

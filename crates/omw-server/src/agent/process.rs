@@ -37,6 +37,8 @@ use tokio::process::{Child, ChildStdin};
 use tokio::sync::{broadcast, oneshot, Mutex as AsyncMutex};
 use tokio::task::JoinHandle;
 
+use super::bash_broker::BashBroker;
+
 /// Capacity of the per-session notification broadcast channel.
 const NOTIFICATION_CAPACITY: usize = 256;
 
@@ -82,15 +84,18 @@ impl AgentProcessConfig {
 
 type PendingMap = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, AgentProcessError>>>>>;
 type SessionMap = Arc<Mutex<HashMap<String, broadcast::Sender<Value>>>>;
+type SharedStdin = Arc<AsyncMutex<ChildStdin>>;
 
 pub struct AgentProcess {
-    /// stdin sink, locked because every send_method serializes one full
-    /// JSON-RPC line at a time.
-    stdin: AsyncMutex<ChildStdin>,
+    /// stdin sink, shared with the bash broker so kernel-bound notifications
+    /// (e.g. snapshot bash/finished) can be sent from the reader task.
+    stdin: SharedStdin,
     /// In-flight request map keyed by JSON-RPC id.
     pending: PendingMap,
     /// Per-session notification fan-out.
     sessions: SessionMap,
+    /// Phase 5a bash routing — dispatch target for `bash/exec` from kernel.
+    bash_broker: Arc<BashBroker>,
     /// Atomic id allocator for outbound requests.
     next_id: AtomicU64,
     /// Reader task handle. Aborted on drop.
@@ -129,11 +134,14 @@ impl AgentProcess {
 
         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
         let sessions: SessionMap = Arc::new(Mutex::new(HashMap::new()));
+        let stdin: SharedStdin = Arc::new(AsyncMutex::new(stdin));
+        let bash_broker = BashBroker::new(sessions.clone(), stdin.clone());
 
         let reader_pending = pending.clone();
         let reader_sessions = sessions.clone();
+        let reader_broker = bash_broker.clone();
         let reader = tokio::spawn(async move {
-            run_reader(stdout, reader_pending, reader_sessions).await;
+            run_reader(stdout, reader_pending, reader_sessions, reader_broker).await;
         });
 
         // Drain stderr without folding it into errors (I-1 defense in
@@ -177,15 +185,23 @@ impl AgentProcess {
         // watcher took ownership above. The watcher is responsible for
         // reaping; Drop only needs to abort the background tasks.
         Ok(Arc::new(Self {
-            stdin: AsyncMutex::new(stdin),
+            stdin,
             pending,
             sessions,
+            bash_broker,
             next_id: AtomicU64::new(1),
             reader: Mutex::new(Some(reader)),
             stderr_drain: Mutex::new(Some(stderr_drain)),
             watcher: Mutex::new(Some(watcher)),
             _child_guard: Mutex::new(None),
         }))
+    }
+
+    /// Bash broker handle. Public so future code (e.g. integration tests
+    /// or panel-level inspection) can introspect routing without going
+    /// through the JSON-RPC wire.
+    pub fn bash_broker(&self) -> &Arc<BashBroker> {
+        &self.bash_broker
     }
 
     /// Send a JSON-RPC request and await its response.
@@ -305,6 +321,7 @@ async fn run_reader(
     stdout: tokio::process::ChildStdout,
     pending: PendingMap,
     sessions: SessionMap,
+    bash_broker: Arc<BashBroker>,
 ) {
     let mut reader = BufReader::new(stdout);
     let mut buf = String::new();
@@ -323,11 +340,16 @@ async fn run_reader(
             Ok(v) => v,
             Err(_) => continue, // ignore non-JSON noise
         };
-        route_frame(&frame, &pending, &sessions);
+        route_frame(frame, &pending, &sessions, &bash_broker).await;
     }
 }
 
-fn route_frame(frame: &Value, pending: &PendingMap, sessions: &SessionMap) {
+async fn route_frame(
+    frame: Value,
+    pending: &PendingMap,
+    sessions: &SessionMap,
+    bash_broker: &Arc<BashBroker>,
+) {
     // Response: has an `id` and either `result` or `error`.
     if let Some(id_value) = frame.get("id").and_then(|v| v.as_u64()) {
         let waiter = {
@@ -348,6 +370,18 @@ fn route_frame(frame: &Value, pending: &PendingMap, sessions: &SessionMap) {
                 let _ = waiter.send(Ok(result));
             }
         }
+        return;
+    }
+    // Phase 5a: bash/exec is keyed by terminalSessionId, not sessionId, so
+    // it would otherwise fan out to every WS subscriber. Dispatch it via
+    // the broker (which translates to a `kind: "exec_command"` frame on
+    // the matching session bus, or a snapshot reply when no GUI is live).
+    if frame.get("method").and_then(|m| m.as_str()) == Some("bash/exec") {
+        let params = frame
+            .get("params")
+            .cloned()
+            .unwrap_or(Value::Null);
+        bash_broker.handle_kernel_bash_exec(&params).await;
         return;
     }
     // Notification: route by params.sessionId, or fan-out if absent.

@@ -14,12 +14,19 @@
 //   - session/cancel   { sessionId }             -> { ok: true }
 //   - approval/decide  { approvalId, decision }  -> { ok: true }   (Phase 5 stub)
 //
-// Notifications (no id, server -> client):
+// Notifications inbound (no id, broker -> kernel):
+//   - bash/data            { commandId, bytes }       (Phase 5a)
+//   - bash/finished        { commandId, exitCode?, snapshot? }   (Phase 5a)
+//   - bash/cancel          { commandId }              (Phase 5a)
+//
+// Notifications outbound (no id, kernel -> broker):
 //   - assistant/delta      { sessionId, delta }
 //   - tool/call_started    { sessionId, toolCallId, toolName, args }
 //   - tool/call_finished   { sessionId, toolCallId, toolName, isError }
 //   - turn/finished        { sessionId, cancelled }
 //   - approval/request     { sessionId, approvalId, toolCall }   (Phase 5)
+//   - bash/exec            { commandId, terminalSessionId, agentSessionId, toolCallId, command, cwd }
+//   - bash/cancel          { commandId }              (kernel-initiated, e.g. timeout)
 //   - error                { sessionId?, message }
 //
 // Threat-model invariants:
@@ -35,6 +42,7 @@ import type { AgentEvent } from "../vendor/pi-agent-core/index.js";
 import type { ApprovalDecision } from "./policy-hook.js";
 import type { PolicyConfig } from "./policy.js";
 import { Session, type GetApiKey, type ProviderConfig, type SessionSpec } from "./session.js";
+import type { RpcBridge } from "./warp-session-bash.js";
 
 export interface RunStdioServerOptions {
 	stdin: NodeJS.ReadableStream;
@@ -78,6 +86,14 @@ type JsonRpcFrame = JsonRpcResult | JsonRpcError | JsonRpcNotification;
  */
 export async function runStdioServer(opts: RunStdioServerOptions): Promise<void> {
 	const sessions = new Map<string, Session>();
+	// Per-commandId subscribers for Phase 5a bash routing. The bash tool
+	// adapter (warp-session-bash.ts) registers a subscriber for each
+	// in-flight exec; inbound bash/data, bash/finished, bash/cancel
+	// notifications from the broker are dispatched here by commandId.
+	const bashSubscribers = new Map<
+		string,
+		(frame: { method: string; params: unknown }) => void
+	>();
 
 	const writeFrame = (frame: JsonRpcFrame): void => {
 		// JSON.stringify + "\n" is sufficient framing because no JSON value
@@ -102,12 +118,22 @@ export async function runStdioServer(opts: RunStdioServerOptions): Promise<void>
 		writeFrame({ jsonrpc: "2.0", id, error: { code, message } });
 	};
 
+	const rpcBridge: RpcBridge = {
+		notify: (method, params) => notify(method, params),
+		registerCommandSubscriber: (commandId, sub) => {
+			bashSubscribers.set(commandId, sub);
+		},
+		unregisterCommandSubscriber: (commandId) => {
+			bashSubscribers.delete(commandId);
+		},
+	};
+
 	const handle = async (req: JsonRpcRequest): Promise<void> => {
 		const id = req.id ?? null;
 		try {
 			switch (req.method) {
 				case "session/create":
-					return handleSessionCreate(req, id, sessions, opts.getApiKey, notify, reply, replyError);
+					return handleSessionCreate(req, id, sessions, opts.getApiKey, rpcBridge, notify, reply, replyError);
 				case "session/prompt":
 					return handleSessionPrompt(req, id, sessions, reply, replyError, notify);
 				case "session/cancel":
@@ -120,6 +146,21 @@ export async function runStdioServer(opts: RunStdioServerOptions): Promise<void>
 		} catch (e) {
 			replyError(id, -32000, errMessage(e));
 		}
+	};
+
+	const dispatchBashNotification = (
+		method: string,
+		params: unknown,
+	): boolean => {
+		const commandId =
+			params && typeof params === "object"
+				? (params as Record<string, unknown>).commandId
+				: undefined;
+		if (typeof commandId !== "string") return false;
+		const sub = bashSubscribers.get(commandId);
+		if (!sub) return false;
+		sub({ method, params });
+		return true;
 	};
 
 	const rl = createInterface({ input: opts.stdin, crlfDelay: Infinity });
@@ -136,6 +177,20 @@ export async function runStdioServer(opts: RunStdioServerOptions): Promise<void>
 			replyError(req.id ?? null, -32600, "invalid request");
 			continue;
 		}
+		// Inbound notification (no id): dispatch bash/* to subscribers; drop
+		// other unknown notifications silently. Notifications never get a
+		// JSON-RPC error reply (per spec) — falling through to handle() would
+		// mis-emit one with id:null.
+		if (req.id === undefined) {
+			if (
+				req.method === "bash/data" ||
+				req.method === "bash/finished" ||
+				req.method === "bash/cancel"
+			) {
+				dispatchBashNotification(req.method, req.params);
+			}
+			continue;
+		}
 		// Don't await here — `session/prompt` runs the agent loop in the
 		// background and emits notifications as it streams. Sequencing is
 		// handled per-session by `Session.prompt` (it rejects concurrent
@@ -149,6 +204,7 @@ function handleSessionCreate(
 	id: string | number | null,
 	sessions: Map<string, Session>,
 	getApiKey: GetApiKey,
+	rpcBridge: RpcBridge,
 	notify: (method: string, params: unknown) => void,
 	reply: (id: string | number | null, result: unknown) => void,
 	replyError: (id: string | number | null, code: number, message: string) => void,
@@ -169,15 +225,30 @@ function handleSessionCreate(
 	const cwd = typeof params.cwd === "string" ? params.cwd : undefined;
 	const systemPrompt = typeof params.systemPrompt === "string" ? params.systemPrompt : undefined;
 	const policy = parsePolicy(params.policy);
+	// terminalSessionId defaults to sessionId for v0.4 (one terminal pane
+	// per agent session). The broker keys its GUI fan-out by this id.
+	const terminalSessionId =
+		typeof params.terminalSessionId === "string" && params.terminalSessionId.length > 0
+			? params.terminalSessionId
+			: sessionId;
 
 	if (sessions.has(sessionId)) {
 		return replyError(id, -32602, `sessionId already exists: ${sessionId}`);
 	}
-	const spec: SessionSpec = { sessionId, providerConfig, model, cwd, systemPrompt, policy };
+	const spec: SessionSpec = {
+		sessionId,
+		providerConfig,
+		model,
+		cwd,
+		systemPrompt,
+		policy,
+		terminalSessionId,
+	};
 	let session: Session;
 	try {
 		session = new Session(spec, {
 			getApiKey,
+			rpcBridge,
 			notifyApprovalRequest: ({ approvalId, toolCall }) => {
 				notify("approval/request", { sessionId, approvalId, toolCall });
 			},

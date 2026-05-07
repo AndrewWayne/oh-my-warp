@@ -17,6 +17,10 @@
 //   - approval/decide  -> { ok: true } (Phase 5 stub passthrough)
 //   - bash/data        -> notification, no reply (Phase 5a stub)
 //   - bash/finished    -> notification, no reply (Phase 5a stub)
+//   - __test/emit__    -> { ok: true }; emits an arbitrary notification on
+//                          stdout via params { method, params }. Used by
+//                          the L3b broker tests to inject kernel-side
+//                          frames (e.g. bash/exec) on demand.
 //   - any other method -> JSON-RPC error code -32601 "unknown method"
 //
 // Test-observability side channel: every inbound JSON-RPC frame is also
@@ -106,9 +110,21 @@ for await (const line of rl) {
 			break;
 		case "bash/data":
 		case "bash/finished":
+		case "bash/cancel":
 			// Notifications — no reply expected. The kernel/received echo
 			// above is what tests assert against.
 			break;
+		case "__test/emit__": {
+			// Test-only kernel-side notification injection. params is
+			// `{ method, params }` — emit it verbatim so the broker /
+			// reader path observes a real kernel frame.
+			const inner = req.params ?? {};
+			if (typeof inner.method === "string") {
+				notify(inner.method, inner.params ?? null);
+			}
+			reply(id, { ok: true });
+			break;
+		}
 		default:
 			if (id === null) {
 				// Unknown notification — silently drop. Real kernels would

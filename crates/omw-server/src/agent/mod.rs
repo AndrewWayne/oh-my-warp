@@ -5,6 +5,8 @@
 //! Phase 2 of the inline-agent stack — text-only sessions, no tools yet.
 //! Approval / audit / bash routing arrive in Phases 4 and 5.
 
+pub mod bash_broker;
 pub mod process;
 
+pub use bash_broker::BashBroker;
 pub use process::{AgentProcess, AgentProcessConfig, AgentProcessError};

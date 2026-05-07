@@ -79,6 +79,45 @@ KEYCHAIN_HELPER_BIN="${REPO_ROOT}/target/release/omw-keychain-helper"
 [[ -f "${KEYCHAIN_HELPER_BIN}" ]] \
     || { echo "ERROR: omw-keychain-helper build did not produce ${KEYCHAIN_HELPER_BIN}" >&2; exit 1; }
 
+# Fetch a Node interpreter to bundle. Without this the .app's bare
+# `Command::new("node")` ENOENTs when launched from Finder, because
+# LaunchServices hands .apps a minimal PATH that excludes Homebrew.
+# Pinned to a known LTS; verified against the official SHASUMS256.txt
+# from nodejs.org. Cached under ~/.cache/oh-my-warp/node so subsequent
+# builds skip the download.
+NODE_VERSION="${NODE_VERSION:-22.11.0}"
+NODE_PKG="node-v${NODE_VERSION}-darwin-arm64"
+NODE_DIST_URL="https://nodejs.org/dist/v${NODE_VERSION}"
+NODE_CACHE_DIR="${HOME}/.cache/oh-my-warp/node"
+NODE_TARBALL="${NODE_CACHE_DIR}/${NODE_PKG}.tar.gz"
+NODE_SHASUMS="${NODE_CACHE_DIR}/SHASUMS256-v${NODE_VERSION}.txt"
+NODE_EXTRACTED="${NODE_CACHE_DIR}/${NODE_PKG}"
+
+mkdir -p "${NODE_CACHE_DIR}"
+
+echo "==> Acquiring Node v${NODE_VERSION} for bundle (cache: ${NODE_CACHE_DIR}) ..."
+if [[ ! -f "${NODE_SHASUMS}" ]]; then
+    curl -fsSL "${NODE_DIST_URL}/SHASUMS256.txt" -o "${NODE_SHASUMS}.partial"
+    mv "${NODE_SHASUMS}.partial" "${NODE_SHASUMS}"
+fi
+if [[ ! -f "${NODE_TARBALL}" ]]; then
+    echo "    downloading ${NODE_PKG}.tar.gz ..."
+    curl -fsSL "${NODE_DIST_URL}/${NODE_PKG}.tar.gz" -o "${NODE_TARBALL}.partial"
+    mv "${NODE_TARBALL}.partial" "${NODE_TARBALL}"
+fi
+NODE_EXPECTED_SHA="$(awk -v p="${NODE_PKG}.tar.gz" '$2 == p { print $1 }' "${NODE_SHASUMS}")"
+[[ -n "${NODE_EXPECTED_SHA}" ]] \
+    || { echo "ERROR: no checksum for ${NODE_PKG}.tar.gz in SHASUMS256.txt" >&2; exit 1; }
+NODE_ACTUAL_SHA="$(shasum -a 256 "${NODE_TARBALL}" | awk '{print $1}')"
+[[ "${NODE_EXPECTED_SHA}" == "${NODE_ACTUAL_SHA}" ]] \
+    || { echo "ERROR: Node tarball SHA256 mismatch (expected ${NODE_EXPECTED_SHA}, got ${NODE_ACTUAL_SHA}); delete ${NODE_TARBALL} and retry" >&2; exit 1; }
+if [[ ! -d "${NODE_EXTRACTED}" ]]; then
+    tar -xzf "${NODE_TARBALL}" -C "${NODE_CACHE_DIR}"
+fi
+NODE_BIN_SRC="${NODE_EXTRACTED}/bin/node"
+[[ -x "${NODE_BIN_SRC}" ]] \
+    || { echo "ERROR: extracted Node binary missing or not executable at ${NODE_BIN_SRC}" >&2; exit 1; }
+
 echo "==> Auditing binary for forbidden hostnames ..."
 (
     cd "${VENDOR_DIR}"
@@ -140,6 +179,12 @@ ditto "${OMW_AGENT_DIR}/node_modules" "${KERNEL_RESOURCES}/node_modules"
 # the .app bundle layout (<exe_dir>/../Resources/omw-keychain-helper).
 cp "${KEYCHAIN_HELPER_BIN}" "${KERNEL_RESOURCES}/omw-keychain-helper"
 chmod +x "${KERNEL_RESOURCES}/omw-keychain-helper"
+
+# Place Node alongside the kernel script so omw_inproc_server.rs's
+# locate_node() picks it up. Without this, .app launches from Finder
+# spawn `node` from a minimal PATH and ENOENT (see locate_node docstring).
+cp "${NODE_BIN_SRC}" "${KERNEL_RESOURCES}/bin/node"
+chmod +x "${KERNEL_RESOURCES}/bin/node"
 
 # Ad-hoc sign the bundle. Cargo's linker stamps a `linker-signed,adhoc` signature
 # on the Mach-O that claims sealed resources are required, but without this step

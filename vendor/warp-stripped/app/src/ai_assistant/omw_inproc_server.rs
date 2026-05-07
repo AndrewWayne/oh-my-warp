@@ -164,13 +164,21 @@ async fn boot(kernel_path: PathBuf) -> Result<BootedServer, String> {
         );
     }
 
+    // Resolve the Node interpreter. macOS .app bundles launched from
+    // Finder/LaunchServices inherit a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin)
+    // that excludes Homebrew's /opt/homebrew/bin and any user-shell PATH —
+    // so a bare `Command::new("node")` ENOENTs at runtime even when the
+    // user has Node installed. We bundle a Node binary at
+    // Resources/bin/node and resolve it explicitly here.
+    let node_bin = locate_node().unwrap_or_else(|| PathBuf::from("node"));
+    let node_str = node_bin.to_string_lossy().into_owned();
     let cfg = AgentProcessConfig {
-        command: "node".into(),
+        command: node_str.clone(),
         args: vec![kernel_path_str.clone(), "--serve-stdio".into()],
         env,
     };
     log::info!(
-        "omw# inproc: spawning agent kernel: node {kernel_path_str} --serve-stdio"
+        "omw# inproc: spawning agent kernel: {node_str} {kernel_path_str} --serve-stdio"
     );
     let agent = AgentProcess::spawn(cfg)
         .await
@@ -259,6 +267,36 @@ fn locate_keychain_helper() -> Option<PathBuf> {
             }
             if let Some(p) = walk_up_for_workspace_helper(exe_dir) {
                 return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// Resolve the `node` interpreter the agent kernel runs under.
+/// Resolution order, first hit wins:
+///   1. `OMW_AGENT_NODE` env var — explicit override (tests / local dev).
+///   2. `<exe_dir>/../Resources/bin/node` — macOS .app bundle layout.
+///   3. `<exe_dir>/bin/node` — flat bundle / Linux/Windows release.
+///   4. `None` — caller falls back to bare `"node"` (PATH lookup), which
+///      works for `cargo run` from a shell with Node on PATH but FAILS
+///      for `.app` launches from Finder (inherited PATH excludes Homebrew).
+fn locate_node() -> Option<PathBuf> {
+    if let Some(env_path) = std::env::var_os("OMW_AGENT_NODE") {
+        let p = PathBuf::from(env_path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            let app_resources = exe_dir.join("../Resources/bin/node");
+            if app_resources.exists() {
+                return Some(app_resources);
+            }
+            let flat = exe_dir.join("bin/node");
+            if flat.exists() {
+                return Some(flat);
             }
         }
     }

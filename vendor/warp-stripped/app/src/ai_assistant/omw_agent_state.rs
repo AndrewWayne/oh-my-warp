@@ -173,8 +173,19 @@ pub struct OmwAgentState {
     /// `start` cycles.
     event_tx: broadcast::Sender<OmwAgentEventDown>,
     /// Currently-focused terminal pane. Set by TerminalView on focus;
-    /// cleared on blur/close. `None` when no pane is active.
+    /// cleared on blur/close. `None` when no pane is active. Used by
+    /// the command broker (which is invoked by remote tooling and
+    /// genuinely needs "whatever pane the user is looking at").
+    /// **Not** used for the inline `# foo` path — that uses `pane_io`
+    /// keyed by the submitting Input's own `terminal_view_id`.
     active_terminal: Mutex<Option<ActiveTerminalHandle>>,
+    /// Per-pane io handles keyed by view_id. Populated for every
+    /// local-tty pane on each `on_pane_state_change` (and refreshed
+    /// idempotently on focus changes). The inline `# foo` path looks
+    /// up by `Input::terminal_view_id` so the prompt is always
+    /// dispatched to the pane the user actually typed in, regardless
+    /// of which pane the global `active_terminal` happens to point at.
+    pane_io: Mutex<std::collections::HashMap<warpui::EntityId, ActiveTerminalHandle>>,
     /// Per-pane agent sessions. Each pane gets its own kernel session
     /// + WS so its conversation history doesn't bleed into other
     /// panes. Keyed by the pane's [`warpui::EntityId`]. Populated
@@ -219,6 +230,7 @@ impl OmwAgentState {
                     status_tx,
                     event_tx,
                     active_terminal: Mutex::new(None),
+                    pane_io: Mutex::new(std::collections::HashMap::new()),
                     pane_sessions: Mutex::new(std::collections::HashMap::new()),
                 })
             })
@@ -872,6 +884,31 @@ impl OmwAgentState {
     /// Snapshot of the currently-registered terminal handle, if any.
     pub fn active_terminal_clone(&self) -> Option<ActiveTerminalHandle> {
         self.active_terminal.lock().clone()
+    }
+
+    /// Insert (or replace) the io handles for the given pane. Called
+    /// from `TerminalView::on_pane_state_change` for every local-tty
+    /// pane, regardless of whether it is currently focused — so the
+    /// inline-agent path (which keys off the submitting `Input`'s own
+    /// `terminal_view_id`) can always find the right handles.
+    pub fn register_pane_io(&self, handle: ActiveTerminalHandle) {
+        self.pane_io.lock().insert(handle.view_id, handle);
+    }
+
+    /// Look up the io handles registered for `view_id`. Returns `None`
+    /// when the pane is remote/SSH (no local handles), is detached, or
+    /// hasn't yet gone through its first `on_pane_state_change`.
+    pub fn pane_io_clone(&self, view_id: warpui::EntityId) -> Option<ActiveTerminalHandle> {
+        self.pane_io.lock().get(&view_id).cloned()
+    }
+
+    /// Drop a pane's io entry — call when the pane closes so the map
+    /// doesn't grow unboundedly across long sessions. Currently
+    /// unwired (panes leak until process exit, but the map is bounded
+    /// by simultaneous pane count, which is small).
+    #[allow(dead_code)]
+    pub fn remove_pane_io(&self, view_id: warpui::EntityId) {
+        self.pane_io.lock().remove(&view_id);
     }
 
     /// Forward a PTY data chunk back to the kernel for the given command.

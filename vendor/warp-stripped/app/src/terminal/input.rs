@@ -6010,24 +6010,38 @@ impl Input {
         #[cfg(feature = "omw_local")]
         {
             if let Some(prompt) = parse_inline_agent_prompt(command) {
-                log::info!("omw# input: intercepting prompt={prompt:?}");
+                log::info!(
+                    "omw# input: intercepting prompt={prompt:?} (terminal_view_id={:?})",
+                    self.terminal_view_id
+                );
                 let state = crate::ai_assistant::omw_agent_state::OmwAgentState::shared();
-                let active = state.active_terminal_clone();
+                // Look up by THIS Input's own terminal_view_id rather
+                // than the global "active terminal" — the pressed-Enter
+                // keystroke routes to whichever Input has focus, so
+                // `self.terminal_view_id` is by construction the pane
+                // the user typed in. Consulting the global instead used
+                // to mis-dispatch to whichever pane was last
+                // "TerminalView::on_focus"-ed (typically the one a
+                // command was last run in) when focus moved through an
+                // Input child without bubbling.
+                let view_id = self.terminal_view_id;
+                let active = state.pane_io_clone(view_id);
                 let Some(handle) = active.clone() else {
                     log::warn!(
-                        "omw# input: no active local terminal pane registered; refusing prompt"
+                        "omw# input: no io handles for terminal_view_id={view_id:?}; \
+                         pane is remote or hasn't initialized yet"
                     );
                     self.editor.update(ctx, |ed, ctx| {
                         ed.set_buffer_text(
                             &format!(
-                                "# {prompt}    ⚠ no active terminal pane — click a pane and retry"
+                                "# {prompt}    ⚠ this pane is not a local terminal — \
+                                 # only works in local panes"
                             ),
                             ctx,
                         );
                     });
                     return true;
                 };
-                let view_id = handle.view_id;
                 let existing = state.pane_session(view_id);
                 log::info!(
                     "omw# input: view_id={view_id:?} pane_session_present={}",

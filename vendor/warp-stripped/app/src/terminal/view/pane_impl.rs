@@ -91,6 +91,38 @@ impl TerminalView {
         } else {
             ctx.notify();
         }
+
+        // omw_local: maintain two registrations on every pane state
+        // change.
+        // 1. `pane_io` (always for local panes): the inline `# foo`
+        //    flow looks itself up by the submitting Input's own
+        //    `terminal_view_id`, so it is dispatched to the pane the
+        //    user actually typed in — not whichever pane happens to
+        //    be globally "active."
+        // 2. `active_terminal` (only when this pane is focused):
+        //    consumed by the command broker (remote tooling), which
+        //    does need "whatever pane the user is looking at."
+        #[cfg(feature = "omw_local")]
+        {
+            let agent_state =
+                crate::ai_assistant::omw_agent_state::OmwAgentState::shared();
+            if let Some((event_loop_tx, pty_reads_tx, _)) =
+                crate::omw::pane_auto_share::local_io_handles_for(self, ctx)
+            {
+                let handle =
+                    crate::ai_assistant::omw_agent_state::ActiveTerminalHandle {
+                        view_id: self.view_id,
+                        event_loop_tx,
+                        pty_reads_tx,
+                    };
+                agent_state.register_pane_io(handle.clone());
+                if self.is_pane_focused(ctx) {
+                    agent_state.register_active_terminal(handle);
+                }
+            } else if self.is_pane_focused(ctx) {
+                agent_state.clear_active_terminal();
+            }
+        }
     }
 
     pub fn refresh_pane_header(&mut self, ctx: &mut ViewContext<Self>) {

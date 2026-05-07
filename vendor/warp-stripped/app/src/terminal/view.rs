@@ -10191,16 +10191,42 @@ impl TerminalView {
                 }
 
                 // Clear any stale warpify mode so it doesn't leak into the next command's footer rendering.
-                self.use_agent_footer.update(ctx, |footer, ctx| {
-                    footer.clear_warpify_mode(ctx);
-                });
-                self.hide_use_agent_footer_in_blocklist(ctx);
+                //
+                // Background blocks are stray output that arrived between commands —
+                // not a real user command finishing — so we must NOT run this cleanup
+                // for them. Under omw_local, the inline `# foo` flow injects
+                // assistant deltas into the parser via Message::InjectBytes; those
+                // bytes are picked up by the EarlyOutputHandler and form a Background
+                // block, which is then "finished" the moment the next real command
+                // (e.g. `claude`) starts. If we let `hide_use_agent_footer_in_blocklist`
+                // run here, that tear-down races with the detect-timer's
+                // `maybe_show_use_agent_footer_in_blocklist` (view.rs ~10455) and
+                // wins, leaving the agent footer (and its Phone button) hidden even
+                // though `set_session(Claude)` succeeded.
+                if !matches!(block_completed_event.block_type, BlockType::Background(_)) {
+                    self.use_agent_footer.update(ctx, |footer, ctx| {
+                        footer.clear_warpify_mode(ctx);
+                    });
+                    self.hide_use_agent_footer_in_blocklist(ctx);
+                }
                 if matches!(block_completed_event.block_type, BlockType::User(_)) {
                     // Close the rich input editor if it was open (side effects
                     // like input config restore happen reactively).
                     // The auto-toggle flag is irrelevant here because the
                     // session is removed immediately afterwards.
                     self.close_cli_agent_rich_input(CLIAgentRichInputCloseReason::Other, ctx);
+                    #[cfg(feature = "omw_local")]
+                    {
+                        let view_id = self.view_id;
+                        let cmd = match &block_completed_event.block_type {
+                            BlockType::User(u) => u.command.clone(),
+                            _ => String::new(),
+                        };
+                        log::info!(
+                            "omw# cli-agent BlockCompleted User view_id={view_id:?} command={cmd:?} \
+                             — removing session"
+                        );
+                    }
                     CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions_model, ctx| {
                         sessions_model.remove_session(self.view_id, ctx);
                     });
@@ -10259,6 +10285,11 @@ impl TerminalView {
                 if *is_for_in_band_command {
                     return;
                 }
+                #[cfg(feature = "omw_local")]
+                log::info!(
+                    "omw# cli-agent AfterBlockStarted view_id={:?} command={command:?} block_id={block_id:?}",
+                    self.view_id
+                );
                 self.did_notify_long_running = false;
 
                 // Snapshot the prompt state as of when the command began executing.
@@ -10373,6 +10404,19 @@ impl TerminalView {
                                         me.detect_cli_agent_from_model(&model, ctx)
                                     };
                                     let view_id = me.view_id;
+                                    #[cfg(feature = "omw_local")]
+                                    {
+                                        let model = me.model.lock();
+                                        let active = model.block_list().active_block();
+                                        log::info!(
+                                            "omw# cli-agent detect timer fired view_id={view_id:?} \
+                                             active_command={:?} is_active_and_long_running={} \
+                                             detection={:?}",
+                                            active.command_with_secrets_obfuscated(false),
+                                            active.is_active_and_long_running(),
+                                            detection.as_ref().map(|(agent, _)| format!("{agent:?}"))
+                                        );
+                                    }
                                     CLIAgentSessionsModel::handle(ctx).update(
                                         ctx,
                                         |sessions_model, ctx| match detection {
@@ -10381,6 +10425,10 @@ impl TerminalView {
                                                     .session(view_id)
                                                     .is_some_and(|s| s.agent == agent) =>
                                             {
+                                                #[cfg(feature = "omw_local")]
+                                                log::info!(
+                                                    "omw# cli-agent set_session view_id={view_id:?} agent={agent:?}"
+                                                );
                                                 let remote_host =
                                                     me.active_session_remote_host(ctx);
                                                 sessions_model.set_session(

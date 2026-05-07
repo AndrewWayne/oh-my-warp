@@ -55,10 +55,13 @@ command -v node >/dev/null || { echo "ERROR: node not on PATH (required for omw-
 command -v npm  >/dev/null || { echo "ERROR: npm not on PATH (required for omw-agent build)"  >&2; exit 2; }
 (
     cd "${OMW_AGENT_DIR}"
-    if [[ ! -d node_modules ]]; then
-        echo "    omw-agent: installing dependencies (first build)"
-        npm install --no-fund --no-audit
-    fi
+    # Always run npm install. The prior `[[ ! -d node_modules ]]` guard
+    # was satisfied by a stray `node_modules/.vite/` directory (`rm -rf
+    # node_modules/*` doesn't match dotfiles), which silently shipped
+    # v0.0.3-rev2 with no runtime deps and ENOENTed @mariozechner/pi-ai
+    # at the first /agent/sessions POST. npm install is idempotent and
+    # cache-fast when nothing has changed.
+    npm install --no-fund --no-audit
     npm run build
 )
 [[ -f "${OMW_AGENT_DIR}/dist/src/serve.js" ]] \
@@ -171,9 +174,42 @@ cp "${OMW_AGENT_DIR}/package.json" "${KERNEL_RESOURCES}/package.json"
 # symlinked binaries) and to avoid the resource-fork warnings cp emits.
 ditto "${OMW_AGENT_DIR}/dist"          "${KERNEL_RESOURCES}/dist"
 ditto "${OMW_AGENT_DIR}/vendor"        "${KERNEL_RESOURCES}/vendor"
-[[ -d "${OMW_AGENT_DIR}/node_modules" ]] \
-    || { echo "ERROR: missing ${OMW_AGENT_DIR}/node_modules (run npm install first)" >&2; exit 1; }
-ditto "${OMW_AGENT_DIR}/node_modules" "${KERNEL_RESOURCES}/node_modules"
+# Materialize a non-hoisted node_modules for the bundle. The repo is an
+# npm workspace ("workspaces": ["apps/*"]) so a normal install in
+# apps/omw-agent hoists every dep up to <repo_root>/node_modules,
+# leaving apps/omw-agent/node_modules empty (apart from .vite/ left by
+# Vite tooling). v0.0.3-rev2 shipped exactly that empty dir, which
+# ENOENTed @mariozechner/pi-ai at the first /agent/sessions POST. We
+# install into a throwaway dir outside the workspace context to force a
+# real local node_modules, then ditto that into Resources/.
+echo "==> Materializing isolated node_modules for kernel bundle ..."
+ISOLATED_AGENT="${STAGING}/isolated-omw-agent"
+rm -rf "${ISOLATED_AGENT}"
+mkdir -p "${ISOLATED_AGENT}"
+cp "${OMW_AGENT_DIR}/package.json" "${ISOLATED_AGENT}/package.json"
+(
+    cd "${ISOLATED_AGENT}"
+    npm install --no-fund --no-audit --no-package-lock --omit=dev
+)
+[[ -d "${ISOLATED_AGENT}/node_modules" ]] \
+    || { echo "ERROR: isolated install produced no node_modules at ${ISOLATED_AGENT}/node_modules" >&2; exit 1; }
+ditto "${ISOLATED_AGENT}/node_modules" "${KERNEL_RESOURCES}/node_modules"
+
+# Verify every declared runtime dep is actually present in the bundled
+# node_modules. Catches the v0.0.3-rev2 class of bug where the dir was
+# present-but-empty and the kernel ENOENTed at first import.
+echo "==> Verifying bundled node_modules has all declared dependencies ..."
+DECLARED_DEPS=$(node --no-warnings -e \
+    "console.log(Object.keys(require('${OMW_AGENT_DIR}/package.json').dependencies||{}).join(' '))")
+[[ -n "${DECLARED_DEPS}" ]] \
+    || { echo "ERROR: package.json declares no runtime dependencies — refusing to ship" >&2; exit 1; }
+for dep in ${DECLARED_DEPS}; do
+    if [[ ! -d "${KERNEL_RESOURCES}/node_modules/${dep}" ]]; then
+        echo "ERROR: declared dep '${dep}' missing from bundled node_modules at ${KERNEL_RESOURCES}/node_modules/${dep}" >&2
+        echo "       isolated install did not produce it; inspect ${ISOLATED_AGENT}/node_modules/" >&2
+        exit 1
+    fi
+done
 
 # Place the keychain helper at the path omw_inproc_server.rs probes for
 # the .app bundle layout (<exe_dir>/../Resources/omw-keychain-helper).

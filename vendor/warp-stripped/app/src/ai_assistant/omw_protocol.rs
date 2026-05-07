@@ -86,7 +86,11 @@ pub enum OmwAgentEventDown {
         session_id: String,
         #[serde(rename = "commandId")]
         command_id: String,
-        /// base64-encoded byte chunk from the pane PTY.
+        /// base64-encoded byte chunk from the pane PTY. Field rename
+        /// matches the kernel's `frame.params.bytes` reader and
+        /// omw-server's WS forwarder; aligned with the Up direction's
+        /// `OmwAgentEventUp::CommandData` rename.
+        #[serde(rename = "bytes")]
         data: String,
     },
     #[serde(rename = "bash/finished")]
@@ -95,6 +99,7 @@ pub enum OmwAgentEventDown {
         session_id: String,
         #[serde(rename = "commandId")]
         command_id: String,
+        #[serde(rename = "exitCode")]
         exit_code: Option<i32>,
         #[serde(default)]
         snapshot: bool,
@@ -142,16 +147,29 @@ pub enum OmwAgentEventUp {
         decision: ApprovalDecision,
     },
     /// Phase 5 — pane bash broker reply: pane PTY chunk back to the agent.
+    /// Field names match what `omw-server`'s WS handler reads (`bytes`)
+    /// and what the kernel's `warp-session-bash.ts:105` parses
+    /// (`frame.params.bytes`). Earlier serde used `data` here, which the
+    /// server treated as None and forwarded an empty string to the kernel
+    /// — producing tool results with no stdout/stderr.
     CommandData {
         #[serde(rename = "commandId")]
         command_id: String,
         /// base64-encoded byte chunk.
+        #[serde(rename = "bytes")]
         data: String,
     },
     /// Phase 5 — pane bash broker reply: command lifecycle terminator.
+    /// `exit_code` is renamed to `exitCode` to match the server's WS
+    /// parse (`parsed.get("exitCode")`) and the kernel's
+    /// `frame.params.exitCode` reader. Without this rename every
+    /// CommandExit landed at the kernel as `exitCode: null`, surfacing
+    /// to the agent as `[exit unknown]` even when the broker correctly
+    /// detected the CommandFinished marker with a real `exit_code: 0`.
     CommandExit {
         #[serde(rename = "commandId")]
         command_id: String,
+        #[serde(rename = "exitCode")]
         exit_code: Option<i32>,
         #[serde(default)]
         snapshot: bool,

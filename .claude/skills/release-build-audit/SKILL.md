@@ -93,6 +93,27 @@ If `dist/staging-v<version>/omw-warp-oss.app/` exists, inventory
 `Contents/Resources/`. Cross-check against the spawn-site classification
 from step 2.
 
+For `Resources/node_modules/`, presence of the directory is not enough.
+Read the runtime dependencies declared in `apps/omw-agent/package.json`
+(`Object.keys(dependencies)`) and verify each one resolves to a
+non-empty subdirectory under `Resources/node_modules/`. Walk one level
+deeper for scoped packages (e.g. `@mariozechner/pi-ai`).
+
+This catches the v0.0.3-rev2 ship bug: the repo is an npm workspace
+(`workspaces: ["apps/*"]`) so deps hoist to the repo root. A fresh
+`apps/omw-agent/node_modules/` is empty save for `.vite/`, and the
+build script's prior `[[ ! -d node_modules ]]` guard was satisfied by
+that stray dotfile-dir, silently shipping a bundle with no runtime
+deps. The kernel ENOENTs on `@mariozechner/pi-ai` at first
+`/agent/sessions` POST and the GUI sees a 503 with
+"agent process exited before request completed". The build script now
+installs deps in an isolated tmp dir to bypass workspace hoisting and
+hard-fails if any declared dep is missing from the bundle, but this
+audit step is the human-judgment backstop in case that ever regresses
+(e.g. a new dep is added in package.json but its name is misspelled in
+either place, or the isolated install is replaced with something that
+re-introduces hoisting).
+
 ### 7. Sentinel (optional)
 
 On full PASS, write `.claude/cache/release-audit-passed.<HEAD-SHA>` so
@@ -115,7 +136,8 @@ Bundle parity (Resources/ probes vs build-mac-dmg.sh cp/ditto steps):
   ✓ Resources/bin/omw-agent.mjs
   ✓ Resources/bin/node
   ✓ Resources/omw-keychain-helper
-  ✓ Resources/dist/ Resources/vendor/ Resources/node_modules/ Resources/package.json (kernel layout)
+  ✓ Resources/dist/ Resources/vendor/ Resources/package.json (kernel layout)
+  ✓ Resources/node_modules/ — every declared runtime dep present (3/3: @mariozechner/pi-ai, @iarna/toml, typebox)
 
 Env vars audited:
   ✓ OMW_AGENT_BIN          (override-only; default: locate_kernel_script)

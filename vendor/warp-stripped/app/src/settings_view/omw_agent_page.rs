@@ -350,7 +350,7 @@ use warpui::{
         button::ButtonVariant,
         components::UiComponent,
     },
-    AppContext, Entity, View, ViewContext, ViewHandle,
+    AppContext, Entity, TypedActionView, View, ViewContext, ViewHandle,
 };
 
 use super::settings_page::{
@@ -359,18 +359,11 @@ use super::settings_page::{
 };
 use super::SettingsSection;
 
-/// Action enum for clicks dispatched from the rendered page. Kept separate
-/// from `OmwAgentPageAction` so the click handlers can carry extra context
-/// if needed; for now they map 1:1 to dispatch calls.
-#[derive(Clone, Debug, PartialEq)]
-pub enum OmwAgentPageViewAction {
-    Apply,
-    Discard,
-}
-
 /// View struct held by the page. Owns the form state plus mouse-state handles
-/// for the Apply/Discard buttons. Click dispatch wiring is minimal in this
-/// commit; Task 7 exercises `dispatch` directly.
+/// for the Apply/Discard buttons. Click handlers dispatch
+/// [`OmwAgentPageAction::Apply`] / [`OmwAgentPageAction::Discard`] which
+/// route through [`TypedActionView::handle_action`] back into
+/// [`Self::dispatch`].
 pub struct OmwAgentPageView {
     pub state: OmwAgentPageState,
     pub apply_button: MouseStateHandle,
@@ -491,6 +484,19 @@ impl View for OmwAgentPageView {
 
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
         self.page.render(self, app)
+    }
+}
+
+impl TypedActionView for OmwAgentPageView {
+    type Action = OmwAgentPageAction;
+
+    fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
+        // Route every typed action through the existing `dispatch`
+        // method so the pure reducer + side-effecting `apply` keep their
+        // single source of truth. `notify()` so the new state is
+        // re-rendered on the next frame.
+        self.dispatch(action.clone());
+        ctx.notify();
     }
 }
 
@@ -684,21 +690,26 @@ impl SettingsWidget for OmwAgentPageWidget {
             );
         }
 
-        // Apply / Discard buttons. Click handlers are intentionally noop for
-        // now — Task 7's tests construct the view directly and call
-        // `dispatch`/`apply`. Wiring full action dispatch through
-        // `SettingsAction` is deferred per the plan.
+        // Apply / Discard buttons. on_click closures dispatch typed actions
+        // that `OmwAgentPageView::handle_action` routes back into the
+        // existing `dispatch` / `apply` path.
         let apply_button = appearance
             .ui_builder()
             .button(ButtonVariant::Accent, view.apply_button.clone())
             .with_text_label("Apply".to_owned())
             .build()
+            .on_click(|ctx, _, _| {
+                ctx.dispatch_typed_action(OmwAgentPageAction::Apply);
+            })
             .finish();
         let discard_button = appearance
             .ui_builder()
             .button(ButtonVariant::Text, view.discard_button.clone())
             .with_text_label("Discard".to_owned())
             .build()
+            .on_click(|ctx, _, _| {
+                ctx.dispatch_typed_action(OmwAgentPageAction::Discard);
+            })
             .finish();
 
         let buttons = Flex::row()

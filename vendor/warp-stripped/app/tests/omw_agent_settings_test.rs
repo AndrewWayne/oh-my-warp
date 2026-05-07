@@ -4,10 +4,12 @@
 //!
 //! These tests construct `OmwAgentPageView` via the test-only
 //! `new_inner()` constructor (no `warpui::App` context needed) and
-//! call `dispatch` / `apply` directly. The settings page's click
-//! handlers on Apply/Discard remain unwired (deferred from Task 6);
-//! this test target exercises the same logic via the View struct's
-//! public API.
+//! call `dispatch` / `apply` directly. The Apply/Discard click handlers
+//! on the rendered page dispatch typed [`OmwAgentPageAction`] frames
+//! that `TypedActionView::handle_action` routes back into
+//! [`OmwAgentPageView::dispatch`] — same code path the tests below
+//! exercise directly, plus a compile-checked assertion that the typed-
+//! action wiring is in place.
 //!
 //! NOTE: tests use `OMW_CONFIG` env-var which is process-global. Run
 //! serially with `cargo test ... -- --test-threads=1`. Without the
@@ -21,6 +23,7 @@ use omw_config::ApprovalMode;
 use warp::test_exports::{
     OmwAgentForm, OmwAgentPageAction, OmwAgentPageView, ProviderKindForm, ProviderRow,
 };
+use warpui::TypedActionView;
 
 #[test]
 fn mounting_renders_with_loaded_config() {
@@ -155,4 +158,17 @@ fn clicking_discard_resets_form_to_saved() {
         view.state.form.agent_enabled,
         "Discard should restore the saved agent_enabled=true default"
     );
+}
+
+/// Compile-time check that `OmwAgentPageView` exposes
+/// `TypedActionView<Action = OmwAgentPageAction>`. The Apply/Discard
+/// `on_click` closures call `ctx.dispatch_typed_action(OmwAgentPageAction::*)`,
+/// and warpui only routes the action back into a view that implements
+/// this trait with the matching associated type. If a future refactor
+/// changes the action type or removes the impl, this test fails to
+/// compile.
+#[test]
+fn typed_action_view_is_wired_for_apply_discard() {
+    fn assert_routes<T: TypedActionView<Action = OmwAgentPageAction>>() {}
+    assert_routes::<OmwAgentPageView>();
 }

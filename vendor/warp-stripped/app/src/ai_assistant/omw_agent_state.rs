@@ -640,6 +640,19 @@ impl OmwAgentState {
         }
     }
 
+    /// Drop every per-pane session in one shot. Used by the settings page
+    /// when the user clicks Apply: each pane caches its agent session
+    /// against the config snapshot taken at first `# foo`, so without
+    /// this the user would have to restart warp for the new
+    /// provider/model/key to take effect.
+    pub fn clear_all_pane_sessions(&self) {
+        let drained: Vec<Arc<PaneSession>> =
+            self.pane_sessions.lock().drain().map(|(_, s)| s).collect();
+        for s in drained {
+            s.stop();
+        }
+    }
+
     /// Pump the streaming response for `prompt` into the supplied
     /// terminal pane, using *the pane's own* kernel session. Mirrors
     /// [`Self::send_prompt_inline`] but scoped to one pane's context

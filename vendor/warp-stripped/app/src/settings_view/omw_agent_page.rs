@@ -421,6 +421,15 @@ pub struct OmwAgentPageView {
     pub apply_button: MouseStateHandle,
     pub discard_button: MouseStateHandle,
     pub add_provider_button: MouseStateHandle,
+    /// Toggle button for the global `agent.enabled` flag. Renders as a
+    /// single button whose label flips between "Enabled" / "Disabled";
+    /// click dispatches [`OmwAgentPageAction::ToggleEnabled`].
+    pub agent_enabled_button: MouseStateHandle,
+    /// One handle per approval-mode variant (read-only / ask-before-write
+    /// / trusted). Indexed in the same order as the iteration in
+    /// [`OmwAgentPageWidget::render`] so the click handlers can pick by
+    /// position without a separate lookup.
+    pub approval_mode_buttons: [MouseStateHandle; 3],
     /// Per-row editor widgets. Empty when constructed via
     /// [`Self::new_inner`] (used by L3a tests that drive the reducer
     /// directly without rendering); fully populated when constructed
@@ -465,8 +474,18 @@ impl OmwAgentPageView {
             apply_button: MouseStateHandle::default(),
             discard_button: MouseStateHandle::default(),
             add_provider_button: MouseStateHandle::default(),
+            agent_enabled_button: MouseStateHandle::default(),
+            approval_mode_buttons: [
+                MouseStateHandle::default(),
+                MouseStateHandle::default(),
+                MouseStateHandle::default(),
+            ],
             provider_editors: Vec::new(),
-            page: PageType::new_monolith(OmwAgentPageWidget, Some("Agent"), false),
+            // is_dual_scrollable=true: long provider lists need to scroll;
+            // PageType::wrap_dual_scrollable handles vertical clipping +
+            // adds a horizontal scroll only when the window is narrower
+            // than MIN_PAGE_WIDTH.
+            page: PageType::new_monolith(OmwAgentPageWidget, Some("Agent"), true),
         }
     }
 
@@ -567,6 +586,18 @@ impl OmwAgentPageView {
         self.state.pending_secrets.clear();
         self.state.is_dirty = false;
         self.state.last_save_error = None;
+
+        // 7. Reset live agent state so the new config takes effect
+        //    without an app restart. Each per-pane `# foo` session and
+        //    the singleton panel session cache the provider/model/key
+        //    they were started with — drop them here so the next
+        //    interaction re-provisions against the freshly-saved
+        //    config.toml. Best-effort: if the runtime is still warming
+        //    up, `stop()` is a no-op and `clear_all_pane_sessions` just
+        //    finds an empty map.
+        let agent_state = crate::ai_assistant::omw_agent_state::OmwAgentState::shared();
+        agent_state.stop();
+        agent_state.clear_all_pane_sessions();
     }
 }
 
@@ -746,34 +777,106 @@ impl SettingsWidget for OmwAgentPageWidget {
 
         let mut col = Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Start);
 
-        // agent_enabled flag.
-        col.add_child(
+        // Agent enabled toggle. Click flips the flag through the same
+        // ToggleEnabled reducer action exercised by the L3a tests.
+        let agent_enabled_button = appearance
+            .ui_builder()
+            .button(
+                if form.agent_enabled {
+                    ButtonVariant::Accent
+                } else {
+                    ButtonVariant::Secondary
+                },
+                view.agent_enabled_button.clone(),
+            )
+            .with_text_label(
+                if form.agent_enabled {
+                    "Enabled".to_owned()
+                } else {
+                    "Disabled".to_owned()
+                },
+            )
+            .build()
+            .on_click(|ctx, _, _| {
+                ctx.dispatch_typed_action(OmwAgentPageAction::ToggleEnabled);
+            })
+            .finish();
+        let mut agent_enabled_row = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center);
+        agent_enabled_row.add_child(
             Container::new(
                 Text::new(
-                    format!("Agent enabled: {}", form.agent_enabled),
+                    "Agent enabled:".to_owned(),
                     appearance.ui_font_family(),
                     CONTENT_FONT_SIZE,
                 )
                 .with_color(active)
                 .finish(),
             )
-            .with_margin_bottom(8.)
+            .with_margin_right(8.)
             .finish(),
         );
-
-        // approval mode.
+        agent_enabled_row.add_child(agent_enabled_button);
         col.add_child(
+            Container::new(agent_enabled_row.finish())
+                .with_margin_bottom(8.)
+                .finish(),
+        );
+
+        // Approval mode selector. Three buttons, one per ApprovalMode
+        // variant; the currently-selected one renders Accent and the
+        // others Secondary, matching the per-provider kind selector
+        // below for visual consistency.
+        let approval_modes = [
+            (ApprovalMode::ReadOnly, "Read only", &view.approval_mode_buttons[0]),
+            (
+                ApprovalMode::AskBeforeWrite,
+                "Ask before write",
+                &view.approval_mode_buttons[1],
+            ),
+            (ApprovalMode::Trusted, "Trusted", &view.approval_mode_buttons[2]),
+        ];
+        let mut approval_row = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center);
+        approval_row.add_child(
             Container::new(
                 Text::new(
-                    format!("Approval mode: {:?}", form.approval_mode),
+                    "Approval mode:".to_owned(),
                     appearance.ui_font_family(),
                     CONTENT_FONT_SIZE,
                 )
                 .with_color(active)
                 .finish(),
             )
-            .with_margin_bottom(8.)
+            .with_margin_right(8.)
             .finish(),
+        );
+        for (mode, label, handle) in approval_modes {
+            let selected = form.approval_mode == mode;
+            let button = appearance
+                .ui_builder()
+                .button(
+                    if selected {
+                        ButtonVariant::Accent
+                    } else {
+                        ButtonVariant::Secondary
+                    },
+                    handle.clone(),
+                )
+                .with_text_label(label.to_owned())
+                .build()
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(OmwAgentPageAction::SetApprovalMode(mode));
+                })
+                .finish();
+            approval_row.add_child(
+                Container::new(button).with_margin_right(4.).finish(),
+            );
+        }
+        col.add_child(
+            Container::new(approval_row.finish())
+                .with_margin_bottom(8.)
+                .finish(),
         );
 
         // default provider.

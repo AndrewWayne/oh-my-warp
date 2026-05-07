@@ -5,8 +5,12 @@
 //! kernel→GUI direction:
 //!
 //! - On `bash/exec` from the kernel, look up the GUI WS subscribed to the
-//!   target `terminalSessionId` and emit a `kind: "exec_command"` text
-//!   frame on its broadcast bus.
+//!   target `terminalSessionId` and rewrite the frame as a JSON-RPC
+//!   `bash/exec` notification with `params.sessionId` set to that
+//!   terminal id, then forward it onto the matching session's broadcast
+//!   bus. The GUI's `OmwAgentEventDown::ExecCommand` (serde-tagged on
+//!   `method = "bash/exec"`) deserialises the rewritten frame directly,
+//!   keeping wire format consistent end-to-end.
 //! - When no GUI is subscribed (terminal pane never connected, or the
 //!   user closed the panel mid-call), respond with `bash/finished
 //!   { snapshot: true }` back to the kernel so the in-flight exec resolves
@@ -46,8 +50,11 @@ impl BashBroker {
     /// Handle a `bash/exec` notification arriving from the kernel.
     ///
     /// Looks up the GUI bus by `params.terminalSessionId`. If a subscriber
-    /// is present, emits a `kind: "exec_command"` text frame onto that bus
-    /// (the WS handler forwards each broadcast frame as text to the GUI).
+    /// is present, forwards a JSON-RPC `bash/exec` notification on that bus
+    /// with `sessionId` aliased to the terminal id (so the GUI's existing
+    /// `OmwAgentEventDown::ExecCommand` parser handles it without any
+    /// shape translation). The other params (`commandId`, `command`,
+    /// `cwd`, `toolCallId`) are passed through verbatim.
     ///
     /// If no subscriber exists, sends a synthetic `bash/finished` back to
     /// the kernel with `snapshot: true` so the kernel's tool call resolves
@@ -66,19 +73,22 @@ impl BashBroker {
             };
             if let Some(sender) = sender {
                 if sender.receiver_count() > 0 {
+                    let mut forwarded_params = match params {
+                        Value::Object(_) => params.clone(),
+                        _ => serde_json::Map::new().into(),
+                    };
+                    if let Value::Object(ref mut m) = forwarded_params {
+                        // Alias terminalSessionId → sessionId for the GUI's
+                        // existing per-session routing. The original
+                        // terminalSessionId field is preserved as-is so
+                        // future GUI consumers can disambiguate when we
+                        // grow >1 terminal-per-agent.
+                        m.insert("sessionId".into(), Value::String(tid.to_string()));
+                    }
                     let exec_frame = json!({
-                        "kind": "exec_command",
-                        "commandId": command_id,
-                        "command": params.get("command").cloned().unwrap_or(Value::Null),
-                        "cwd": params.get("cwd").cloned().unwrap_or(Value::Null),
-                        "agentSessionId": params
-                            .get("agentSessionId")
-                            .cloned()
-                            .unwrap_or(Value::Null),
-                        "toolCallId": params
-                            .get("toolCallId")
-                            .cloned()
-                            .unwrap_or(Value::Null),
+                        "jsonrpc": "2.0",
+                        "method": "bash/exec",
+                        "params": forwarded_params,
                     });
                     let _ = sender.send(exec_frame);
                     return;

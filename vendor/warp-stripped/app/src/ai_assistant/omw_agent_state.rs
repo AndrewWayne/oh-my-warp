@@ -86,14 +86,23 @@ pub struct OmwAgentSessionParams {
 /// Opaque handle to the currently-focused terminal pane. Stored by the
 /// broker so it can route `ExecCommand` to the right PTY.
 ///
-/// Phase 5b ships this as a placeholder (`view_id` only). The broker
-/// integration wires in `event_loop_tx` / `pty_reads_rx` when
-/// `TerminalView` plumbing is done (Task 11 stretch).
+/// `event_loop_tx` and `pty_reads_tx` are clones of the local-PTY channels
+/// that `local_tty::TerminalManager` exposes (the same handles the
+/// `omw/pane_share.rs` bridge uses). The broker captures this struct at
+/// `bash/exec` time and drives the original pane through completion even
+/// if the user shifts focus mid-command.
 #[derive(Clone)]
 pub struct ActiveTerminalHandle {
-    pub view_id: u64,
-    // Future: event_loop_tx, pty_reads_rx — added when the broker
-    // is wired into TerminalView (Task 11 stretch).
+    pub view_id: warpui::EntityId,
+    /// Sender into the local-PTY event loop. The broker pushes
+    /// `Message::Input(bytes)` to inject the agent's command into the
+    /// pane's stdin.
+    pub event_loop_tx:
+        std::sync::Arc<parking_lot::Mutex<crate::terminal::local_tty::mio_channel::Sender<crate::terminal::writeable_pty::Message>>>,
+    /// Broadcast sender for raw PTY output bytes. The broker calls
+    /// `.new_receiver()` on it to tap output without disturbing existing
+    /// subscribers (the renderer, throughput recorder, omw-remote share).
+    pub pty_reads_tx: async_broadcast::Sender<std::sync::Arc<Vec<u8>>>,
 }
 
 /// Process-wide singleton.
@@ -116,6 +125,11 @@ struct Inner {
     outbound: Option<mpsc::Sender<OmwAgentEventUp>>,
     /// WS task handle. Aborted on `stop`.
     ws_task: Option<JoinHandle<()>>,
+    /// Phase 5b command-broker task. Spawned on first `start` and lives
+    /// until the singleton is dropped — the broker just polls
+    /// `subscribe_events`, so we don't tear it down on `stop` (cheap to
+    /// leave running across session restarts).
+    command_broker_task: Option<JoinHandle<()>>,
     runtime_handle: Option<tokio::runtime::Handle>,
     runtime_thread: Option<thread::JoinHandle<()>>,
 }
@@ -134,6 +148,7 @@ impl OmwAgentState {
                         status: OmwAgentStatus::Idle,
                         outbound: None,
                         ws_task: None,
+                        command_broker_task: None,
                         runtime_handle: None,
                         runtime_thread: None,
                     }),
@@ -191,9 +206,16 @@ impl OmwAgentState {
             run_session(server_url, params, out_rx, event_tx, status_tx, weak_self).await;
         });
 
+        // Spawn the Phase 5b command broker once per process. Idempotent on
+        // repeated `start` calls — the broker subscribes to the long-lived
+        // event_tx and lives until the singleton is dropped.
         let mut g = self.inner.lock();
         g.outbound = Some(out_tx);
         g.ws_task = Some(task);
+        if g.command_broker_task.is_none() {
+            let broker = super::omw_command_broker::spawn_command_broker(self.clone(), &runtime);
+            g.command_broker_task = Some(broker);
+        }
         Ok(())
     }
 
@@ -345,6 +367,51 @@ impl OmwAgentState {
         outbound
             .try_send(OmwAgentEventUp::CommandExit { command_id, exit_code, snapshot })
             .map_err(|e| e.to_string())
+    }
+
+    /// Test-only: install a fake outbound channel so tests can observe
+    /// `OmwAgentEventUp` emissions from the broker without spinning up a
+    /// real WebSocket. Returns the previous outbound, if any.
+    #[cfg(any(test, feature = "test-exports"))]
+    pub fn test_install_outbound(
+        &self,
+        sender: mpsc::Sender<OmwAgentEventUp>,
+    ) -> Option<mpsc::Sender<OmwAgentEventUp>> {
+        let mut g = self.inner.lock();
+        g.outbound.replace(sender)
+    }
+
+    /// Test-only: clear the outbound and tear down the broker task. Allows
+    /// a test to reset state before exercising a fresh code path.
+    #[cfg(any(test, feature = "test-exports"))]
+    pub fn test_reset(&self) {
+        let mut g = self.inner.lock();
+        g.outbound = None;
+        if let Some(t) = g.command_broker_task.take() {
+            t.abort();
+        }
+        if let Some(t) = g.ws_task.take() {
+            t.abort();
+        }
+        drop(g);
+        self.clear_active_terminal();
+    }
+
+    /// Test-only: inject an event onto the broadcast bus the broker
+    /// subscribes to. Mimics what `run_session` would do on receipt of
+    /// a kernel notification.
+    #[cfg(any(test, feature = "test-exports"))]
+    pub fn test_inject_event(&self, event: OmwAgentEventDown) {
+        let _ = self.event_tx.send(event);
+    }
+
+    /// Test-only: ensure the runtime is up and return its handle. Tests
+    /// use this to spawn the command broker manually instead of going
+    /// through `start_with_config`, which would also kick off a WS task
+    /// against a non-existent server.
+    #[cfg(any(test, feature = "test-exports"))]
+    pub fn test_ensure_runtime(&self) -> Result<tokio::runtime::Handle, String> {
+        self.ensure_runtime()
     }
 
     fn set_status(&self, status: OmwAgentStatus) {

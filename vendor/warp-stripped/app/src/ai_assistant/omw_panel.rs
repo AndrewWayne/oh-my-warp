@@ -2,19 +2,24 @@
 //!
 //! `render_omw_agent_panel` is the single entry point: panel.rs calls it
 //! instead of the old `is_omw_placeholder` text block. The render is
-//! intentionally text-only for now (v0 / Task 8); prompt-editor wiring
-//! is deferred to Task 11 as noted in the progress doc.
+//! mostly text rows; the Phase 4c4 approval card adds Approve/Reject
+//! buttons whose `on_click` handlers call into
+//! [`OmwAgentState::send_approval_decision`] directly (no view-context
+//! action plumbing needed because the agent state is a process-wide
+//! singleton).
 //!
 //! The L3a tests in `omw_agent_panel_test.rs` exercise
 //! `OmwAgentTranscriptModel::apply_event` directly and do not call into
 //! this render function, so the render only needs to compile cleanly.
 
-use warpui::elements::{Align, Container, Flex, MainAxisSize, ParentElement, Shrinkable};
+use warpui::elements::{Align, Container, CrossAxisAlignment, Flex, MainAxisSize, MouseStateHandle, ParentElement, Shrinkable};
 use warpui::elements::Element;
+use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 
 use crate::appearance::Appearance;
-use super::omw_transcript::{OmwAgentMessage, OmwAgentTranscriptModel, ToolCallStatus};
+use super::omw_protocol::ApprovalDecision as ProtocolApprovalDecision;
+use super::omw_transcript::{ApprovalDecision as TranscriptApprovalDecision, OmwAgentMessage, OmwAgentTranscriptModel, ToolCallStatus};
 use super::omw_agent_state::OmwAgentState;
 
 const BODY_FONT_SIZE: f32 = 13.;
@@ -51,6 +56,19 @@ pub fn render_omw_agent_panel(
 
     // Message rows.
     for message in transcript.messages() {
+        // Pending approvals get a card with Approve/Reject buttons. Other
+        // states (Approved/Rejected/Cancelled) and other message variants
+        // fall through to the text-summary path below.
+        if let OmwAgentMessage::Approval {
+            id,
+            summary,
+            decision: TranscriptApprovalDecision::Pending,
+        } = message
+        {
+            col.add_child(render_approval_card(appearance, id, summary));
+            continue;
+        }
+
         let line = format_message_summary(message);
         col.add_child(
             appearance
@@ -98,4 +116,70 @@ fn format_message_summary(message: &OmwAgentMessage) -> String {
         }
         OmwAgentMessage::Error { message } => format!("Error: {}", message),
     }
+}
+
+/// Render the approval card row for a pending decision. Two buttons —
+/// `Approve` and `Reject` — call into [`OmwAgentState::send_approval_decision`]
+/// from their `on_click` closures. We don't optimistically update the
+/// local transcript model here; the kernel resolves the decision and the
+/// next turn surfaces any follow-up state.
+fn render_approval_card(
+    appearance: &Appearance,
+    approval_id: &str,
+    summary: &str,
+) -> Box<dyn Element> {
+    let theme = appearance.theme();
+    let summary_text = format!("Approval needed: {}", summary);
+
+    let summary_el = appearance
+        .ui_builder()
+        .wrappable_text(summary_text, true)
+        .with_style(UiComponentStyles {
+            font_family_id: Some(appearance.ui_font_family()),
+            font_size: Some(BODY_FONT_SIZE),
+            font_color: Some(theme.active_ui_text_color().into()),
+            ..Default::default()
+        })
+        .build()
+        .finish();
+
+    let approve_id = approval_id.to_string();
+    let approve_btn = appearance
+        .ui_builder()
+        .button(ButtonVariant::Accent, MouseStateHandle::default())
+        .with_text_label("Approve".to_owned())
+        .build()
+        .on_click(move |_ctx, _app, _pt| {
+            let _ = OmwAgentState::shared()
+                .send_approval_decision(approve_id.clone(), ProtocolApprovalDecision::Approve);
+        })
+        .finish();
+
+    let reject_id = approval_id.to_string();
+    let reject_btn = appearance
+        .ui_builder()
+        .button(ButtonVariant::Text, MouseStateHandle::default())
+        .with_text_label("Reject".to_owned())
+        .build()
+        .on_click(move |_ctx, _app, _pt| {
+            let _ = OmwAgentState::shared()
+                .send_approval_decision(reject_id.clone(), ProtocolApprovalDecision::Reject);
+        })
+        .finish();
+
+    let buttons = Flex::row()
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_child(Container::new(approve_btn).with_margin_right(8.).finish())
+        .with_child(reject_btn);
+
+    Container::new(
+        Flex::column()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_child(Container::new(summary_el).with_margin_bottom(6.).finish())
+            .with_child(buttons.finish())
+            .finish(),
+    )
+    .with_margin_top(6.)
+    .with_margin_bottom(6.)
+    .finish()
 }

@@ -25986,6 +25986,30 @@ impl View for TerminalView {
                 ctx.focus(&ssh_choice_view);
             }
 
+            // omw_local: register this pane with the agent broker so
+            // bash/exec frames execute against the focused local-tty pane.
+            // Non-local managers (SSH remote, shared-session viewer, mock)
+            // clear the registration so subsequent bash/exec falls through
+            // to the no-active-GUI snapshot path on the server.
+            #[cfg(feature = "omw_local")]
+            {
+                let agent_state =
+                    crate::ai_assistant::omw_agent_state::OmwAgentState::shared();
+                if let Some((event_loop_tx, pty_reads_tx, _)) =
+                    crate::omw::pane_auto_share::local_io_handles_for(self, ctx)
+                {
+                    agent_state.register_active_terminal(
+                        crate::ai_assistant::omw_agent_state::ActiveTerminalHandle {
+                            view_id: ctx.view_id(),
+                            event_loop_tx,
+                            pty_reads_tx,
+                        },
+                    );
+                } else {
+                    agent_state.clear_active_terminal();
+                }
+            }
+
             ctx.notify();
         }
         self.update_focused_terminal_info(ctx);

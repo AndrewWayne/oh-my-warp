@@ -2,7 +2,12 @@
 
 pub mod docker_sandbox;
 pub mod event_loop;
-pub(crate) mod mio_channel;
+// `mio_channel` is widened from `pub(crate)` to `pub` to support
+// integration tests in `app/tests/` that need to build synthetic local-PTY
+// channels (`omw_agent_command_broker_test`). The downstream surface is
+// re-exported behind the `test-exports` feature gate; production binaries
+// don't link any caller from outside the warp crate.
+pub mod mio_channel;
 pub mod recorder;
 #[cfg(unix)]
 pub mod server;

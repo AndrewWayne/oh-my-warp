@@ -128,10 +128,19 @@ pub mod test_exports {
     };
     #[cfg(feature = "omw_local")]
     pub use crate::ai_assistant::{
-        omw_protocol::OmwAgentEventDown,
+        omw_agent_state::{ActiveTerminalHandle, OmwAgentState},
+        omw_command_broker::{detect_osc133_prompt_end, spawn_command_broker},
+        omw_protocol::{OmwAgentEventDown, OmwAgentEventUp},
         omw_transcript::{ApprovalDecision, OmwAgentMessage, OmwAgentTranscriptModel},
-        omw_agent_state::OmwAgentState,
     };
+    #[cfg(feature = "omw_local")]
+    pub mod terminal_io {
+        //! Re-exports of the local-PTY channel types so integration tests
+        //! in `app/tests/` can build synthetic `ActiveTerminalHandle`s
+        //! without going through gpui's `App::test`.
+        pub use crate::terminal::local_tty::mio_channel;
+        pub use crate::terminal::writeable_pty::Message;
+    }
 }
 
 pub mod channel;

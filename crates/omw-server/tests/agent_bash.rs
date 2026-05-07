@@ -4,8 +4,10 @@
 //! binds the agent router on a random port, and exercises the bash routing
 //! paths end-to-end:
 //!
-//!   1. `bash/exec` from kernel → `kind: "exec_command"` text frame on the
-//!      GUI WebSocket scoped to the matching `terminalSessionId`.
+//!   1. `bash/exec` from kernel → JSON-RPC `bash/exec` notification on the
+//!      GUI WebSocket scoped to the matching `terminalSessionId`. The
+//!      broker rewrites params to add `sessionId` so the GUI's existing
+//!      `OmwAgentEventDown::ExecCommand` parser deserialises directly.
 //!   2. `kind: "command_data"` from the GUI → `bash/data` notification
 //!      forwarded verbatim to the kernel.
 //!   3. `kind: "command_exit"` from the GUI → `bash/finished` notification
@@ -181,12 +183,10 @@ impl WsClient {
         self.inner.send(WsMessage::Text(line)).await.unwrap();
     }
 
-    /// Read the next text frame, skip notifications whose `kind` matches a
-    /// caller-supplied filter, and return the first payload that matches.
-    /// Used to filter out unrelated frames the GUI bus may receive
-    /// (e.g. legacy JSON-RPC forwarded notifications) so concurrency tests
-    /// can pin on `exec_command` specifically.
-    async fn next_kind(&mut self, kind: &str) -> Value {
+    /// Read the next text frame whose JSON-RPC `method` field matches.
+    /// Used to filter out unrelated frames on the same session bus (e.g.
+    /// `assistant/delta`) so concurrency tests pin on `bash/exec` cleanly.
+    async fn next_method(&mut self, method: &str) -> Value {
         let deadline = Duration::from_secs(5);
         loop {
             let msg = timeout(deadline, self.inner.next())
@@ -200,7 +200,7 @@ impl WsClient {
                 WsMessage::Close(_) | WsMessage::Frame(_) => panic!("ws closed"),
             };
             let parsed: Value = serde_json::from_str(&text).expect("ws frame is JSON");
-            if parsed["kind"] == kind {
+            if parsed["method"] == method {
                 return parsed;
             }
         }
@@ -245,10 +245,12 @@ async fn bash_exec_notification_forwarded_as_exec_command_to_gui() {
     )
     .await;
 
-    let frame = ws.next_kind("exec_command").await;
-    assert_eq!(frame["commandId"], "cmd-1");
-    assert_eq!(frame["command"], "ls");
-    assert_eq!(frame["cwd"], "/tmp");
+    let frame = ws.next_method("bash/exec").await;
+    assert_eq!(frame["jsonrpc"], "2.0");
+    assert_eq!(frame["params"]["sessionId"], session_id);
+    assert_eq!(frame["params"]["commandId"], "cmd-1");
+    assert_eq!(frame["params"]["command"], "ls");
+    assert_eq!(frame["params"]["cwd"], "/tmp");
     ws.close().await;
 }
 
@@ -334,11 +336,11 @@ async fn concurrent_bash_calls_routed_by_command_id() {
     )
     .await;
 
-    let frame1 = ws.next_kind("exec_command").await;
-    let frame2 = ws.next_kind("exec_command").await;
+    let frame1 = ws.next_method("bash/exec").await;
+    let frame2 = ws.next_method("bash/exec").await;
     let mut received_ids: HashSet<String> = HashSet::new();
-    received_ids.insert(frame1["commandId"].as_str().unwrap().to_string());
-    received_ids.insert(frame2["commandId"].as_str().unwrap().to_string());
+    received_ids.insert(frame1["params"]["commandId"].as_str().unwrap().to_string());
+    received_ids.insert(frame2["params"]["commandId"].as_str().unwrap().to_string());
     assert!(
         received_ids.contains("cmd-A"),
         "expected cmd-A in {received_ids:?}"

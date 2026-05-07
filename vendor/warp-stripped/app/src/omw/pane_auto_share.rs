@@ -111,7 +111,7 @@ pub fn share_all_local_panes(
     handles
 }
 
-type LocalIoHandles = (
+pub(crate) type LocalIoHandles = (
     Arc<parking_lot::Mutex<crate::terminal::local_tty::mio_channel::Sender<crate::terminal::writeable_pty::Message>>>,
     async_broadcast::Sender<Arc<Vec<u8>>>,
     crate::terminal::SizeInfo,
@@ -122,7 +122,7 @@ type LocalIoHandles = (
 /// shared-session-viewer panes, mock managers, and detached views (no
 /// pane_stack). The downcast happens against the concrete impl in
 /// `terminal::local_tty::terminal_manager::TerminalManager`.
-fn local_io_handles_for(
+pub(crate) fn local_io_handles_for(
     tv: &TerminalView,
     ctx: &AppContext,
 ) -> Option<LocalIoHandles> {

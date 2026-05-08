@@ -126,7 +126,7 @@ fn validate_requires_base_url_for_openai_compatible() {
     let form = OmwAgentForm {
         agent_enabled: true,
         approval_mode: ApprovalMode::AskBeforeWrite,
-        default_provider: None,
+        default_provider: Some("azure".into()),
         providers: vec![ProviderRow {
             id: "azure".to_string(),
             kind: ProviderKindForm::OpenAiCompatible,
@@ -157,7 +157,7 @@ fn validate_requires_key_for_openai_when_no_existing_keyref_and_no_paste() {
     let form = OmwAgentForm {
         agent_enabled: true,
         approval_mode: ApprovalMode::AskBeforeWrite,
-        default_provider: None,
+        default_provider: Some("openai-prod".into()),
         providers: vec![ProviderRow {
             id: "openai-prod".to_string(),
             kind: ProviderKindForm::OpenAi,
@@ -169,6 +169,73 @@ fn validate_requires_key_for_openai_when_no_existing_keyref_and_no_paste() {
     };
     let err = validate_form(&form).unwrap_err();
     assert!(err.iter().any(|e| matches!(e, FormError::ApiKeyRequired(_))));
+}
+
+#[test]
+fn validate_skips_completeness_for_non_default_rows() {
+    // A non-default row missing api_key + base_url should pass validation
+    // — it'll just be skipped at serialization time.
+    let form = OmwAgentForm {
+        agent_enabled: true,
+        approval_mode: ApprovalMode::AskBeforeWrite,
+        default_provider: Some("complete".into()),
+        providers: vec![
+            ProviderRow {
+                id: "complete".to_string(),
+                kind: ProviderKindForm::OpenAi,
+                model: String::new(),
+                base_url: String::new(),
+                key_ref_token: "keychain:omw/complete".to_string(),
+                api_key_input: String::new(),
+            },
+            ProviderRow {
+                id: "stub".to_string(),
+                kind: ProviderKindForm::OpenAiCompatible,
+                model: String::new(),
+                base_url: String::new(),
+                key_ref_token: String::new(),
+                api_key_input: String::new(),
+            },
+        ],
+    };
+    assert!(validate_form(&form).is_ok());
+}
+
+#[test]
+fn validate_still_runs_syntactic_checks_on_non_default_rows() {
+    let form = OmwAgentForm {
+        agent_enabled: true,
+        approval_mode: ApprovalMode::AskBeforeWrite,
+        default_provider: None,
+        providers: vec![ProviderRow {
+            id: "bad/id".to_string(),
+            kind: ProviderKindForm::OpenAi,
+            model: String::new(),
+            base_url: String::new(),
+            key_ref_token: String::new(),
+            api_key_input: String::new(),
+        }],
+    };
+    let err = validate_form(&form).unwrap_err();
+    assert!(err.iter().any(|e| matches!(e, FormError::InvalidProviderId(_))));
+}
+
+#[test]
+fn validate_no_default_means_no_completeness_required() {
+    let form = OmwAgentForm {
+        agent_enabled: true,
+        approval_mode: ApprovalMode::AskBeforeWrite,
+        default_provider: None,
+        providers: vec![ProviderRow {
+            id: "stub".to_string(),
+            kind: ProviderKindForm::OpenAi,
+            model: String::new(),
+            base_url: String::new(),
+            key_ref_token: String::new(),
+            api_key_input: String::new(),
+        }],
+    };
+    assert!(validate_form(&form).is_ok());
 }
 
 // ---------------- apply_action ----------------

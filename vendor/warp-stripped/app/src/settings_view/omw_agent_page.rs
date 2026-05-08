@@ -129,13 +129,26 @@ pub fn validate_form(form: &OmwAgentForm) -> Result<(), Vec<FormError>> {
     let mut errs = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
+    let default_id: Option<&str> = form.default_provider.as_deref();
+
     for row in &form.providers {
+        // Syntactic pass — applies to every row.
         if ProviderId::from_str(&row.id).is_err() {
             errs.push(FormError::InvalidProviderId(row.id.clone()));
             continue;
         }
         if !seen.insert(row.id.clone()) {
             errs.push(FormError::DuplicateProviderId(row.id.clone()));
+        }
+        if !row.key_ref_token.is_empty() && KeyRef::from_str(&row.key_ref_token).is_err() {
+            errs.push(FormError::KeyRefInvalid(row.id.clone()));
+        }
+
+        // Completeness pass — only the row marked as default must be
+        // fully filled in. Other rows are drafts; form_to_config skips
+        // them at serialization time so they never reach config.toml.
+        if default_id != Some(row.id.as_str()) {
+            continue;
         }
         match row.kind {
             ProviderKindForm::OpenAiCompatible => {
@@ -149,11 +162,6 @@ pub fn validate_form(form: &OmwAgentForm) -> Result<(), Vec<FormError>> {
                 }
             }
             ProviderKindForm::OpenAi => {
-                // base_url is optional for the official OpenAI variant —
-                // empty means "use https://api.openai.com/v1". A
-                // non-empty value lets users route through Azure OpenAI
-                // deployments / regional fronts / a local intercepting
-                // proxy without switching to `openai-compatible`.
                 if !row.base_url.is_empty() && BaseUrl::from_str(&row.base_url).is_err() {
                     errs.push(FormError::BaseUrlInvalid(row.id.clone()));
                 }
@@ -171,9 +179,6 @@ pub fn validate_form(form: &OmwAgentForm) -> Result<(), Vec<FormError>> {
                     errs.push(FormError::BaseUrlInvalid(row.id.clone()));
                 }
             }
-        }
-        if !row.key_ref_token.is_empty() && KeyRef::from_str(&row.key_ref_token).is_err() {
-            errs.push(FormError::KeyRefInvalid(row.id.clone()));
         }
     }
 

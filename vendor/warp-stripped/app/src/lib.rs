@@ -133,7 +133,7 @@ pub mod test_exports {
         omw_agent_state::{ActiveTerminalHandle, OmwAgentState, PaneSession},
         omw_command_broker::{detect_osc133_prompt_end, spawn_command_broker},
         omw_protocol::{OmwAgentEventDown, OmwAgentEventUp},
-        omw_transcript::{ApprovalDecision, OmwAgentMessage, OmwAgentTranscriptModel},
+        omw_transcript::{ApprovalCardStatus, OmwAgentMessage, OmwAgentTranscriptModel},
     };
     #[cfg(feature = "omw_local")]
     pub use crate::terminal::input::parse_inline_agent_prompt;

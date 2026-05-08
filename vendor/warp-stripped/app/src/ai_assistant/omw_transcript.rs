@@ -24,7 +24,7 @@ pub enum ToolCallStatus {
 
 /// Approval card decision state.
 #[derive(Debug, Clone, PartialEq)]
-pub enum ApprovalDecision {
+pub enum ApprovalCardStatus {
     Pending,
     Approved,
     Rejected,
@@ -61,7 +61,7 @@ pub enum OmwAgentMessage {
         /// Human-readable summary (e.g. the bash command). Phase 5
         /// derives this from the `tool_call` JSON.
         summary: String,
-        decision: ApprovalDecision,
+        decision: ApprovalCardStatus,
     },
     /// Surfaced when the kernel emits an `error` notification mid-turn,
     /// or when the agent crashes outright.
@@ -169,7 +169,7 @@ impl OmwAgentTranscriptModel {
                     id: approval_id.clone(),
                     session_id: session_id.clone(),
                     summary,
-                    decision: ApprovalDecision::Pending,
+                    decision: ApprovalCardStatus::Pending,
                 });
             }
             OmwAgentEventDown::Error { message, .. } => {
@@ -192,7 +192,7 @@ impl OmwAgentTranscriptModel {
 
     /// Update an approval card's decision. Called by the WS sender when
     /// the user clicks Approve/Reject and the upstream message is sent.
-    pub fn update_approval(&mut self, approval_id: &str, decision: ApprovalDecision) {
+    pub fn update_approval(&mut self, approval_id: &str, decision: ApprovalCardStatus) {
         for msg in self.messages.iter_mut().rev() {
             if let OmwAgentMessage::Approval {
                 id,
@@ -237,7 +237,7 @@ impl OmwAgentTranscriptModel {
     /// Test-only: returns true if an approval card with the given id has Pending decision.
     pub fn has_pending_approval(&self, approval_id: &str) -> bool {
         self.messages.iter().any(|m| matches!(m,
-            OmwAgentMessage::Approval { id, decision: ApprovalDecision::Pending, .. }
+            OmwAgentMessage::Approval { id, decision: ApprovalCardStatus::Pending, .. }
                 if id == approval_id))
     }
 }

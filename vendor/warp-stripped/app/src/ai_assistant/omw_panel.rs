@@ -18,8 +18,8 @@ use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 
 use crate::appearance::Appearance;
-use super::omw_protocol::ApprovalDecision as ProtocolApprovalDecision;
-use super::omw_transcript::{ApprovalDecision as TranscriptApprovalDecision, OmwAgentMessage, OmwAgentTranscriptModel, ToolCallStatus};
+use super::omw_protocol::ApprovalDecision;
+use super::omw_transcript::{ApprovalCardStatus, OmwAgentMessage, OmwAgentTranscriptModel, ToolCallStatus};
 use super::omw_agent_state::OmwAgentState;
 
 const BODY_FONT_SIZE: f32 = 13.;
@@ -63,7 +63,7 @@ pub fn render_omw_agent_panel(
             id,
             session_id,
             summary,
-            decision: TranscriptApprovalDecision::Pending,
+            decision: ApprovalCardStatus::Pending,
         } = message
         {
             col.add_child(render_approval_card(appearance, id, session_id, summary));
@@ -156,7 +156,7 @@ fn render_approval_card(
         .with_text_label("Approve".to_owned())
         .build()
         .on_click(move |_ctx, _app, _pt| {
-            send_decision(&approve_session, &approve_id, ProtocolApprovalDecision::Approve);
+            send_decision(&approve_session, &approve_id, ApprovalDecision::Approve);
         })
         .finish();
 
@@ -168,7 +168,7 @@ fn render_approval_card(
         .with_text_label("Reject".to_owned())
         .build()
         .on_click(move |_ctx, _app, _pt| {
-            send_decision(&reject_session, &reject_id, ProtocolApprovalDecision::Reject);
+            send_decision(&reject_session, &reject_id, ApprovalDecision::Reject);
         })
         .finish();
 
@@ -194,7 +194,7 @@ fn render_approval_card(
 /// singleton [`OmwAgentState`] outbound is only correct for the AI-panel
 /// session. Looking up by `session_id` ensures the kernel session that
 /// asked for approval is the one that hears the answer.
-fn send_decision(session_id: &str, approval_id: &str, decision: ProtocolApprovalDecision) {
+fn send_decision(session_id: &str, approval_id: &str, decision: ApprovalDecision) {
     let state = OmwAgentState::shared();
     let result = match state.pane_session_by_id(session_id) {
         Some((_, pane)) => pane.send_approval_decision(approval_id.to_string(), decision),

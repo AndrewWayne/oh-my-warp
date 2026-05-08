@@ -8,7 +8,7 @@
 #![cfg(feature = "omw_local")]
 
 use warp::test_exports::{
-    ApprovalDecision, OmwAgentEventDown, OmwAgentMessage, OmwAgentTranscriptModel,
+    ApprovalCardStatus, OmwAgentEventDown, OmwAgentMessage, OmwAgentTranscriptModel,
 };
 
 #[test]
@@ -30,12 +30,12 @@ fn update_approval_flips_card_status_to_approved() {
         approval_id: "a1".into(),
         tool_call: serde_json::json!({}),
     });
-    model.update_approval("a1", ApprovalDecision::Approved);
+    model.update_approval("a1", ApprovalCardStatus::Approved);
     assert!(!model.has_pending_approval("a1"));
 
     let approved = model.messages().iter().any(|m| matches!(m,
         OmwAgentMessage::Approval { id, decision, .. }
-            if id == "a1" && matches!(decision, ApprovalDecision::Approved)));
+            if id == "a1" && matches!(decision, ApprovalCardStatus::Approved)));
     assert!(approved);
 }
 
@@ -47,11 +47,11 @@ fn update_approval_flips_card_status_to_rejected() {
         approval_id: "a1".into(),
         tool_call: serde_json::json!({}),
     });
-    model.update_approval("a1", ApprovalDecision::Rejected);
+    model.update_approval("a1", ApprovalCardStatus::Rejected);
 
     let rejected = model.messages().iter().any(|m| matches!(m,
         OmwAgentMessage::Approval { id, decision, .. }
-            if id == "a1" && matches!(decision, ApprovalDecision::Rejected)));
+            if id == "a1" && matches!(decision, ApprovalCardStatus::Rejected)));
     assert!(rejected);
 }
 

@@ -5,7 +5,7 @@
 
 use super::omw_protocol::OmwAgentEventDown;
 use super::omw_transcript::{
-    ApprovalDecision, OmwAgentMessage, OmwAgentTranscriptModel, ToolCallStatus,
+    ApprovalCardStatus, OmwAgentMessage, OmwAgentTranscriptModel, ToolCallStatus,
 };
 
 fn delta(session: &str, text: &str) -> OmwAgentEventDown {
@@ -142,7 +142,7 @@ fn approval_request_appends_pending_card() {
         OmwAgentMessage::Approval { id, decision, .. } if id == "a1" => Some(decision),
         _ => None,
     });
-    assert_eq!(card, Some(&ApprovalDecision::Pending));
+    assert_eq!(card, Some(&ApprovalCardStatus::Pending));
 }
 
 #[test]
@@ -153,12 +153,12 @@ fn update_approval_flips_decision() {
         approval_id: "a1".into(),
         tool_call: serde_json::json!({"name": "bash"}),
     });
-    t.update_approval("a1", ApprovalDecision::Approved);
+    t.update_approval("a1", ApprovalCardStatus::Approved);
     let decision = t.messages().iter().find_map(|m| match m {
         OmwAgentMessage::Approval { id, decision, .. } if id == "a1" => Some(decision),
         _ => None,
     });
-    assert_eq!(decision, Some(&ApprovalDecision::Approved));
+    assert_eq!(decision, Some(&ApprovalCardStatus::Approved));
 }
 
 #[test]

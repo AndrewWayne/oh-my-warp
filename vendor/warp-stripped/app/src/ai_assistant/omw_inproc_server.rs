@@ -206,101 +206,69 @@ async fn boot(kernel_path: PathBuf) -> Result<BootedServer, String> {
     })
 }
 
-/// Walk the resolution order. Returns the first path that exists.
-fn locate_kernel_script() -> Option<PathBuf> {
-    if let Some(env_path) = std::env::var_os("OMW_AGENT_BIN") {
+/// Walk env-override → macOS Resources → flat-bundle → caller-supplied
+/// workspace fallback. Returns the first existing path, or `None` if all
+/// four steps miss. Each call site MUST pass an explicit `workspace_walk_up`
+/// (`|_| None` opts out) so adding a fourth caller can't silently forget
+/// the cargo-run fallback.
+fn locate(
+    env_var: &str,
+    app_resources_rel: &str,
+    flat_rel: &str,
+    workspace_walk_up: impl FnOnce(&Path) -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(env_path) = std::env::var_os(env_var) {
         let p = PathBuf::from(env_path);
         if p.exists() {
             return Some(p);
         }
     }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            // macOS .app bundle: <bundle>/Contents/MacOS/<exe>; resources
-            // live at <bundle>/Contents/Resources/. The kernel layout
-            // mirrors apps/omw-agent/, so the .mjs's relative imports
-            // (`../dist/src/serve.js` etc.) resolve correctly.
-            let app_resources = exe_dir.join("../Resources/bin/omw-agent.mjs");
-            if app_resources.exists() {
-                return Some(app_resources);
-            }
-            // Flat bundle next to the binary (Linux/Windows release).
-            let flat = exe_dir.join("bin/omw-agent.mjs");
-            if flat.exists() {
-                return Some(flat);
-            }
-            // Workspace fallback for `cargo run` / `cargo build` output.
-            // Walk up looking for `apps/omw-agent/bin/omw-agent.mjs`.
-            if let Some(workspace_path) = walk_up_for_workspace_kernel(exe_dir) {
-                return Some(workspace_path);
-            }
-        }
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+    let app_resources = exe_dir.join(app_resources_rel);
+    if app_resources.exists() {
+        return Some(app_resources);
     }
-    None
+    let flat = exe_dir.join(flat_rel);
+    if flat.exists() {
+        return Some(flat);
+    }
+    workspace_walk_up(exe_dir)
+}
+
+fn locate_kernel_script() -> Option<PathBuf> {
+    locate(
+        "OMW_AGENT_BIN",
+        "../Resources/bin/omw-agent.mjs",
+        "bin/omw-agent.mjs",
+        walk_up_for_workspace_kernel,
+    )
 }
 
 /// Resolve the `omw-keychain-helper` binary the kernel will spawn for
-/// `keychain:omw/...` lookups. Mirrors [`locate_kernel_script`]:
-///   1. `OMW_KEYCHAIN_HELPER` env var override (tests / local dev).
-///   2. `<exe_dir>/../Resources/omw-keychain-helper` — macOS .app bundle.
-///   3. `<exe_dir>/omw-keychain-helper` — flat bundle / Linux.
-///   4. Workspace fallback: walk up looking for
-///      `target/{release,debug}/omw-keychain-helper` so `cargo run` finds
-///      the binary you just built without manual env-var setup.
+/// `keychain:omw/...` lookups. Workspace fallback walks up looking for
+/// `target/{release,debug}/omw-keychain-helper` so `cargo run` finds the
+/// binary you just built without manual env-var setup.
 fn locate_keychain_helper() -> Option<PathBuf> {
-    if let Some(env_path) = std::env::var_os("OMW_KEYCHAIN_HELPER") {
-        let p = PathBuf::from(env_path);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            let app_resources = exe_dir.join("../Resources/omw-keychain-helper");
-            if app_resources.exists() {
-                return Some(app_resources);
-            }
-            let flat = exe_dir.join("omw-keychain-helper");
-            if flat.exists() {
-                return Some(flat);
-            }
-            if let Some(p) = walk_up_for_workspace_helper(exe_dir) {
-                return Some(p);
-            }
-        }
-    }
-    None
+    locate(
+        "OMW_KEYCHAIN_HELPER",
+        "../Resources/omw-keychain-helper",
+        "omw-keychain-helper",
+        walk_up_for_workspace_helper,
+    )
 }
 
-/// Resolve the `node` interpreter the agent kernel runs under.
-/// Resolution order, first hit wins:
-///   1. `OMW_AGENT_NODE` env var — explicit override (tests / local dev).
-///   2. `<exe_dir>/../Resources/bin/node` — macOS .app bundle layout.
-///   3. `<exe_dir>/bin/node` — flat bundle / Linux/Windows release.
-///   4. `None` — caller falls back to bare `"node"` (PATH lookup), which
-///      works for `cargo run` from a shell with Node on PATH but FAILS
-///      for `.app` launches from Finder (inherited PATH excludes Homebrew).
+/// Resolve the `node` interpreter the agent kernel runs under. No workspace
+/// fallback — caller drops back to bare `"node"` (PATH lookup), which works
+/// for `cargo run` from a shell with Node on PATH but FAILS for `.app`
+/// launches from Finder (inherited PATH excludes Homebrew).
 fn locate_node() -> Option<PathBuf> {
-    if let Some(env_path) = std::env::var_os("OMW_AGENT_NODE") {
-        let p = PathBuf::from(env_path);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            let app_resources = exe_dir.join("../Resources/bin/node");
-            if app_resources.exists() {
-                return Some(app_resources);
-            }
-            let flat = exe_dir.join("bin/node");
-            if flat.exists() {
-                return Some(flat);
-            }
-        }
-    }
-    None
+    locate(
+        "OMW_AGENT_NODE",
+        "../Resources/bin/node",
+        "bin/node",
+        |_| None,
+    )
 }
 
 fn walk_up_for_workspace_helper(start: &Path) -> Option<PathBuf> {

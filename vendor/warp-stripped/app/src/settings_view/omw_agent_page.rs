@@ -214,11 +214,6 @@ pub fn validate_form(form: &OmwAgentForm) -> Result<(), Vec<FormError>> {
     }
 }
 
-/// True iff this row has all kind-required fields populated such that the
-/// typed `ProviderConfig` constructor will succeed. Mirrors the completeness
-/// logic in `validate_form` for the default row. Non-default rows are
-/// drafts; `form_to_config` filters them out on this check so they never
-/// land in config.toml.
 /// True iff this provider kind requires an API key. Used by
 /// `SetProviderKind` to decide whether to clear stale key fields when
 /// the user switches a row's kind across the boundary (e.g. OpenAI →
@@ -232,10 +227,19 @@ fn kind_requires_key(k: ProviderKindForm) -> bool {
     )
 }
 
-fn is_row_complete(row: &ProviderRow, persisted_secrets: &BTreeMap<String, KeyRef>) -> bool {
+/// True iff this row has all kind-required fields populated such that the
+/// typed `ProviderConfig` constructor will succeed. Mirrors the completeness
+/// logic in `validate_form` for the default row. Non-default rows are
+/// drafts; `form_to_config` filters them out on this check so they never
+/// land in config.toml.
+///
+/// `has_persisted_key` lets callers model "does this row already have a
+/// key elsewhere?" differently — `form_to_config` asks the freshly-resolved
+/// keychain refs map; the render layer asks the form's pending_secrets.
+fn is_row_complete(row: &ProviderRow, has_persisted_key: impl Fn(&str) -> bool) -> bool {
     let has_key = !row.key_ref_token.is_empty()
         || !row.api_key_input.is_empty()
-        || persisted_secrets.contains_key(&row.id);
+        || has_persisted_key(&row.id);
     match row.kind {
         ProviderKindForm::OpenAiCompatible => !row.base_url.is_empty() && has_key,
         ProviderKindForm::OpenAi => has_key,
@@ -252,7 +256,7 @@ pub fn form_to_config(
 
     let mut providers = BTreeMap::new();
     for row in &form.providers {
-        if !is_row_complete(row, persisted_secrets) {
+        if !is_row_complete(row, |id| persisted_secrets.contains_key(id)) {
             continue;
         }
         let id = ProviderId::from_str(&row.id)
@@ -1217,10 +1221,28 @@ impl SettingsWidget for OmwAgentPageWidget {
                         .with_color(active)
                         .finish(),
                     )
-                    .with_margin_bottom(4.)
+                    .with_margin_bottom(2.)
                     .finish(),
                 );
 
+                // Draft notice — incomplete rows live only in form state;
+                // they're skipped when Apply serializes config.toml so the
+                // user knows up front the row won't be saved as-is.
+                if !is_row_complete(row, |id| view.state.pending_secrets.contains_key(id)) {
+                    col.add_child(
+                        Container::new(
+                            Text::new(
+                                "    (incomplete — won't be saved on Apply)".to_owned(),
+                                appearance.ui_font_family(),
+                                CONTENT_FONT_SIZE,
+                            )
+                            .with_color(muted)
+                            .finish(),
+                        )
+                        .with_margin_bottom(4.)
+                        .finish(),
+                    );
+                }
                 // Editable inputs. Each is a SubmittableTextInput; the
                 // user types and presses Enter to commit. The label
                 // above the input shows what field it controls.

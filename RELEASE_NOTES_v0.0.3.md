@@ -24,7 +24,7 @@ The `inline-agent-command-execution-report.md` report's §4 grammar is what land
 
 ### One binary — no sidecars
 
-`omw-warp-oss.app` now bundles the omw-agent kernel (Node script + dependencies) inside `Contents/Resources/` and lazy-spawns it from inside the Rust process on first agent use. The in-process omw-server binds `127.0.0.1:8788` for the GUI's WebSocket bridge. You launch the app, you get an agent. **Node is required** on the user's `$PATH` (every Mac with Homebrew has it; if not, `brew install node`).
+`omw-warp-oss.app` now bundles the omw-agent kernel (Node script + dependencies) **and** a Node 22 LTS interpreter inside `Contents/Resources/`, then lazy-spawns it from inside the Rust process on first agent use. The in-process omw-server binds `127.0.0.1:8788` for the GUI's WebSocket bridge. You launch the app, you get an agent — no Node install required on the host, no `$PATH` setup, no sidecars.
 
 ### Bash broker: agent-driven commands run in the focused pane
 
@@ -81,7 +81,6 @@ The agent kernel reads `~/.config/omw/config.toml`. API keys go to the macOS key
 - **No inline tool-call cards.** The agent's text response streams inline in your pane, but tool-call cards (the agent saying "I'm going to run `ls`") render in the agent panel only — not inline in the terminal block. Open the panel to see the full transcript and approval cards.
 - **One agent session per app process.** Re-opening the panel restarts the session. No transcript persistence across launches.
 - **No multi-pane sessions.** Every terminal pane shares the singleton agent session; the focused pane is the bash-target.
-- **Node-on-PATH requirement.** If `node` isn't on `$PATH` when the app launches, the agent panel reports `Failed: spawn omw-agent kernel: ...`. Install Node and relaunch. (Bundling a Node binary inside the `.app` is deferred to a future preview to keep `.dmg` size sane.)
 - **iOS Safari over Tailscale cold-path connect** (carried over from v0.0.2 — pair-and-share-a-pane). Pre-warm + retry mitigates but doesn't eliminate.
 - **Unsigned `.dmg`.** Same `xattr -d com.apple.quarantine` as v0.0.1 / v0.0.2.
 - **macOS aarch64 only.** No Windows `.zip` for v0.0.3 — the Windows build script does not yet bundle the `omw-agent` kernel or `omw-keychain-helper.exe`, so the inline-agent feature wouldn't work there. Windows parity will land in a later preview.

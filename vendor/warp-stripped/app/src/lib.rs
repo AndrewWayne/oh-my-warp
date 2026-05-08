@@ -122,10 +122,12 @@ pub mod appearance;
 pub mod test_exports {
     #[cfg(feature = "omw_local")]
     pub use crate::settings_view::omw_agent_page::{
-        apply_action, form_from_config, form_to_config, validate_form,
-        DefaultProviderDropdownState, FormError, OmwAgentForm, OmwAgentPageAction,
-        OmwAgentPageState, OmwAgentPageView, ProviderKindForm, ProviderRow,
+        apply_action, form_from_config, form_from_config_with_order, form_to_config,
+        validate_form, DefaultProviderDropdownState, FormError, OmwAgentForm,
+        OmwAgentPageAction, OmwAgentPageState, OmwAgentPageView, ProviderKindForm,
+        ProviderRow,
     };
+    pub use crate::view_components::{SubmittableTextInput, SubmittableTextInputAction};
     #[cfg(feature = "omw_local")]
     pub use crate::ai_assistant::{
         omw_agent_state::{ActiveTerminalHandle, OmwAgentState, PaneSession},

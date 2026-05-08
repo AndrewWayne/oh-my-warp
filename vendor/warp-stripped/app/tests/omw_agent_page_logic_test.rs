@@ -8,9 +8,9 @@ use omw_config::{ApprovalMode, ProviderConfig, ProviderId};
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use warp::test_exports::{
-    apply_action, form_from_config, form_to_config, validate_form,
-    DefaultProviderDropdownState, FormError, OmwAgentForm, OmwAgentPageAction,
-    OmwAgentPageState, ProviderKindForm, ProviderRow,
+    apply_action, form_from_config, form_from_config_with_order, form_to_config,
+    validate_form, DefaultProviderDropdownState, FormError, OmwAgentForm,
+    OmwAgentPageAction, OmwAgentPageState, ProviderKindForm, ProviderRow,
 };
 
 fn empty_state() -> OmwAgentPageState {
@@ -508,6 +508,270 @@ fn apply_set_default_provider_by_id_ignores_unknown_ids() {
         OmwAgentPageAction::SetDefaultProviderById(Some("ghost".into())),
     );
     assert!(s.form.default_provider.is_none());
+}
+
+// ---------------- Trivial user-flow tests ----------------
+//
+// These walk the user's "add provider, fill in fields, set as default,
+// click Apply" path through the pure reducer + serialization layers and
+// pin both intermediate state (form, default_provider) and final
+// disk-shape (typed Config + TOML round-trip).
+
+/// Drive the trivial happy-path flow: add one provider, fill it in, mark
+/// it default, run form_to_config. Verifies the row is captured at every
+/// layer (form, typed Config, TOML on disk through save/load).
+#[test]
+fn flow_add_one_provider_set_default_persists_through_toml_roundtrip() {
+    let mut s = empty_state();
+
+    // 1. Add a provider — appends a default row at index 0.
+    apply_action(&mut s, OmwAgentPageAction::AddProvider);
+    assert_eq!(s.form.providers.len(), 1);
+
+    // 2. Fill it in via the same Set* actions the page subscriptions
+    //    dispatch from each input's Submit. Order mirrors what the user
+    //    might click.
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderId(0, "openai-prod".into()),
+    );
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderKind(0, ProviderKindForm::OpenAi),
+    );
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderModel(0, "gpt-5.5".into()),
+    );
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderApiKey(0, "sk-secret".into()),
+    );
+
+    // 3. Mark it default through the dropdown's id-keyed action.
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetDefaultProviderById(Some("openai-prod".into())),
+    );
+    assert_eq!(
+        s.form.default_provider.as_deref(),
+        Some("openai-prod"),
+        "form-state default should track the user's selection"
+    );
+
+    // 4. Build the typed Config the way `apply()` does. Form's
+    //    pending_secrets feeds the persisted_secrets map.
+    let mut persisted_secrets = BTreeMap::new();
+    for (id, _secret) in &s.pending_secrets {
+        let kr = format!("keychain:omw/{id}").parse().unwrap();
+        persisted_secrets.insert(id.clone(), kr);
+    }
+    let cfg = form_to_config(&s.form, &persisted_secrets).expect("form_to_config");
+    assert_eq!(
+        cfg.default_provider.as_ref().map(|p| p.as_str()),
+        Some("openai-prod"),
+        "cfg.default_provider must carry the user's selection"
+    );
+    let id = ProviderId::from_str("openai-prod").unwrap();
+    assert!(cfg.providers.contains_key(&id), "cfg should contain the row");
+    match cfg.providers.get(&id).unwrap() {
+        ProviderConfig::OpenAi {
+            default_model,
+            ..
+        } => {
+            assert_eq!(default_model.as_deref(), Some("gpt-5.5"));
+        }
+        other => panic!("expected OpenAi variant, got {other:?}"),
+    }
+
+    // 5. Round-trip through save_atomic + load_from to confirm the
+    //    on-disk TOML actually carries default_provider + providers.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    cfg.save_atomic(&path).expect("save_atomic");
+    let on_disk = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        on_disk.contains("default_provider = \"openai-prod\""),
+        "TOML missing default_provider: {on_disk}"
+    );
+    assert!(
+        on_disk.contains("[providers.openai-prod]"),
+        "TOML missing providers table: {on_disk}"
+    );
+    let reloaded = omw_config::Config::load_from(&path).expect("load_from");
+    assert_eq!(reloaded, cfg, "TOML round-trip must be lossless");
+}
+
+/// Two-provider variant: add both, fill both, then flip the default
+/// between them via the dropdown's SetDefaultProviderById. Each flip
+/// should immediately reflect in form state. Verifies the bug-2 surface:
+/// "click an item in the dropdown, the right id wins".
+#[test]
+fn flow_two_providers_default_can_flip_between_them() {
+    let mut s = empty_state();
+
+    apply_action(&mut s, OmwAgentPageAction::AddProvider);
+    apply_action(&mut s, OmwAgentPageAction::SetProviderId(0, "deepseek".into()));
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderKind(0, ProviderKindForm::OpenAiCompatible),
+    );
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderBaseUrl(0, "https://api.deepseek.com/v1".into()),
+    );
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderApiKey(0, "ds-key".into()),
+    );
+
+    apply_action(&mut s, OmwAgentPageAction::AddProvider);
+    apply_action(&mut s, OmwAgentPageAction::SetProviderId(1, "openai-crs".into()));
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderKind(1, ProviderKindForm::OpenAi),
+    );
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderApiKey(1, "oa-key".into()),
+    );
+
+    // Flip default to deepseek.
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetDefaultProviderById(Some("deepseek".into())),
+    );
+    assert_eq!(s.form.default_provider.as_deref(), Some("deepseek"));
+
+    // Flip to openai-crs.
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetDefaultProviderById(Some("openai-crs".into())),
+    );
+    assert_eq!(
+        s.form.default_provider.as_deref(),
+        Some("openai-crs"),
+        "second SetDefaultProviderById should overwrite the first"
+    );
+
+    // Clear back to none.
+    apply_action(&mut s, OmwAgentPageAction::SetDefaultProviderById(None));
+    assert!(s.form.default_provider.is_none());
+
+    // Re-select openai-crs after going through none — bug-2 user
+    // sequence ("click none, then click openai-crs" had previously
+    // landed on the wrong provider).
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetDefaultProviderById(Some("openai-crs".into())),
+    );
+    assert_eq!(
+        s.form.default_provider.as_deref(),
+        Some("openai-crs"),
+        "selecting after a none-detour must land on the clicked id, \
+         not on a sibling"
+    );
+}
+
+/// User authors providers in a non-alphabetical order, applies, and the
+/// reloaded form must keep that order — otherwise per-slot editor inputs
+/// + MouseStateHandles point at the wrong row underneath.
+#[test]
+fn flow_apply_preserves_user_authored_row_order() {
+    let mut s = empty_state();
+
+    apply_action(&mut s, OmwAgentPageAction::AddProvider);
+    apply_action(&mut s, OmwAgentPageAction::SetProviderId(0, "zebra".into()));
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderKind(0, ProviderKindForm::OpenAi),
+    );
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderApiKey(0, "z-key".into()),
+    );
+
+    apply_action(&mut s, OmwAgentPageAction::AddProvider);
+    apply_action(&mut s, OmwAgentPageAction::SetProviderId(1, "alpha".into()));
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderKind(1, ProviderKindForm::Anthropic),
+    );
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderApiKey(1, "a-key".into()),
+    );
+
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetDefaultProviderById(Some("zebra".into())),
+    );
+
+    // Pre-Apply: form is in user-authored order (zebra, alpha).
+    let user_order: Vec<String> =
+        s.form.providers.iter().map(|r| r.id.clone()).collect();
+    assert_eq!(user_order, vec!["zebra".to_string(), "alpha".to_string()]);
+
+    // Convert to typed cfg — providers BTreeMap is alphabetical.
+    let mut persisted_secrets = BTreeMap::new();
+    for (id, _) in &s.pending_secrets {
+        let kr = format!("keychain:omw/{id}").parse().unwrap();
+        persisted_secrets.insert(id.clone(), kr);
+    }
+    let cfg = form_to_config(&s.form, &persisted_secrets).expect("form_to_config");
+    let cfg_keys: Vec<&str> = cfg.providers.keys().map(|k| k.as_str()).collect();
+    assert_eq!(cfg_keys, vec!["alpha", "zebra"], "BTreeMap is alphabetical");
+
+    // Rebuild form preserving user order — kinds must also stay attached
+    // to the right id.
+    let rebuilt = form_from_config_with_order(&cfg, &user_order);
+    let rebuilt_order: Vec<String> =
+        rebuilt.providers.iter().map(|r| r.id.clone()).collect();
+    assert_eq!(
+        rebuilt_order, user_order,
+        "form_from_config_with_order must respect preferred_order"
+    );
+    assert_eq!(rebuilt.providers[0].kind, ProviderKindForm::OpenAi);
+    assert_eq!(rebuilt.providers[1].kind, ProviderKindForm::Anthropic);
+    assert_eq!(rebuilt.default_provider.as_deref(), Some("zebra"));
+}
+
+/// Same setup as the previous test, but reloads via the order-naive
+/// `form_from_config` to confirm the regression we just fixed: without
+/// the order hint, rows come back in alphabetical order, which is what
+/// drives bug 4 (kinds appear to swap between rows on Apply because the
+/// per-slot inputs stay positional).
+#[test]
+fn flow_apply_without_order_hint_reorders_alphabetically() {
+    let mut s = empty_state();
+    apply_action(&mut s, OmwAgentPageAction::AddProvider);
+    apply_action(&mut s, OmwAgentPageAction::SetProviderId(0, "zebra".into()));
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderApiKey(0, "z".into()),
+    );
+    apply_action(&mut s, OmwAgentPageAction::AddProvider);
+    apply_action(&mut s, OmwAgentPageAction::SetProviderId(1, "alpha".into()));
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderApiKey(1, "a".into()),
+    );
+
+    let mut persisted_secrets = BTreeMap::new();
+    for (id, _) in &s.pending_secrets {
+        let kr = format!("keychain:omw/{id}").parse().unwrap();
+        persisted_secrets.insert(id.clone(), kr);
+    }
+    let cfg = form_to_config(&s.form, &persisted_secrets).unwrap();
+    let naive = form_from_config(&cfg);
+    let naive_order: Vec<String> =
+        naive.providers.iter().map(|r| r.id.clone()).collect();
+    assert_eq!(
+        naive_order,
+        vec!["alpha".to_string(), "zebra".to_string()],
+        "form_from_config without order hint emits alphabetical — \
+         documenting the regression the order-aware variant fixes"
+    );
 }
 
 #[test]

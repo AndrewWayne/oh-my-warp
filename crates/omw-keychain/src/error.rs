@@ -17,6 +17,12 @@ pub enum KeychainError {
     /// in this build (e.g. `OMW_KEYCHAIN_BACKEND=os` on Linux in v0.1).
     BackendUnavailable { reason: String },
 
+    /// `set` returned success at the underlying API, but a follow-up `get`
+    /// could not retrieve the value. Surfaces silent persistence failures
+    /// (e.g. ad-hoc-signed bundle ACL quirks on macOS) instead of letting
+    /// callers think a write succeeded when it did not.
+    WriteNotPersisted,
+
     /// The OS keychain returned an error. The wrapped source is intentionally
     /// hidden from `Debug` and `Display` to avoid leaking secret material a
     /// platform error message may have inlined.
@@ -34,6 +40,7 @@ impl std::fmt::Debug for KeychainError {
             KeychainError::BackendUnavailable { .. } => {
                 f.write_str("KeychainError::BackendUnavailable { reason: <redacted> }")
             }
+            KeychainError::WriteNotPersisted => f.write_str("KeychainError::WriteNotPersisted"),
             KeychainError::Os { .. } => f.write_str("KeychainError::Os { source: <redacted> }"),
         }
     }
@@ -46,6 +53,12 @@ impl std::fmt::Display for KeychainError {
             KeychainError::BackendUnavailable { .. } => {
                 f.write_str("keychain backend unavailable: <redacted>")
             }
+            KeychainError::WriteNotPersisted => f.write_str(
+                "keychain write reported success but the value did not persist \
+                 (likely ad-hoc-signed bundle ACL on macOS — try re-signing the .app \
+                 with a Developer ID, or use `security add-generic-password -A` as \
+                 a workaround)",
+            ),
             KeychainError::Os { .. } => f.write_str("OS keychain operation failed: <redacted>"),
         }
     }

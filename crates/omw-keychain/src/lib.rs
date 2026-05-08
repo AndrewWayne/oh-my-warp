@@ -28,9 +28,26 @@ pub fn get(key: &KeyRef) -> Result<Secret, KeychainError> {
 }
 
 /// Store (creating or overwriting) a secret. The empty string is allowed.
+///
+/// On the OS backend, performs a write-then-read post-condition check:
+/// some macOS configurations (ad-hoc-signed app bundles whose code identity
+/// the system doesn't honor for keychain writes) return success from the
+/// underlying Security API without persisting the entry. We catch that
+/// here and surface [`KeychainError::WriteNotPersisted`] so callers don't
+/// silently assume the write took effect.
 pub fn set(key: &KeyRef, value: &str) -> Result<(), KeychainError> {
     let name = account_for(key);
-    backend::set(name, value)
+    backend::set(name, value)?;
+    if backend::current_backend_kind() == backend::BackendKind::Os {
+        match backend::get(name) {
+            Ok(round_trip) if round_trip == value => Ok(()),
+            Ok(_) => Err(KeychainError::WriteNotPersisted),
+            Err(KeychainError::NotFound) => Err(KeychainError::WriteNotPersisted),
+            Err(e) => Err(e),
+        }
+    } else {
+        Ok(())
+    }
 }
 
 /// Remove a secret. Returns [`KeychainError::NotFound`] if the entry did not

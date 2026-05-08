@@ -22,6 +22,7 @@ fn empty_state() -> OmwAgentPageState {
         is_dirty: false,
         last_save_error: None,
         default_provider_dropdown: DefaultProviderDropdownState::default(),
+        pending_renames: Vec::new(),
     }
 }
 
@@ -395,6 +396,65 @@ fn apply_set_provider_kind_preserves_key_fields_across_key_required_kinds() {
 
     assert_eq!(s.form.providers[0].kind, ProviderKindForm::Anthropic);
     assert_eq!(s.form.providers[0].key_ref_token, "keychain:omw/foo");
+}
+
+#[test]
+fn apply_set_provider_id_pushes_pending_rename_when_canonical() {
+    let mut s = empty_state();
+    apply_action(&mut s, OmwAgentPageAction::AddProvider);
+    s.form.providers[0].id = "old".into();
+    s.form.providers[0].key_ref_token = "keychain:omw/old".into();
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderId(0, "renamed".into()),
+    );
+    assert_eq!(
+        s.pending_renames,
+        vec![("old".to_string(), "renamed".to_string())]
+    );
+}
+
+#[test]
+fn apply_set_provider_id_does_not_push_rename_when_non_canonical() {
+    let mut s = empty_state();
+    apply_action(&mut s, OmwAgentPageAction::AddProvider);
+    s.form.providers[0].id = "old".into();
+    s.form.providers[0].key_ref_token = "keychain:omw/shared".into();
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderId(0, "renamed".into()),
+    );
+    assert!(s.pending_renames.is_empty());
+}
+
+#[test]
+fn apply_remove_provider_drops_matching_pending_rename() {
+    let mut s = empty_state();
+    apply_action(&mut s, OmwAgentPageAction::AddProvider);
+    s.form.providers[0].id = "old".into();
+    s.form.providers[0].key_ref_token = "keychain:omw/old".into();
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderId(0, "renamed".into()),
+    );
+    assert_eq!(s.pending_renames.len(), 1);
+    apply_action(&mut s, OmwAgentPageAction::RemoveProvider(0));
+    assert!(s.pending_renames.is_empty(),
+            "removing the renamed row should drop its rename entry");
+}
+
+#[test]
+fn apply_discard_clears_pending_renames() {
+    let mut s = empty_state();
+    apply_action(&mut s, OmwAgentPageAction::AddProvider);
+    s.form.providers[0].id = "old".into();
+    s.form.providers[0].key_ref_token = "keychain:omw/old".into();
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderId(0, "renamed".into()),
+    );
+    apply_action(&mut s, OmwAgentPageAction::Discard);
+    assert!(s.pending_renames.is_empty());
 }
 
 #[test]

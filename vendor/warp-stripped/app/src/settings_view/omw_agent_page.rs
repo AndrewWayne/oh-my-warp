@@ -74,6 +74,13 @@ pub struct OmwAgentPageState {
     pub is_dirty: bool,
     pub last_save_error: Option<String>,
     pub default_provider_dropdown: DefaultProviderDropdownState,
+    /// Ordered list of `(old_id, new_id)` renames that haven't been
+    /// reconciled with the keychain yet. Populated by `SetProviderId`
+    /// when the row had the canonical `keychain:omw/<old_id>` token, so
+    /// `apply()` knows to migrate the keychain entry instead of leaving
+    /// the secret orphaned under the old id. Drained on a successful
+    /// Apply or Discard.
+    pub pending_renames: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -357,6 +364,11 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
                     state.form.default_provider = None;
                 }
                 state.pending_secrets.remove(&removed.id);
+                // Drop any pending_rename whose new_id matches — the
+                // user added this id via rename then removed it; the
+                // intent is "delete the keychain entry for the original
+                // (old) id," not "migrate then delete."
+                state.pending_renames.retain(|(_, new)| new != &removed.id);
             }
         }
         OmwAgentPageAction::SetProviderId(idx, new_id) => {
@@ -367,8 +379,19 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
                 // to match the new id so the keychain lookup follows the
                 // rename. Non-canonical user-pasted tokens are left alone.
                 let canonical_old = format!("keychain:omw/{old}");
-                if row.key_ref_token == canonical_old {
+                let was_canonical = row.key_ref_token == canonical_old;
+                if was_canonical {
                     row.key_ref_token = format!("keychain:omw/{new_id}");
+                    // Track the rename so apply() can migrate the
+                    // keychain entry instead of leaving the secret
+                    // orphaned under the old id. If `old` was itself a
+                    // pending_rename target (chain rename A→B→C), keep
+                    // the entries in order — apply() processes them
+                    // sequentially and each migration leaves a single
+                    // live entry by the time the next one runs.
+                    state
+                        .pending_renames
+                        .push((old.clone(), new_id.clone()));
                 }
                 if state.form.default_provider.as_deref() == Some(&old) {
                     state.form.default_provider = Some(new_id.clone());
@@ -459,6 +482,7 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
         OmwAgentPageAction::Discard => {
             state.form = form_from_config(&state.saved_config);
             state.pending_secrets.clear();
+            state.pending_renames.clear();
             state.is_dirty = false;
             state.last_save_error = None;
             return;
@@ -599,6 +623,7 @@ impl OmwAgentPageView {
                 is_dirty: false,
                 last_save_error: None,
                 default_provider_dropdown: DefaultProviderDropdownState::default(),
+                pending_renames: Vec::new(),
             },
             apply_button: MouseStateHandle::default(),
             discard_button: MouseStateHandle::default(),
@@ -665,7 +690,69 @@ impl OmwAgentPageView {
             return;
         }
 
-        // 2. Resolve key_refs by writing each pending secret to keychain.
+        // 2. Migrate keychain entries for any (old, new) renames that
+        //    happened in this session. Read the old value, write it
+        //    under the new id, then delete the old entry — but skip
+        //    when the user has typed a fresh secret for `new` this
+        //    session (step 3 will overwrite it anyway). Failures are
+        //    logged but don't abort Apply: the user's main TOML write
+        //    intent is unaffected, and a stale orphan is recoverable
+        //    later. Processing in declaration order so chained
+        //    renames (A→B→C) leave a single live entry.
+        for (old_id, new_id) in self.state.pending_renames.clone() {
+            if self.state.pending_secrets.contains_key(&new_id) {
+                // Step 3 will write a fresh value for new_id; don't
+                // overwrite it here.
+                continue;
+            }
+            let old_kr = match KeyRef::from_str(&format!("keychain:omw/{old_id}")) {
+                Ok(k) => k,
+                Err(e) => {
+                    log::warn!(
+                        "omw# settings: rename migration: invalid old key_ref for {old_id}: {e}"
+                    );
+                    continue;
+                }
+            };
+            let new_kr = match KeyRef::from_str(&format!("keychain:omw/{new_id}")) {
+                Ok(k) => k,
+                Err(e) => {
+                    log::warn!(
+                        "omw# settings: rename migration: invalid new key_ref for {new_id}: {e}"
+                    );
+                    continue;
+                }
+            };
+            let secret = match omw_keychain::get(&old_kr) {
+                Ok(s) => s,
+                Err(omw_keychain::KeychainError::NotFound) => {
+                    // Nothing under old id — typically because the user
+                    // never wrote a key for it. Nothing to migrate.
+                    continue;
+                }
+                Err(e) => {
+                    log::warn!(
+                        "omw# settings: rename migration: read of {old_id} failed: {e}"
+                    );
+                    continue;
+                }
+            };
+            if let Err(e) = omw_keychain::set(&new_kr, secret.expose()) {
+                log::warn!(
+                    "omw# settings: rename migration: write of {new_id} failed: {e}"
+                );
+                continue;
+            }
+            if let Err(e) = omw_keychain::delete(&old_kr) {
+                if !matches!(e, omw_keychain::KeychainError::NotFound) {
+                    log::warn!(
+                        "omw# settings: rename migration: delete of {old_id} failed: {e}"
+                    );
+                }
+            }
+        }
+
+        // 3. Resolve key_refs by writing each pending secret to keychain.
         let mut resolved_key_refs: BTreeMap<String, KeyRef> = BTreeMap::new();
         for (id, secret) in &self.state.pending_secrets {
             let kr = match KeyRef::from_str(&format!("keychain:omw/{id}")) {
@@ -714,14 +801,53 @@ impl OmwAgentPageView {
             return;
         }
 
-        // 6. Re-derive form from the new saved config.
+        // 6. Orphan cleanup. Any provider id that was in the previous
+        //    saved_config but is gone from the new cfg has no live TOML
+        //    reference — its keychain entry is unreachable. Delete to
+        //    avoid accumulating dead entries on rename / remove. The
+        //    rename migration in step 2 already deleted the old entries
+        //    it migrated; this catches plain removes plus any rename
+        //    whose migration was skipped because the user typed a fresh
+        //    key for the new id (step 3 overwrote it; old still
+        //    orphaned). Failures are logged, not surfaced, so a
+        //    quirky keychain backend doesn't block the user.
+        let new_ids: std::collections::HashSet<String> = cfg
+            .providers
+            .keys()
+            .map(|id| id.as_str().to_string())
+            .collect();
+        for old_id in self.state.saved_config.providers.keys() {
+            let id_str = old_id.as_str();
+            if new_ids.contains(id_str) {
+                continue;
+            }
+            let kr = match KeyRef::from_str(&format!("keychain:omw/{id_str}")) {
+                Ok(k) => k,
+                Err(e) => {
+                    log::warn!(
+                        "omw# settings: orphan cleanup: invalid key_ref for {id_str}: {e}"
+                    );
+                    continue;
+                }
+            };
+            if let Err(e) = omw_keychain::delete(&kr) {
+                if !matches!(e, omw_keychain::KeychainError::NotFound) {
+                    log::warn!(
+                        "omw# settings: orphan cleanup: delete of {id_str} failed: {e}"
+                    );
+                }
+            }
+        }
+
+        // 7. Re-derive form from the new saved config.
         self.state.saved_config = cfg.clone();
         self.state.form = form_from_config(&cfg);
         self.state.pending_secrets.clear();
+        self.state.pending_renames.clear();
         self.state.is_dirty = false;
         self.state.last_save_error = None;
 
-        // 7. Reset live agent state so the new config takes effect
+        // 8. Reset live agent state so the new config takes effect
         //    without an app restart. Each per-pane `# foo` session and
         //    the singleton panel session cache the provider/model/key
         //    they were started with — drop them here so the next

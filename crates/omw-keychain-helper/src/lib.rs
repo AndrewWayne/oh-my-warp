@@ -96,5 +96,8 @@ fn run_get(rest: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) -> i
             let _ = writeln!(stderr, "OS keychain error");
             3
         }
+        // `WriteNotPersisted` is only constructed inside `omw_keychain::set`;
+        // the helper exposes only `get`, so reaching this arm signals a bug.
+        Err(KeychainError::WriteNotPersisted) => unreachable!(),
     }
 }

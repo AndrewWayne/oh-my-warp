@@ -221,6 +221,41 @@ fn validate_still_runs_syntactic_checks_on_non_default_rows() {
 }
 
 #[test]
+fn form_to_config_skips_incomplete_non_default_rows() {
+    let form = OmwAgentForm {
+        agent_enabled: true,
+        approval_mode: ApprovalMode::AskBeforeWrite,
+        default_provider: Some("complete".into()),
+        providers: vec![
+            ProviderRow {
+                id: "complete".into(),
+                kind: ProviderKindForm::OpenAi,
+                model: String::new(),
+                base_url: String::new(),
+                key_ref_token: "keychain:omw/complete".into(),
+                api_key_input: String::new(),
+            },
+            ProviderRow {
+                id: "stub".into(),
+                kind: ProviderKindForm::OpenAiCompatible,
+                model: String::new(),
+                base_url: String::new(),
+                key_ref_token: String::new(),
+                api_key_input: String::new(),
+            },
+        ],
+    };
+    let cfg = form_to_config(&form, &BTreeMap::new()).unwrap();
+    assert_eq!(cfg.providers.len(), 1, "incomplete stub should not be serialized");
+    assert!(cfg
+        .providers
+        .contains_key(&ProviderId::from_str("complete").unwrap()));
+    assert!(!cfg
+        .providers
+        .contains_key(&ProviderId::from_str("stub").unwrap()));
+}
+
+#[test]
 fn validate_no_default_means_no_completeness_required() {
     let form = OmwAgentForm {
         agent_enabled: true,

@@ -195,6 +195,23 @@ pub fn validate_form(form: &OmwAgentForm) -> Result<(), Vec<FormError>> {
     }
 }
 
+/// True iff this row has all kind-required fields populated such that the
+/// typed `ProviderConfig` constructor will succeed. Mirrors the completeness
+/// logic in `validate_form` for the default row. Non-default rows are
+/// drafts; `form_to_config` filters them out on this check so they never
+/// land in config.toml.
+fn is_row_complete(row: &ProviderRow, persisted_secrets: &BTreeMap<String, KeyRef>) -> bool {
+    let has_key = !row.key_ref_token.is_empty()
+        || !row.api_key_input.is_empty()
+        || persisted_secrets.contains_key(&row.id);
+    match row.kind {
+        ProviderKindForm::OpenAiCompatible => !row.base_url.is_empty() && has_key,
+        ProviderKindForm::OpenAi => has_key,
+        ProviderKindForm::Anthropic => has_key,
+        ProviderKindForm::Ollama => true,
+    }
+}
+
 pub fn form_to_config(
     form: &OmwAgentForm,
     persisted_secrets: &BTreeMap<String, KeyRef>,
@@ -203,6 +220,9 @@ pub fn form_to_config(
 
     let mut providers = BTreeMap::new();
     for row in &form.providers {
+        if !is_row_complete(row, persisted_secrets) {
+            continue;
+        }
         let id = ProviderId::from_str(&row.id)
             .map_err(|_| vec![FormError::InvalidProviderId(row.id.clone())])?;
         let model = if row.model.is_empty() {

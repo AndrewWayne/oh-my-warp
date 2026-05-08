@@ -1,0 +1,200 @@
+[
+  {
+    "id": "08ed9a9b9283",
+    "category": "Error handling & observability",
+    "severity": "Medium",
+    "effort": "S",
+    "file": "crates/omw-server/src/lib.rs",
+    "line": 80,
+    "title": "Production debug probe writes unconditionally to /tmp/omw-debug.log",
+    "description": "omw_debug appends to /tmp/omw-debug.log in every build and agent_router emits a log::error probe when constructed. The latest simplify follow-up already calls this out as an open product question, and this audit found it still present alongside direct eprintln probes in omw-remote auth paths. This creates unbounded local debug output and bypasses the logging facade.",
+    "recommendation": "Gate direct-file debug logging behind OMW_DEBUG_LOG=1 or cfg(debug_assertions), demote or remove the router probe, and route production diagnostics through structured logging with documented retention if a local file is intentional."
+  },
+  {
+    "id": "20b415c620c1",
+    "category": "BYORC contract surface",
+    "severity": "High",
+    "effort": "M",
+    "file": "crates/omw-remote/src/request_log.rs",
+    "line": 31,
+    "title": "Auth request_log is implemented but not wired into live handlers",
+    "description": "RequestLog::append and the request_log table exist, but AppState has no RequestLog and production references are absent outside schema, exports, and tests. specs/byorc-protocol.md requires accepted and rejected auth requests to append rows. As a result pair, HTTP, and WS auth failures have no durable audit trail.",
+    "recommendation": "Add an Arc<RequestLog> to ServerConfig and AppState, then append from pair redemption, signed HTTP auth, and WS connect-token/header paths for both accept and reject outcomes. Add handler-level tests that assert persisted rows."
+  },
+  {
+    "id": "55bdcccd80d4",
+    "category": "BYORC contract surface",
+    "severity": "High",
+    "effort": "M",
+    "file": "crates/omw-remote/src/http/pair_redeem.rs",
+    "line": 61,
+    "title": "Pairing grants pty:write by default despite read-only default spec",
+    "description": "pair_redeem mints PtyWrite for every new device while specs/byorc-protocol.md section 5.3 says default scopes are pty:read, agent:read, and audit:read, with pty:write granted later by host upgrade. This is a substantive capability contract mismatch, not just stale wording.",
+    "recommendation": "Either remove PtyWrite from default pair capabilities and add the planned upgrade path, or explicitly revise the BYORC spec, threat model, and tests to make interactive preview pairing the intended default."
+  },
+  {
+    "id": "79b6c237c626",
+    "category": "Spec ↔ code drift",
+    "severity": "Medium",
+    "effort": "S",
+    "file": "crates/omw-remote/src/server.rs",
+    "line": 170,
+    "title": "WS timestamp skew accepts 300 seconds while the spec says 30 seconds",
+    "description": "The WS connect-token path verifies with a 300-second skew window, while specs/byorc-protocol.md and specs/threat-model.md still specify a 30-second window. TODO.md already records red tests around this mismatch, so the code and contract are knowingly out of sync.",
+    "recommendation": "Choose one contract. If mobile tolerance is the product decision, update BYORC and threat-model text plus the failing tests to 300 seconds. If the security invariant is 30 seconds, reduce the production verifier and refresh connect tokens client-side."
+  },
+  {
+    "id": "2d19eff92cc8",
+    "category": "Spec ↔ code drift",
+    "severity": "Medium",
+    "effort": "S",
+    "file": "vendor/warp-stripped/app/src/omw/remote_state.rs",
+    "line": 557,
+    "title": "Gap 4 is marked complete but Tailscale Serve is deliberately disabled",
+    "description": "TODO.md and PRD.md describe Gap 4 as Tailscale Serve auto-bootstrap, including serve_https and unserve. The current omw delta deliberately does not call tailscale serve, sets tailscale_serving to false, and uses direct tailnet IPv4 HTTP when available. The direct-IP path may be correct, but the canonical docs still promise Serve orchestration.",
+    "recommendation": "Update PRD.md, TODO.md, and the tailscale.rs module comments to make direct tailnet IP the official preview path, or re-enable Serve behind an explicit option such as OMW_TAILSCALE_SERVE=1 and restore stop-time unserve behavior."
+  },
+  {
+    "id": "c08e221076ff",
+    "category": "Spec ↔ code drift",
+    "severity": "Medium",
+    "effort": "S",
+    "file": "apps/web-controller/src/pages/Sessions.tsx",
+    "line": 255,
+    "title": "Web Controller still says pane auto-sharing is not wired",
+    "description": "The empty Sessions state says auto-sharing of open Warp panes is not yet wired and the Start button title still frames new shells as siblings. TODO.md says the Phone-click active-pane sharing path landed on 2026-05-09, so this user-facing copy now contradicts shipped behavior and also carries a product-surface upstream brand string.",
+    "recommendation": "Rewrite the empty state and button title around the current model: no active shared pane yet, use the Phone action in a local pane or start a separate shell from the web controller. Avoid the capitalized upstream brand in UI text."
+  },
+  {
+    "id": "1f1afca337d4",
+    "category": "Brand & vendor delta hygiene",
+    "severity": "High",
+    "effort": "M",
+    "file": "vendor/warp-stripped/app/src/omw/pane_auto_share.rs",
+    "line": 1,
+    "title": "omw-authored vendor files lack incremental AGPL headers",
+    "description": "The scoped omw vendor files start with module docs or code rather than an AGPL-3.0 incremental-authorship header. rg found no AGPL or omw-contributor header across the scoped vendor omw delta, while specs/fork-strategy.md says new files inside vendor/warp-stripped get such a header.",
+    "recommendation": "Add the project-standard AGPL-3.0 incremental-authorship header to every omw-authored file under the vendor delta and add a small check or generator so future omw files in vendor cannot miss it."
+  },
+  {
+    "id": "27876c49a1c2",
+    "category": "Brand & vendor delta hygiene",
+    "severity": "Medium",
+    "effort": "S",
+    "file": "README.md",
+    "line": 7,
+    "title": "README uses capitalized upstream brand in product-facing positioning copy",
+    "description": "README.md opens with comparative product positioning that uses the capitalized upstream brand, and later user-facing bullets use it for cloud and feature copy. CLAUDE.md forbids that string on product-surface docs except for source attribution, license text, file paths, and the oh-my-warp codename.",
+    "recommendation": "Move factual upstream attribution into a narrow What this is or License paragraph, then rewrite the opening pitch and feature bullets using omw, upstream terminal, or cloud-free wording without the capitalized upstream brand."
+  },
+  {
+    "id": "11f236e6c818",
+    "category": "Consistency rot",
+    "severity": "Medium",
+    "effort": "M",
+    "file": "crates/omw-config/src/schema.rs",
+    "line": 243,
+    "title": "Provider kind vocabulary is hand-mapped across Rust, TS, and vendor UI",
+    "description": "The provider kind vocabulary appears in omw-config, omw-cli, omw-agent, keychain defaults, and the vendor Settings UI. The vendor UI also has both a shortened display string and the wire string for openai-compatible. The latest simplify follow-up deferred the design choice, but the drift risk remains real.",
+    "recommendation": "Pick a single source of truth for provider kinds: either a small generated manifest feeding Rust and TypeScript, or a Rust enum plus explicit TS parity test. Make the vendor Settings display labels derive from the same vocabulary instead of repeating literals."
+  },
+  {
+    "id": "d11e5d7f7e10",
+    "category": "Type & contract debt",
+    "severity": "Medium",
+    "effort": "M",
+    "file": "apps/omw-agent/src/serve.ts",
+    "line": 54,
+    "title": "Agent JSON-RPC method names are untyped across the TS/Rust boundary",
+    "description": "JsonRpcRequest.method and notification helpers accept arbitrary strings, while the same session, approval, and bash method names are repeated in omw-agent, omw-server, and vendor protocol tests. Some bash frames have Rust enums, but the full agent JSON-RPC vocabulary is still stringly across the process boundary.",
+    "recommendation": "Define a closed TS string-literal union and matching Rust constants or generate both from a small protocol manifest. Add a cross-stack golden test that asserts the full method vocabulary and payload shape names."
+  },
+  {
+    "id": "65c0b5ab5d32",
+    "category": "Type & contract debt",
+    "severity": "Medium",
+    "effort": "S",
+    "file": "apps/omw-agent/src/warp-session-bash.ts",
+    "line": 56,
+    "title": "RpcBridge subscriber accepts any for bash broker frame params",
+    "description": "RpcBridge.registerCommandSubscriber accepts params: any and createWarpSessionBashOperations then casts bytes, exitCode, and snapshot out of frame.params. This sits on the live bash tool execution path, so malformed broker frames can bypass TypeScript checking until runtime.",
+    "recommendation": "Replace any with a discriminated union for bash/data, bash/finished, and bash/cancel frames, validate incoming notifications once in serve.ts, and pass typed frames to subscribers."
+  },
+  {
+    "id": "76f1146081ca",
+    "category": "Dependency hygiene",
+    "severity": "Medium",
+    "effort": "S",
+    "file": "crates/omw-remote/build.rs",
+    "line": 43,
+    "title": "omw-remote build script ignores the root npm workspace lockfile",
+    "description": "The build script watches apps/web-controller/package-lock.json, but the repo has only a root package-lock.json and an app-level pnpm-lock.yaml. It also runs npm install from the app directory, which can create an untracked app lockfile and bypass the root npm workspace install model.",
+    "recommendation": "Standardize the web-controller build on the root npm workspace: watch the root package-lock.json, run npm install and npm run build with the workspace target from the repo root, and delete the stale pnpm lock if npm is the intended package manager."
+  },
+  {
+    "id": "d5720d42bb1e",
+    "category": "Dependency hygiene",
+    "severity": "Medium",
+    "effort": "M",
+    "file": "crates/omw-server/Cargo.toml",
+    "line": 15,
+    "title": "Root and vendor workspaces compile different axum versions at the omw boundary",
+    "description": "omw-server and omw-remote use axum 0.7, while the vendor workspace pins axum 0.8.4. Under omw_local the vendor app links the root omw crates, so duplicate axum versions and incompatible router/body types can exist in the same build graph.",
+    "recommendation": "Align omw-server and omw-remote to axum 0.8 if compatible, or hide axum types behind a narrower boundary when linked from the vendor app. Verify with cargo tree -d in the vendor workspace after the change."
+  },
+  {
+    "id": "eb4d85f7f7a8",
+    "category": "Spec ↔ code drift",
+    "severity": "Medium",
+    "effort": "S",
+    "file": "crates/omw-cli/src/db.rs",
+    "line": 150,
+    "title": "Pricing seed data is tested but never invoked in production CLI flow",
+    "description": "TODO.md marks provider_pricing snapshots as wired into usage_records, but seed_pricing is only referenced from tests. record_usage computes cost from existing provider_pricing rows, so real usage records will have NULL cost_cents until a user or migration seeds the table manually.",
+    "recommendation": "Call seed_pricing during first DB open, migration, or provider add, and add a CLI-level regression that records usage on a fresh database and verifies cost_cents is populated for seeded models."
+  },
+  {
+    "id": "d82088f6e38e",
+    "category": "Architectural decay",
+    "severity": "Medium",
+    "effort": "S",
+    "file": "vendor/warp-stripped/app/src/omw/pane_auto_share.rs",
+    "line": 54,
+    "title": "Crash-prone all-pane sharing path remains public and compiled",
+    "description": "share_all_local_panes is unused in the current active-pane flow, and the same file documents that the iteration approach crashed on Phone click in two separate attempts. Keeping the public helper compiled makes it easy to reintroduce a known-crash path when multi-pane sharing is revisited.",
+    "recommendation": "Delete share_all_local_panes or gate it behind a future-only/test-only feature, and preserve the design notes in docs until multi-pane sharing is deliberately reintroduced with a GUI harness."
+  },
+  {
+    "id": "6104a5315c30",
+    "category": "Test debt",
+    "severity": "Medium",
+    "effort": "M",
+    "file": "vendor/warp-stripped/app/tests/omw_agent_approval_test.rs",
+    "line": 58,
+    "title": "Critical GUI approve and mount click-path tests are ignored",
+    "description": "The GUI tests for clicking approve and mounting the agent panel are ignored because they require a stub omw-server. They are marked as indirectly covered by omw-server tests, but those tests do not exercise the vendor UI event wiring or panel mount path.",
+    "recommendation": "Add a lightweight stub omw-server harness for these GUI tests or extract the approval and mount actions into testable functions so approve, reject, and panel startup paths run in CI."
+  },
+  {
+    "id": "70632f0e4289",
+    "category": "BYORC contract surface",
+    "severity": "Medium",
+    "effort": "M",
+    "file": "specs/test-plan.md",
+    "line": 318,
+    "title": "BYORC validator fuzzer required by test plan is missing",
+    "description": "The v0.4-thin test commitments require a BYORC validator fuzzer, and CLAUDE.md says new omw-remote endpoints require a contract test and fuzz target. The repo has omw-remote contract tests, but no fuzz target was found under crates or apps.",
+    "recommendation": "Add a cargo-fuzz or equivalent fuzz target around signed request, capability token, pair token, and connect-token validators, then document the manual or CI gate that runs it before release."
+  },
+  {
+    "id": "45c5f9bcb497",
+    "category": "Test debt",
+    "severity": "Low",
+    "effort": "S",
+    "file": "crates/omw-server/tests/inline_prompt_repro.rs",
+    "line": 236,
+    "title": "Regression test leaves an unused loop variable warning in the default gate",
+    "description": "cargo check --workspace --tests and root clippy both warn that cycle is unused in inline_prompt_repro.rs. The test file is a valid regression net, but warning noise makes the default gate easier to ignore.",
+    "recommendation": "Rename the loop variable to _cycle or use it in the assertion/log context, then keep the regression test in place."
+  }
+]

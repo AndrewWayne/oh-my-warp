@@ -1433,7 +1433,7 @@ lazy_static! {
 /// Detect the omw inline-agent prompt sigil — a literal `# ` (hash + space)
 /// at column 0 of a single-line buffer. Returns the trimmed prompt body.
 ///
-/// Per `docs/inline-agent-command-execution-report.md` §4.2:
+/// Per `docs/archive/inline-agent-command-execution-report.md` §4.2:
 ///   - `# <prompt>` ⇒ inline agent (this function returns Some).
 ///   - `## …` ⇒ literal shell comment (returns None — falls through to shell).
 ///   - `#` followed by anything other than space (e.g. `#123`) ⇒ shell.
@@ -6000,7 +6000,7 @@ impl Input {
 
     pub fn try_execute_command(&mut self, command: &str, ctx: &mut ViewContext<Self>) -> bool {
         // omw_local: a `#` at column 0 (with at least one space + a body)
-        // is the inline-agent prompt sigil per inline-agent-command-execution-report.md §4.
+        // is the inline-agent prompt sigil per docs/archive/inline-agent-command-execution-report.md §4.
         // `## …` escapes back to a literal shell comment. We intercept
         // before the rest of the shell pipeline so the kernel — not the
         // shell — sees the user's natural-language prompt, and the

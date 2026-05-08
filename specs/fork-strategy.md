@@ -104,6 +104,8 @@ The umbrella repo is AGPL-3.0 (see [PRD §12.2](../PRD.md#122-licensing)). Compl
 - Original `omw-*` files (in `crates/`, `apps/`) carry an AGPL-3.0 header attributing authorship to omw contributors.
 - Source for any released binary is the umbrella repo at the corresponding tag. Anyone exercising AGPL "Corresponding Source" rights gets the entire umbrella, including `vendor/warp-stripped/` at that tag.
 
+The dated record of compliance audits lives at [`docs/agpl-compliance-audit-2026-05-01.md`](../docs/agpl-compliance-audit-2026-05-01.md). Future audits append a new dated file under the same `agpl-compliance-audit-*.md` pattern.
+
 ### 3.1 What this strategy does *not* do
 
 - Provide a perpetual mirror of every upstream Warp commit. AGPL "source corresponding" applies to versions we ship, not to upstream's history.

@@ -1,6 +1,6 @@
 //! Pure unit tests for the `# `-prefix inline-agent prompt parser.
 //! Exercises the grammar rules from
-//! `docs/inline-agent-command-execution-report.md` §4.2 in isolation.
+//! `docs/archive/inline-agent-command-execution-report.md` §4.2 in isolation.
 //!
 //! The parser lives in `app/src/terminal/input.rs::parse_inline_agent_prompt`
 //! and is exposed through `warp::test_exports` because the input module

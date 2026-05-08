@@ -68,7 +68,3 @@ Before opening a PR:
 4. PR title format: `<type>(<scope>): <subject>` — e.g. `feat(omw-agent): add OpenAI streaming retry`.
 
 Reviewers will use the same slash commands during review.
-
-## Phase 0 caveat
-
-Until Phase 0 completes (specs written, repo skeleton, CI scaffold), some of the slash commands' downstream targets don't exist yet (e.g. `specs/byorc-protocol.md`, `crates/omw-remote/`). Those skills are written to handle that gracefully — they print a "not yet" message and exit. As Phase 0 closes, more checks will become live automatically.

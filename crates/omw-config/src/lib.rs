@@ -123,6 +123,24 @@ impl Config {
     pub fn save_atomic(&self, path: &std::path::Path) -> Result<(), ConfigError> {
         crate::writer::save_atomic(path, self)
     }
+
+    /// Load the config from `path`. If the file does not exist, write a
+    /// fresh `Config::default()` to it (creating parent directories as
+    /// needed) and return that default. Other I/O / parse errors are
+    /// surfaced unchanged. Idempotent: existing files are never rewritten.
+    ///
+    /// .app callers use this to materialize `~/.config/omw/config.toml`
+    /// on first launch so the file is discoverable to CLI users and to
+    /// hand-editors. CLI tools keep using `load` / `load_from` and create
+    /// the file lazily on the first `omw provider add ...` etc.
+    pub fn load_or_create_default(path: &Path) -> Result<Self, ConfigError> {
+        if path.exists() {
+            return Self::load_from(path);
+        }
+        let cfg = Self::default();
+        cfg.save_atomic(path)?;
+        Ok(cfg)
+    }
 }
 
 #[cfg(test)]
@@ -144,6 +162,53 @@ mod tests {
         let path = dir.path().join("bad.toml");
         std::fs::write(&path, "this is = =not valid toml").unwrap();
         let err = Config::load_from(&path).unwrap_err();
+        assert!(matches!(err, ConfigError::Parse { .. }), "got: {err:?}");
+    }
+
+    #[test]
+    fn load_or_create_default_writes_file_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("omw").join("config.toml");
+        assert!(!path.exists());
+
+        let cfg = Config::load_or_create_default(&path).unwrap();
+        assert_eq!(cfg, Config::default());
+        assert!(path.exists(), "expected file to be created on first call");
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            on_disk.contains("version = 1"),
+            "expected serialized default config, got: {on_disk:?}"
+        );
+    }
+
+    #[test]
+    fn load_or_create_default_is_a_noop_when_file_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "version = 1\n[approval]\nmode = \"trusted\"\n[agent]\nenabled = false\n",
+        )
+        .unwrap();
+        let mtime_before = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        let cfg = Config::load_or_create_default(&path).unwrap();
+        assert_eq!(cfg.approval.mode, crate::ApprovalMode::Trusted);
+        assert!(!cfg.agent.enabled);
+
+        let mtime_after = std::fs::metadata(&path).unwrap().modified().unwrap();
+        assert_eq!(
+            mtime_before, mtime_after,
+            "existing file must not be rewritten"
+        );
+    }
+
+    #[test]
+    fn load_or_create_default_propagates_parse_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "this = = is not valid toml").unwrap();
+        let err = Config::load_or_create_default(&path).unwrap_err();
         assert!(matches!(err, ConfigError::Parse { .. }), "got: {err:?}");
     }
 

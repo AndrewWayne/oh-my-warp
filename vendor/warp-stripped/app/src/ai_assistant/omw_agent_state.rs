@@ -676,7 +676,8 @@ impl OmwAgentState {
     /// default provider points to a missing entry.
     pub fn start_with_config(self: &Arc<Self>) -> Result<(), String> {
         log::info!("omw# state: start_with_config entry");
-        let cfg = omw_config::Config::load().map_err(|e| e.to_string())?;
+        let path = omw_config::config_path().map_err(|e| e.to_string())?;
+        let cfg = omw_config::Config::load_or_create_default(&path).map_err(|e| e.to_string())?;
         log::info!(
             "omw# state: config loaded; agent.enabled={} default_provider={:?} providers_n={}",
             cfg.agent.enabled,

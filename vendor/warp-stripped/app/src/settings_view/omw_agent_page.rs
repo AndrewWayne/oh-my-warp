@@ -525,7 +525,13 @@ impl OmwAgentPageView {
     /// Editor handles stay empty; tests dispatch reducer actions
     /// directly without going through the rendered widgets.
     pub fn new_inner() -> Self {
-        let cfg = omw_config::Config::load().unwrap_or_default();
+        // load_or_create_default materializes ~/.config/omw/config.toml on
+        // first launch so the file is discoverable. Falls back to an
+        // in-memory default on any error so the settings page still opens.
+        let cfg = match omw_config::config_path() {
+            Ok(p) => omw_config::Config::load_or_create_default(&p).unwrap_or_default(),
+            Err(_) => omw_config::Config::default(),
+        };
         let form = form_from_config(&cfg);
         Self {
             state: OmwAgentPageState {

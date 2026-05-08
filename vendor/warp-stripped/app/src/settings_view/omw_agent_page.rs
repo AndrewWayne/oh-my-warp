@@ -326,6 +326,14 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
         OmwAgentPageAction::SetProviderId(idx, new_id) => {
             if let Some(row) = state.form.providers.get_mut(idx) {
                 let old = std::mem::replace(&mut row.id, new_id.clone());
+                // If the row's key_ref_token is the canonical form
+                // `keychain:omw/<old_id>` (what Apply writes), rebuild it
+                // to match the new id so the keychain lookup follows the
+                // rename. Non-canonical user-pasted tokens are left alone.
+                let canonical_old = format!("keychain:omw/{old}");
+                if row.key_ref_token == canonical_old {
+                    row.key_ref_token = format!("keychain:omw/{new_id}");
+                }
                 if state.form.default_provider.as_deref() == Some(&old) {
                     state.form.default_provider = Some(new_id.clone());
                 }

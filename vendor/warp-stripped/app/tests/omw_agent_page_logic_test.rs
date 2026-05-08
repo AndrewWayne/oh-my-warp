@@ -337,6 +337,37 @@ fn apply_set_provider_api_key_records_pending_secret() {
 }
 
 #[test]
+fn apply_set_provider_id_rebuilds_canonical_key_ref_token() {
+    let mut s = empty_state();
+    apply_action(&mut s, OmwAgentPageAction::AddProvider);
+    s.form.providers[0].id = "old".into();
+    s.form.providers[0].key_ref_token = "keychain:omw/old".into();
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderId(0, "renamed".into()),
+    );
+    assert_eq!(
+        s.form.providers[0].key_ref_token, "keychain:omw/renamed",
+        "canonical token should follow the rename"
+    );
+}
+
+#[test]
+fn apply_set_provider_id_leaves_non_canonical_key_ref_token_alone() {
+    // If the user manually pasted a non-canonical key_ref (e.g.
+    // 'keychain:omw/shared') we must NOT silently rewrite it on rename.
+    let mut s = empty_state();
+    apply_action(&mut s, OmwAgentPageAction::AddProvider);
+    s.form.providers[0].id = "old".into();
+    s.form.providers[0].key_ref_token = "keychain:omw/shared".into();
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderId(0, "renamed".into()),
+    );
+    assert_eq!(s.form.providers[0].key_ref_token, "keychain:omw/shared");
+}
+
+#[test]
 fn apply_set_default_provider_by_id_sets_and_clears_default() {
     let mut s = empty_state();
     apply_action(&mut s, OmwAgentPageAction::AddProvider);

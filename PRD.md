@@ -474,12 +474,11 @@ oh-my-warp/                  # repo / codename
     pi-mono/                 # pi-agent monorepo (submodule → badlogic/pi-mono)
     forge-code/              # submodule → tailcallhq/forgecode
   specs/
-    byok.md
     byorc-protocol.md        # auth, signing, replay, capability scopes (Phase 0)
+    cloud-strip-plan.md      # cloud-strip cascade plan for the in-tree Warp fork
     fork-strategy.md         # in-tree fork policy, manual upstream sync (Phase 0)
     threat-model.md          # actors, surfaces, invariants (Phase 0)
     test-plan.md             # trust-tiered test strategy (Phase 0)
-    audit.md
   packaging/
     homebrew/
   docs/

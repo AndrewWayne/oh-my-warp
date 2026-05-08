@@ -6,35 +6,21 @@
 >
 > You want **Warp**. Half-open-source, block-based, modern, beautiful, intelligent. They want to charge you for their best AI integration.
 >
-> We want to hybridize the two. We will have **warp-oss + Tailscale + PI-agent wrapper**. Configurable, all open-source, run by the community.
+> We want to hybridize the two. We will have **warp-oss + Tailscale + pi-agent wrapper**. Configurable, all open-source, run by the community.
 
 ---
 
 ## What this is
 
-`omw` is a local-first fork of the open-source Warp terminal with a thin wrapper of Pi-mono. It replaces Warp's cloud half with components you control:
+`omw` is a local-first fork of the open-source Warp terminal with a thin wrapper of pi-mono. It replaces Warp's cloud half with components you control:
 
 - **BYOK** — bring your own LLM keys (OpenAI, Anthropic, OpenAI-compatible, Ollama). No omw cloud. No Warp cloud.
 - **BYORC** — bring your own remote controller. Pair sessions over your Tailscale tailnet, never the public internet.
-- **Local agent** — `omw-agent` orchestrates LLMs, MCP tools, shell, files, and approvals with full audit and cost telemetry.
+- **Local agent** — orchestrates LLMs, shell, and file edits with explicit approvals.
 
 `omw` is the product brand. `oh-my-warp` is the repo codename.
 
-## Status
-
-Pre-v1.0. The project is in active development — see [PRD.md](./PRD.md) for committed scope and [TODO.md](./TODO.md) for phase progress.
-
-Current preview track: **`omw-local-preview-v0.0.1`** — an audit-clean local build of the Warp client with cloud calls stripped. macOS arm64 only, unsigned.
-
-| Phase | Deliverable | Status |
-|---|---|---|
-| v0.1 | `omw-agent` CLI (BYOK + tools + audit) | planned |
-| v0.2 | OpenAI-compatible + Ollama providers | planned |
-| v0.3 | Forked GUI in local mode (`omw-warp-oss`) | preview shipping |
-| v0.4 | `omw-remote` daemon + Web Controller over Tailscale | planned |
-| v1.0 | Polish, sign, notarize, Homebrew | planned |
-
-## Install (preview)
+## Install
 
 Download the latest `.dmg` from [Releases](https://github.com/AndrewWayne/oh-my-warp/releases), then:
 
@@ -44,7 +30,28 @@ xattr -d com.apple.quarantine /Applications/omw-warp-oss.app
 open /Applications/omw-warp-oss.app
 ```
 
-The `xattr` step is required because preview builds are unsigned. Codesign + notarize is a v1.0 task.
+The `xattr` step is required because preview builds are unsigned.
+
+## What works today
+
+- **Audit-clean stripped client.** All Warp cloud / sign-in / Drive / hosted-agent surfaces removed at compile time.
+- **BYORC over Tailscale.** Click the Phone button on any pane → the pair URL is auto-copied to your clipboard → open it on your phone (or paste into another laptop's browser) → attach to the live pane. Phone keystrokes echo on the laptop in real time.
+- **Inline agent.** Type `# <prompt>` at the start of any pane to run your prompt through `omw-agent` against your configured provider. Shell commands and file edits prompt for approval before running.
+- **Settings → Agent.** Configure providers, default model, and API keys (stored in the macOS Keychain) from inside the app.
+
+## Limitations
+
+- **macOS arm64 only, unsigned.** No Windows or Linux build yet. The `xattr` step above is the unsigned-binary workaround.
+- **First-key-save on the bundled `.app`** may silently fail to write to the macOS Keychain on some machines (an ad-hoc-signed bundle ACL issue — Apply now surfaces this as an error rather than swallowing it). If it happens, save the key once from a terminal:
+  ```bash
+  security add-generic-password -s "omw/<provider-id>" -a "<provider-id>" -w "<your-key>" -A
+  ```
+  Real fix arrives with codesign + notarize.
+- **One agent session per app process.** Multi-pane simultaneous agent sessions aren't supported yet.
+- **Agent panel renders streaming text + Approve/Reject buttons only** — no per-call `args` / `result` cards yet.
+- **Cost surface only in the CLI** (`omw costs`), not in the GUI.
+- **Reverse-direction resize during an active phone session.** Resizing the laptop window while a phone is attached doesn't propagate the new size to the phone's xterm.
+- **iOS Safari cold-path connect.** First handshake to a peer can stall 10–30s when the Tailscale path / iOS connection pool is cold; the client retries automatically.
 
 ## Build from source
 
@@ -52,14 +59,12 @@ The `xattr` step is required because preview builds are unsigned. Codesign + not
 bash scripts/build-mac-dmg.sh <version>
 ```
 
-The script does not modify `vendor/warp-stripped/` — packaging-time renames only. See [`specs/fork-strategy.md`](./specs/fork-strategy.md) for the upstream-sync workflow.
+See [`specs/fork-strategy.md`](./specs/fork-strategy.md) for the upstream-sync workflow.
 
 ## Docs
 
-- [PRD.md](./PRD.md) — product scope, principles, phased roadmap
-- [TODO.md](./TODO.md) — phase-by-phase progress
+- [PRD.md](./PRD.md) — product scope, principles, roadmap
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — how to contribute
-- [CLAUDE.md](./CLAUDE.md) — engineering guardrails
 - [`specs/`](./specs/) — protocol specs, test plan, fork strategy
 
 ## License

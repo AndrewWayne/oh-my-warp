@@ -337,6 +337,30 @@ fn apply_set_provider_api_key_records_pending_secret() {
 }
 
 #[test]
+fn apply_set_default_provider_by_id_sets_and_clears_default() {
+    let mut s = empty_state();
+    apply_action(&mut s, OmwAgentPageAction::AddProvider);
+    let id = s.form.providers[0].id.clone();
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetDefaultProviderById(Some(id.clone())),
+    );
+    assert_eq!(s.form.default_provider, Some(id));
+    apply_action(&mut s, OmwAgentPageAction::SetDefaultProviderById(None));
+    assert!(s.form.default_provider.is_none());
+}
+
+#[test]
+fn apply_set_default_provider_by_id_ignores_unknown_ids() {
+    let mut s = empty_state();
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetDefaultProviderById(Some("ghost".into())),
+    );
+    assert!(s.form.default_provider.is_none());
+}
+
+#[test]
 fn apply_discard_resets_form_and_clears_pending() {
     let mut s = empty_state();
     apply_action(&mut s, OmwAgentPageAction::ToggleEnabled);

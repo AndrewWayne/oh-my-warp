@@ -71,7 +71,7 @@ pub enum OmwAgentPageAction {
     SetProviderModel(usize, String),
     SetProviderBaseUrl(usize, String),
     SetProviderApiKey(usize, String),
-    SetDefault(usize),
+    SetDefaultProviderById(Option<String>),
     Apply,
     Discard,
 }
@@ -359,11 +359,19 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
                 row.api_key_input = s;
             }
         }
-        OmwAgentPageAction::SetDefault(idx) => {
-            if let Some(row) = state.form.providers.get(idx) {
-                state.form.default_provider = Some(row.id.clone());
+        OmwAgentPageAction::SetDefaultProviderById(maybe_id) => match maybe_id {
+            Some(id) if state.form.providers.iter().any(|r| r.id == id) => {
+                state.form.default_provider = Some(id);
             }
-        }
+            Some(_) => {
+                // Unknown id — ignore silently. Reachable only if dropdown
+                // state desyncs from form.providers (e.g. row removed
+                // between toggle-open and click).
+            }
+            None => {
+                state.form.default_provider = None;
+            }
+        },
         OmwAgentPageAction::Apply => {
             // Apply is a *side-effecting* action; the page glue (Task 6)
             // wraps this branch to call omw-keychain + writer. The pure
@@ -1115,8 +1123,13 @@ impl SettingsWidget for OmwAgentPageWidget {
                         "Set default".to_owned()
                     })
                     .build()
-                    .on_click(move |ctx, _, _| {
-                        ctx.dispatch_typed_action(OmwAgentPageAction::SetDefault(idx));
+                    .on_click({
+                        let id = row.id.clone();
+                        move |ctx, _, _| {
+                            ctx.dispatch_typed_action(
+                                OmwAgentPageAction::SetDefaultProviderById(Some(id.clone())),
+                            );
+                        }
                     })
                     .finish();
                 action_row.add_child(

@@ -21,6 +21,13 @@ pub enum KeychainError {
     /// could not retrieve the value. Surfaces silent persistence failures
     /// (e.g. ad-hoc-signed bundle ACL quirks on macOS) instead of letting
     /// callers think a write succeeded when it did not.
+    //
+    // INVARIANT: only constructed inside `omw_keychain::set`. Consumers that
+    // call only `get`/`delete` (e.g. `omw-keychain-helper`) treat this arm
+    // as `unreachable!()`. When adding new variants here, audit every
+    // exhaustive `match` over `KeychainError` outside this crate — the
+    // `omw-keychain-helper` build broke v0.0.3 after `WriteNotPersisted`
+    // landed precisely because that match was not updated.
     WriteNotPersisted,
 
     /// The OS keychain returned an error. The wrapped source is intentionally

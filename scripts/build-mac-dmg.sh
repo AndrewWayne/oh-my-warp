@@ -42,6 +42,13 @@ command -v cargo >/dev/null || { echo "ERROR: cargo not on PATH" >&2; exit 2; }
 export PROTOC="${PROTOC:-/opt/homebrew/bin/protoc}"
 [[ -x "${PROTOC}" ]] || { echo "ERROR: PROTOC not executable at ${PROTOC}" >&2; exit 2; }
 
+# On a 16 GB host the warp lib's opt-level=3 codegen has been observed to
+# get OOM-killed by the kernel (rustc dies with `signal: 9, SIGKILL`) when
+# cargo runs the default $(nproc) parallel compile jobs. Capping at 4
+# concurrent jobs keeps peak RSS under ~12 GB and lets the build finish.
+# Override via CARGO_BUILD_JOBS=N if you have more or less headroom.
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
+
 echo "==> Building omw_local release binary (version ${VERSION}) ..."
 (
     cd "${VENDOR_DIR}"

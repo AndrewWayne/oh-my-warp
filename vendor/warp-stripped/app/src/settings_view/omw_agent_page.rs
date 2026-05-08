@@ -946,22 +946,157 @@ impl TypedActionView for OmwAgentPageView {
         // method so the pure reducer + side-effecting `apply` keep their
         // single source of truth. `notify()` so the new state is
         // re-rendered on the next frame.
-        let needs_buffer_refresh = matches!(
+        // Discard/Add/Remove are structural — every editor buffer must
+        // re-sync with the form. Other Set* actions are scalar and we
+        // only restore the specific input that just submitted (after
+        // dispatch, below) so we don't blank away neighboring fields'
+        // typed-but-not-committed text.
+        let needs_full_buffer_refresh = matches!(
             action,
             OmwAgentPageAction::Discard
                 | OmwAgentPageAction::AddProvider
                 | OmwAgentPageAction::RemoveProvider(_)
-                | OmwAgentPageAction::SetProviderId(_, _)
         );
+        // Before Apply: flush any typed-but-not-yet-submitted text from
+        // each row's editor inputs into form state. Without this, users
+        // who type into an input and click Apply without pressing Enter
+        // on each field lose the typed values — the row stays "empty"
+        // in form state, gets filtered as incomplete by form_to_config,
+        // and the resulting save produces an empty config that wipes
+        // the form on rebuild. (The default-row-only validation
+        // relaxation removed the prior strict-validation safety net
+        // that surfaced this as an explicit error.)
+        if matches!(action, OmwAgentPageAction::Apply) {
+            self.flush_pending_input_text(ctx);
+        }
         self.dispatch(action.clone());
-        if needs_buffer_refresh {
-            // Re-sync editor buffers from the (possibly mutated) form so
-            // typed values keep showing the canonical text. The id case
-            // is included because the reducer normalises ids when other
-            // mutations happen (default-provider rename, etc.).
+        if needs_full_buffer_refresh {
+            // Re-sync every editor buffer from the (possibly mutated)
+            // form so typed values keep showing the canonical text.
             self.refresh_editor_buffers(ctx);
+        } else {
+            // Targeted restore: SubmittableTextInput.on_try_submit
+            // clears its own editor buffer after emitting Submit, which
+            // makes the field appear blank to the user even though the
+            // value lives in form state. Re-set the buffer for the
+            // specific input that just dispatched so the user sees what
+            // they typed. We deliberately do NOT restore the api_key
+            // input — keeping the secret out of the on-screen buffer
+            // is by design.
+            match action {
+                OmwAgentPageAction::SetProviderId(idx, _) => {
+                    self.refresh_id_buffer(*idx, ctx);
+                }
+                OmwAgentPageAction::SetProviderModel(idx, _) => {
+                    self.refresh_model_buffer(*idx, ctx);
+                }
+                OmwAgentPageAction::SetProviderBaseUrl(idx, _) => {
+                    self.refresh_base_url_buffer(*idx, ctx);
+                }
+                _ => {}
+            }
         }
         ctx.notify();
+    }
+}
+
+impl OmwAgentPageView {
+    fn refresh_id_buffer(&mut self, idx: usize, ctx: &mut ViewContext<Self>) {
+        let text = self
+            .state
+            .form
+            .providers
+            .get(idx)
+            .map(|r| r.id.clone())
+            .unwrap_or_default();
+        if let Some(editors) = self.provider_editors.get(idx) {
+            set_input_text(&editors.id_input, &text, ctx);
+        }
+    }
+
+    fn refresh_model_buffer(&mut self, idx: usize, ctx: &mut ViewContext<Self>) {
+        let text = self
+            .state
+            .form
+            .providers
+            .get(idx)
+            .map(|r| r.model.clone())
+            .unwrap_or_default();
+        if let Some(editors) = self.provider_editors.get(idx) {
+            set_input_text(&editors.model_input, &text, ctx);
+        }
+    }
+
+    fn refresh_base_url_buffer(&mut self, idx: usize, ctx: &mut ViewContext<Self>) {
+        let text = self
+            .state
+            .form
+            .providers
+            .get(idx)
+            .map(|r| r.base_url.clone())
+            .unwrap_or_default();
+        if let Some(editors) = self.provider_editors.get(idx) {
+            set_input_text(&editors.base_url_input, &text, ctx);
+        }
+    }
+}
+
+impl OmwAgentPageView {
+    /// Read each provider row's editor inputs and dispatch Set* actions
+    /// for any field whose buffer differs from the form-state value.
+    /// Idempotent — values that are already committed produce no-op
+    /// dispatches. Skips empty `id` updates (would invalidate the row).
+    fn flush_pending_input_text(&mut self, ctx: &mut ViewContext<Self>) {
+        let row_count = self.state.form.providers.len();
+        for idx in 0..row_count.min(self.provider_editors.len()) {
+            let editors = &self.provider_editors[idx];
+            let id_text = editors.id_input.read(ctx, |i, ctx| {
+                i.editor()
+                    .read(ctx, |e, ctx| e.buffer_text(ctx).trim().to_owned())
+            });
+            let model_text = editors.model_input.read(ctx, |i, ctx| {
+                i.editor()
+                    .read(ctx, |e, ctx| e.buffer_text(ctx).trim().to_owned())
+            });
+            let base_url_text = editors.base_url_input.read(ctx, |i, ctx| {
+                i.editor()
+                    .read(ctx, |e, ctx| e.buffer_text(ctx).trim().to_owned())
+            });
+            // API keys preserve any leading/trailing characters the user
+            // pasted — they're opaque to us.
+            let api_key_text = editors.api_key_input.read(ctx, |i, ctx| {
+                i.editor().read(ctx, |e, ctx| e.buffer_text(ctx))
+            });
+            let row = &self.state.form.providers[idx];
+            if !id_text.is_empty() && id_text != row.id {
+                apply_action(
+                    &mut self.state,
+                    OmwAgentPageAction::SetProviderId(idx, id_text),
+                );
+            }
+            // Re-borrow because apply_action took &mut state.
+            let row = &self.state.form.providers[idx];
+            if model_text != row.model {
+                apply_action(
+                    &mut self.state,
+                    OmwAgentPageAction::SetProviderModel(idx, model_text),
+                );
+            }
+            let row = &self.state.form.providers[idx];
+            if base_url_text != row.base_url {
+                apply_action(
+                    &mut self.state,
+                    OmwAgentPageAction::SetProviderBaseUrl(idx, base_url_text),
+                );
+            }
+            let row = &self.state.form.providers[idx];
+            if api_key_text != row.api_key_input {
+                apply_action(
+                    &mut self.state,
+                    OmwAgentPageAction::SetProviderApiKey(idx, api_key_text),
+                );
+            }
+        }
     }
 }
 

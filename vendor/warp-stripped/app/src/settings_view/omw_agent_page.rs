@@ -51,6 +51,21 @@ pub enum FormError {
     KeyRefInvalid(String),
 }
 
+/// Open/closed state for the default-provider dropdown trigger. The
+/// list of selectable items is derived from `OmwAgentForm::providers`
+/// at render time — we don't cache it here.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DefaultProviderDropdownState {
+    pub is_expanded: bool,
+    pub highlighted_index: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefaultProviderHighlightDirection {
+    Up,
+    Down,
+}
+
 #[derive(Debug, Clone)]
 pub struct OmwAgentPageState {
     pub saved_config: Config,
@@ -58,6 +73,7 @@ pub struct OmwAgentPageState {
     pub pending_secrets: BTreeMap<String, String>,
     pub is_dirty: bool,
     pub last_save_error: Option<String>,
+    pub default_provider_dropdown: DefaultProviderDropdownState,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +88,9 @@ pub enum OmwAgentPageAction {
     SetProviderBaseUrl(usize, String),
     SetProviderApiKey(usize, String),
     SetDefaultProviderById(Option<String>),
+    ToggleDefaultProviderDropdown,
+    CloseDefaultProviderDropdown,
+    MoveDefaultProviderHighlight(DefaultProviderHighlightDirection),
     Apply,
     Discard,
 }
@@ -403,6 +422,30 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
                 state.form.default_provider = None;
             }
         },
+        OmwAgentPageAction::ToggleDefaultProviderDropdown => {
+            state.default_provider_dropdown.is_expanded =
+                !state.default_provider_dropdown.is_expanded;
+            if !state.default_provider_dropdown.is_expanded {
+                state.default_provider_dropdown.highlighted_index = None;
+            }
+        }
+        OmwAgentPageAction::CloseDefaultProviderDropdown => {
+            state.default_provider_dropdown.is_expanded = false;
+            state.default_provider_dropdown.highlighted_index = None;
+        }
+        OmwAgentPageAction::MoveDefaultProviderHighlight(dir) => {
+            // Total selectable rows = providers + 1 for "(none)".
+            let total = state.form.providers.len() + 1;
+            let cur = state
+                .default_provider_dropdown
+                .highlighted_index
+                .unwrap_or(0);
+            let next = match dir {
+                DefaultProviderHighlightDirection::Down => (cur + 1) % total,
+                DefaultProviderHighlightDirection::Up => (cur + total - 1) % total,
+            };
+            state.default_provider_dropdown.highlighted_index = Some(next);
+        }
         OmwAgentPageAction::Apply => {
             // Apply is a *side-effecting* action; the page glue (Task 6)
             // wraps this branch to call omw-keychain + writer. The pure
@@ -540,6 +583,7 @@ impl OmwAgentPageView {
                 pending_secrets: BTreeMap::new(),
                 is_dirty: false,
                 last_save_error: None,
+                default_provider_dropdown: DefaultProviderDropdownState::default(),
             },
             apply_button: MouseStateHandle::default(),
             discard_button: MouseStateHandle::default(),

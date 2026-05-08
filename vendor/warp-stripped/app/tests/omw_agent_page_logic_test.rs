@@ -8,8 +8,9 @@ use omw_config::{ApprovalMode, KeyRef, ProviderConfig, ProviderId};
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use warp::test_exports::{
-    apply_action, form_from_config, form_to_config, validate_form, FormError, OmwAgentForm,
-    OmwAgentPageAction, OmwAgentPageState, ProviderKindForm, ProviderRow,
+    apply_action, form_from_config, form_to_config, validate_form,
+    DefaultProviderDropdownState, FormError, OmwAgentForm, OmwAgentPageAction,
+    OmwAgentPageState, ProviderKindForm, ProviderRow,
 };
 
 fn empty_state() -> OmwAgentPageState {
@@ -20,6 +21,7 @@ fn empty_state() -> OmwAgentPageState {
         pending_secrets: BTreeMap::new(),
         is_dirty: false,
         last_save_error: None,
+        default_provider_dropdown: DefaultProviderDropdownState::default(),
     }
 }
 
@@ -334,6 +336,26 @@ fn apply_set_provider_api_key_records_pending_secret() {
     let id = s.form.providers[0].id.clone();
     apply_action(&mut s, OmwAgentPageAction::SetProviderApiKey(0, "sk-foo".into()));
     assert_eq!(s.pending_secrets.get(&id).map(|s| s.as_str()), Some("sk-foo"));
+}
+
+#[test]
+fn apply_toggle_default_provider_dropdown_flips_expanded() {
+    let mut s = empty_state();
+    assert!(!s.default_provider_dropdown.is_expanded);
+    apply_action(&mut s, OmwAgentPageAction::ToggleDefaultProviderDropdown);
+    assert!(s.default_provider_dropdown.is_expanded);
+    apply_action(&mut s, OmwAgentPageAction::ToggleDefaultProviderDropdown);
+    assert!(!s.default_provider_dropdown.is_expanded);
+}
+
+#[test]
+fn apply_close_default_provider_dropdown_resets_state() {
+    let mut s = empty_state();
+    apply_action(&mut s, OmwAgentPageAction::ToggleDefaultProviderDropdown);
+    s.default_provider_dropdown.highlighted_index = Some(2);
+    apply_action(&mut s, OmwAgentPageAction::CloseDefaultProviderDropdown);
+    assert!(!s.default_provider_dropdown.is_expanded);
+    assert!(s.default_provider_dropdown.highlighted_index.is_none());
 }
 
 #[test]

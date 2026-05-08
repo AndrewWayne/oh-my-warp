@@ -9157,7 +9157,6 @@ name = "omw-pty"
 version = "0.0.0"
 dependencies = [
  "bytes",
- "futures",
  "portable-pty",
  "thiserror 1.0.63",
  "tokio",
@@ -9179,14 +9178,12 @@ dependencies = [
  "omw-pty",
  "omw-server",
  "rand 0.8.5",
- "rand_core 0.6.4",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
  "thiserror 1.0.63",
  "tokio",
- "tower",
  "uuid",
 ]
 
@@ -9207,7 +9204,6 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.63",
  "tokio",
- "tower",
  "uuid",
  "vt100",
 ]

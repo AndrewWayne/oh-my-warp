@@ -6,4 +6,4 @@ pub mod pty;
 
 pub use auth::WsSessionAuth;
 pub use frame::{Frame, FrameAuthError, FrameError, FrameKind};
-pub use pty::{ws_handler, ShellSpec};
+pub use pty::ShellSpec;

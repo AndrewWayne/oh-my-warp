@@ -16,8 +16,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
-use axum::response::IntoResponse;
+use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use bytes::Bytes;
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
@@ -70,11 +69,6 @@ impl ShellSpec {
             }
         }
     }
-}
-
-/// Public re-export shim — see [`crate::server::make_router`] for the live route.
-pub async fn ws_handler(_ws: WebSocketUpgrade) -> impl IntoResponse {
-    axum::http::StatusCode::INTERNAL_SERVER_ERROR
 }
 
 /// Bridge a fully-authenticated WS socket to a registered PTY session.

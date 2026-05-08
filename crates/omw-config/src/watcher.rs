@@ -81,10 +81,28 @@ pub fn watch_with_debounce(path: PathBuf, debounce: Duration) -> Result<WatchHan
         .unwrap_or_else(|| PathBuf::from("."));
     watcher.watch(&parent, notify::RecursiveMode::NonRecursive)?;
 
-    let path_for_thread = path.clone();
+    // Canonicalize the target path so `is_relevant` compares apples to
+    // apples. macOS reports FSEvents paths under their canonical form
+    // (e.g. /private/var/folders/... rather than /var/folders/...), and
+    // `tempfile::tempdir()` returns the unresolved form. A literal `==`
+    // on Path drops every event without a match. Falling back to the
+    // unresolved path when canonicalize fails (e.g. the target file
+    // doesn't exist yet) preserves the previous behavior for the
+    // create-on-write case — once the file appears, parent canonicalize
+    // below covers it.
+    let canonical_target = match std::fs::canonicalize(&path) {
+        Ok(p) => p,
+        Err(_) => match std::fs::canonicalize(&parent) {
+            Ok(parent_canon) => path
+                .file_name()
+                .map(|name| parent_canon.join(name))
+                .unwrap_or_else(|| path.clone()),
+            Err(_) => path.clone(),
+        },
+    };
     std::thread::Builder::new()
         .name("omw-config-watcher".into())
-        .spawn(move || run_watcher_thread(events_rx, tx, path_for_thread, debounce))
+        .spawn(move || run_watcher_thread(events_rx, tx, canonical_target, debounce))
         .map_err(|e| ConfigError::PathResolution(format!("failed to spawn watcher thread: {e}")))?;
 
     Ok(WatchHandle {

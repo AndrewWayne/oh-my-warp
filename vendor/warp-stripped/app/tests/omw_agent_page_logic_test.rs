@@ -4,7 +4,7 @@
 
 #![cfg(feature = "omw_local")]
 
-use omw_config::{ApprovalMode, KeyRef, ProviderConfig, ProviderId};
+use omw_config::{ApprovalMode, ProviderConfig, ProviderId};
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use warp::test_exports::{

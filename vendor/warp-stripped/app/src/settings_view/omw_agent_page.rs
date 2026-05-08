@@ -200,6 +200,19 @@ pub fn validate_form(form: &OmwAgentForm) -> Result<(), Vec<FormError>> {
 /// logic in `validate_form` for the default row. Non-default rows are
 /// drafts; `form_to_config` filters them out on this check so they never
 /// land in config.toml.
+/// True iff this provider kind requires an API key. Used by
+/// `SetProviderKind` to decide whether to clear stale key fields when
+/// the user switches a row's kind across the boundary (e.g. OpenAI →
+/// Ollama clears; OpenAI → Anthropic preserves).
+fn kind_requires_key(k: ProviderKindForm) -> bool {
+    matches!(
+        k,
+        ProviderKindForm::OpenAi
+            | ProviderKindForm::Anthropic
+            | ProviderKindForm::OpenAiCompatible,
+    )
+}
+
 fn is_row_complete(row: &ProviderRow, persisted_secrets: &BTreeMap<String, KeyRef>) -> bool {
     let has_key = !row.key_ref_token.is_empty()
         || !row.api_key_input.is_empty()
@@ -344,7 +357,17 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
         }
         OmwAgentPageAction::SetProviderKind(idx, k) => {
             if let Some(row) = state.form.providers.get_mut(idx) {
+                let prev = row.kind;
                 row.kind = k;
+                // When crossing the key-required boundary (e.g. OpenAI →
+                // Ollama), clear stale key fields so validation matches
+                // the new kind's requirements instead of carrying ghosts
+                // from the previous kind.
+                if kind_requires_key(prev) && !kind_requires_key(k) {
+                    row.key_ref_token.clear();
+                    row.api_key_input.clear();
+                    state.pending_secrets.remove(&row.id);
+                }
             }
         }
         OmwAgentPageAction::SetProviderModel(idx, s) => {

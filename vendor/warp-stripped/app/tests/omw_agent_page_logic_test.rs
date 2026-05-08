@@ -337,6 +337,45 @@ fn apply_set_provider_api_key_records_pending_secret() {
 }
 
 #[test]
+fn apply_set_provider_kind_clears_key_fields_when_key_no_longer_required() {
+    let mut s = empty_state();
+    apply_action(&mut s, OmwAgentPageAction::AddProvider);
+    s.form.providers[0].kind = ProviderKindForm::OpenAi;
+    s.form.providers[0].key_ref_token = "keychain:omw/foo".into();
+    s.form.providers[0].api_key_input = "sk-typed".into();
+    let id = s.form.providers[0].id.clone();
+    s.pending_secrets.insert(id.clone(), "sk-typed".into());
+
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderKind(0, ProviderKindForm::Ollama),
+    );
+
+    assert_eq!(s.form.providers[0].kind, ProviderKindForm::Ollama);
+    assert!(s.form.providers[0].key_ref_token.is_empty());
+    assert!(s.form.providers[0].api_key_input.is_empty());
+    assert!(!s.pending_secrets.contains_key(&id));
+}
+
+#[test]
+fn apply_set_provider_kind_preserves_key_fields_across_key_required_kinds() {
+    // Switching between two kinds that both require a key (OpenAI ↔
+    // Anthropic ↔ OpenAiCompatible) must NOT clear what the user typed.
+    let mut s = empty_state();
+    apply_action(&mut s, OmwAgentPageAction::AddProvider);
+    s.form.providers[0].kind = ProviderKindForm::OpenAi;
+    s.form.providers[0].key_ref_token = "keychain:omw/foo".into();
+
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderKind(0, ProviderKindForm::Anthropic),
+    );
+
+    assert_eq!(s.form.providers[0].kind, ProviderKindForm::Anthropic);
+    assert_eq!(s.form.providers[0].key_ref_token, "keychain:omw/foo");
+}
+
+#[test]
 fn apply_set_provider_id_rebuilds_canonical_key_ref_token() {
     let mut s = empty_state();
     apply_action(&mut s, OmwAgentPageAction::AddProvider);

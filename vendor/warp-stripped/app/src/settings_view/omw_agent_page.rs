@@ -53,17 +53,13 @@ pub enum FormError {
 
 /// Open/closed state for the default-provider dropdown trigger. The
 /// list of selectable items is derived from `OmwAgentForm::providers`
-/// at render time — we don't cache it here.
+/// at render time — we don't cache it here. Hover paint comes from the
+/// underlying `ButtonVariant`, so no highlighted-index state is kept;
+/// keyboard-driven highlight would require focus tracking that conflicts
+/// with the focused text inputs on the same page.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DefaultProviderDropdownState {
     pub is_expanded: bool,
-    pub highlighted_index: Option<usize>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DefaultProviderHighlightDirection {
-    Up,
-    Down,
 }
 
 #[derive(Debug, Clone)]
@@ -97,7 +93,6 @@ pub enum OmwAgentPageAction {
     SetDefaultProviderById(Option<String>),
     ToggleDefaultProviderDropdown,
     CloseDefaultProviderDropdown,
-    MoveDefaultProviderHighlight(DefaultProviderHighlightDirection),
     Apply,
     Discard,
 }
@@ -452,26 +447,9 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
         OmwAgentPageAction::ToggleDefaultProviderDropdown => {
             state.default_provider_dropdown.is_expanded =
                 !state.default_provider_dropdown.is_expanded;
-            if !state.default_provider_dropdown.is_expanded {
-                state.default_provider_dropdown.highlighted_index = None;
-            }
         }
         OmwAgentPageAction::CloseDefaultProviderDropdown => {
             state.default_provider_dropdown.is_expanded = false;
-            state.default_provider_dropdown.highlighted_index = None;
-        }
-        OmwAgentPageAction::MoveDefaultProviderHighlight(dir) => {
-            // Total selectable rows = providers + 1 for "(none)".
-            let total = state.form.providers.len() + 1;
-            let cur = state
-                .default_provider_dropdown
-                .highlighted_index
-                .unwrap_or(0);
-            let next = match dir {
-                DefaultProviderHighlightDirection::Down => (cur + 1) % total,
-                DefaultProviderHighlightDirection::Up => (cur + total - 1) % total,
-            };
-            state.default_provider_dropdown.highlighted_index = Some(next);
         }
         OmwAgentPageAction::Apply => {
             // Apply is a *side-effecting* action; the page glue (Task 6)
@@ -503,8 +481,8 @@ use crate::appearance::Appearance;
 use crate::view_components::{SubmittableTextInput, SubmittableTextInputEvent};
 use warpui::{
     elements::{
-        ChildView, Container, CrossAxisAlignment, Element, Flex, MainAxisAlignment, MouseStateHandle,
-        ParentElement, Text,
+        ChildView, Container, CrossAxisAlignment, DispatchEventResult, Element, EventHandler, Flex,
+        MainAxisAlignment, MouseStateHandle, ParentElement, Text,
     },
     ui_components::{
         button::ButtonVariant,
@@ -1583,6 +1561,38 @@ impl SettingsWidget for OmwAgentPageWidget {
             .with_child(discard_button);
         col.add_child(Container::new(buttons.finish()).with_margin_top(8.).finish());
 
-        col.finish()
+        // Click-outside + Escape close the default-provider dropdown.
+        // Wrap the whole page so a mouse-down on whitespace OR Escape
+        // pressed while the dropdown is open dismisses the menu. Buttons
+        // inside the page absorb their own mouse-down (StopPropagation),
+        // so the click-outside path only fires for "off-target" clicks.
+        // Up/Down/Enter aren't intercepted here because they'd collide
+        // with arrow-key behavior in the focused text inputs on the same
+        // page; users navigate the menu by clicking. Returning
+        // PropagateToParent keeps the rest of the window's event chain
+        // intact for non-dropdown handlers.
+        let page = col.finish();
+        if view.state.default_provider_dropdown.is_expanded {
+            EventHandler::new(page)
+                .on_left_mouse_down(|ctx, _, _| {
+                    ctx.dispatch_typed_action(
+                        OmwAgentPageAction::CloseDefaultProviderDropdown,
+                    );
+                    DispatchEventResult::PropagateToParent
+                })
+                .on_keydown(|ctx, _, keystroke| {
+                    if keystroke.is_unmodified_key("escape") {
+                        ctx.dispatch_typed_action(
+                            OmwAgentPageAction::CloseDefaultProviderDropdown,
+                        );
+                        DispatchEventResult::StopPropagation
+                    } else {
+                        DispatchEventResult::PropagateToParent
+                    }
+                })
+                .finish()
+        } else {
+            page
+        }
     }
 }

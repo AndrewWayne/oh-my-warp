@@ -353,10 +353,8 @@ fn apply_toggle_default_provider_dropdown_flips_expanded() {
 fn apply_close_default_provider_dropdown_resets_state() {
     let mut s = empty_state();
     apply_action(&mut s, OmwAgentPageAction::ToggleDefaultProviderDropdown);
-    s.default_provider_dropdown.highlighted_index = Some(2);
     apply_action(&mut s, OmwAgentPageAction::CloseDefaultProviderDropdown);
     assert!(!s.default_provider_dropdown.is_expanded);
-    assert!(s.default_provider_dropdown.highlighted_index.is_none());
 }
 
 #[test]

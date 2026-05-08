@@ -537,6 +537,17 @@ pub struct OmwAgentPageView {
     /// [`OmwAgentPageWidget::render`] so the click handlers can pick by
     /// position without a separate lookup.
     pub approval_mode_buttons: [MouseStateHandle; 3],
+    /// Trigger button for the default-provider dropdown (toggles
+    /// expansion). Pre-allocated so hover/click animation state survives
+    /// re-renders, matching the convention used by the rest of the page's
+    /// buttons.
+    pub default_provider_trigger_button: MouseStateHandle,
+    /// Click handle for the dropdown's "(none)" menu item.
+    pub default_provider_none_item_button: MouseStateHandle,
+    /// Click handles for each provider row inside the expanded dropdown
+    /// menu. Indexed by row position; rows past `form.providers.len()`
+    /// are never rendered.
+    pub default_provider_item_buttons: [MouseStateHandle; MAX_PROVIDER_SLOTS],
     /// Per-row editor widgets. Empty when constructed via
     /// [`Self::new_inner`] (used by L3a tests that drive the reducer
     /// directly without rendering); fully populated when constructed
@@ -594,6 +605,11 @@ impl OmwAgentPageView {
                 MouseStateHandle::default(),
                 MouseStateHandle::default(),
             ],
+            default_provider_trigger_button: MouseStateHandle::default(),
+            default_provider_none_item_button: MouseStateHandle::default(),
+            default_provider_item_buttons: std::array::from_fn(|_| {
+                MouseStateHandle::default()
+            }),
             provider_editors: Vec::new(),
             // is_dual_scrollable=true: long provider lists need to scroll;
             // PageType::wrap_dual_scrollable handles vertical clipping +
@@ -993,23 +1009,133 @@ impl SettingsWidget for OmwAgentPageWidget {
                 .finish(),
         );
 
-        // default provider.
-        col.add_child(
+        // Default provider dropdown selector. Replaces the prior
+        // read-only label; click the trigger to expand a menu of
+        // selectable rows + a "(none)" entry.
+        let default_label = form
+            .default_provider
+            .as_deref()
+            .unwrap_or("(none)")
+            .to_string();
+        let trigger_button = appearance
+            .ui_builder()
+            .button(
+                ButtonVariant::Secondary,
+                view.default_provider_trigger_button.clone(),
+            )
+            .with_text_label(format!("{default_label} \u{25BE}"))
+            .build()
+            .on_click(|ctx, _, _| {
+                ctx.dispatch_typed_action(
+                    OmwAgentPageAction::ToggleDefaultProviderDropdown,
+                );
+            })
+            .finish();
+        let mut default_row = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center);
+        default_row.add_child(
             Container::new(
                 Text::new(
-                    format!(
-                        "Default provider: {}",
-                        form.default_provider.as_deref().unwrap_or("(none)")
-                    ),
+                    "Default provider:".to_owned(),
                     appearance.ui_font_family(),
                     CONTENT_FONT_SIZE,
                 )
                 .with_color(active)
                 .finish(),
             )
-            .with_margin_bottom(12.)
+            .with_margin_right(8.)
             .finish(),
         );
+        default_row.add_child(trigger_button);
+        col.add_child(
+            Container::new(default_row.finish())
+                .with_margin_bottom(4.)
+                .finish(),
+        );
+
+        if view.state.default_provider_dropdown.is_expanded {
+            let mut menu = Flex::column()
+                .with_cross_axis_alignment(CrossAxisAlignment::Start);
+            // (none) item — clears default.
+            let is_none_active = form.default_provider.is_none();
+            let none_item = appearance
+                .ui_builder()
+                .button(
+                    if is_none_active {
+                        ButtonVariant::Accent
+                    } else {
+                        ButtonVariant::Secondary
+                    },
+                    view.default_provider_none_item_button.clone(),
+                )
+                .with_text_label("(none)".to_owned())
+                .build()
+                .on_click(|ctx, _, _| {
+                    ctx.dispatch_typed_action(
+                        OmwAgentPageAction::SetDefaultProviderById(None),
+                    );
+                    ctx.dispatch_typed_action(
+                        OmwAgentPageAction::CloseDefaultProviderDropdown,
+                    );
+                })
+                .finish();
+            menu.add_child(
+                Container::new(none_item).with_margin_bottom(2.).finish(),
+            );
+            // Provider items.
+            for (idx, prow) in form.providers.iter().enumerate() {
+                if idx >= view.default_provider_item_buttons.len() {
+                    break;
+                }
+                let is_active =
+                    form.default_provider.as_deref() == Some(prow.id.as_str());
+                let item_button = appearance
+                    .ui_builder()
+                    .button(
+                        if is_active {
+                            ButtonVariant::Accent
+                        } else {
+                            ButtonVariant::Secondary
+                        },
+                        view.default_provider_item_buttons[idx].clone(),
+                    )
+                    .with_text_label(prow.id.clone())
+                    .build()
+                    .on_click({
+                        let id = prow.id.clone();
+                        move |ctx, _, _| {
+                            ctx.dispatch_typed_action(
+                                OmwAgentPageAction::SetDefaultProviderById(Some(
+                                    id.clone(),
+                                )),
+                            );
+                            ctx.dispatch_typed_action(
+                                OmwAgentPageAction::CloseDefaultProviderDropdown,
+                            );
+                        }
+                    })
+                    .finish();
+                menu.add_child(
+                    Container::new(item_button)
+                        .with_margin_bottom(2.)
+                        .finish(),
+                );
+            }
+            col.add_child(
+                Container::new(menu.finish())
+                    .with_margin_left(16.)
+                    .with_margin_bottom(12.)
+                    .finish(),
+            );
+        } else {
+            // Reserve the same trailing margin even when collapsed so the
+            // page below doesn't jump as the dropdown opens/closes.
+            col.add_child(
+                Container::new(Flex::column().finish())
+                    .with_margin_bottom(12.)
+                    .finish(),
+            );
+        }
 
         // providers list.
         col.add_child(

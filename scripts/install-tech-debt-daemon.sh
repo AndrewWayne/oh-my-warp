@@ -26,7 +26,7 @@ gh auth status >/dev/null 2>&1   || fatal "gh not authenticated. Run: gh auth lo
 
 # Confirm codex is logged in by running a trivial probe.
 if ! echo "ping" | codex exec --skip-git-repo-check -m gpt-5.5 \
-       --sandbox read-only --skip-git-repo-check >/dev/null 2>&1; then
+       --sandbox read-only >/dev/null 2>&1; then
   printf 'WARN: codex probe with gpt-5.5 failed. The daemon may need `codex login` first.\n' >&2
 fi
 

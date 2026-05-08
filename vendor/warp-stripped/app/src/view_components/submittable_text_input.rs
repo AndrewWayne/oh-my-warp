@@ -36,6 +36,13 @@ pub struct SubmittableTextInput {
     submit_button_state: MouseStateHandle,
     outer_margin_top: f32,
     outer_margin_bottom: f32,
+    /// True (default) clears the buffer after a successful Submit — the
+    /// "chat-like" pattern where each Enter dispatches a message and
+    /// resets the input. False keeps the buffer intact, suiting form
+    /// field inputs (e.g. omw_agent_page's id / model / base_url
+    /// editors) where Enter commits the value but the user expects to
+    /// keep seeing what they typed.
+    clear_on_submit: bool,
 }
 
 impl SubmittableTextInput {
@@ -61,7 +68,16 @@ impl SubmittableTextInput {
             submit_button_state: Default::default(),
             outer_margin_top: 10.,
             outer_margin_bottom: 10.,
+            clear_on_submit: true,
         }
+    }
+
+    /// Opt out of the default clear-on-submit behavior. Use for form
+    /// fields where pressing Enter should commit the value but leave the
+    /// buffer visible (so the user keeps seeing their input).
+    pub fn keep_buffer_on_submit(mut self) -> Self {
+        self.clear_on_submit = false;
+        self
     }
 
     /// Validates the input contents using the provided `validator`
@@ -133,8 +149,10 @@ impl SubmittableTextInput {
             self.has_error = true;
             ctx.notify();
         } else {
-            self.editor
-                .update(ctx, |editor, ctx| editor.clear_buffer(ctx));
+            if self.clear_on_submit {
+                self.editor
+                    .update(ctx, |editor, ctx| editor.clear_buffer(ctx));
+            }
             ctx.emit(SubmittableTextInputEvent::Submit(content))
         }
     }

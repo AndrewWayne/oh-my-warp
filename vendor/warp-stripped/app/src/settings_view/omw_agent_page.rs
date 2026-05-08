@@ -100,21 +100,54 @@ pub enum OmwAgentPageAction {
 // ---------------------- Pure converters ----------------------
 
 pub fn form_from_config(cfg: &Config) -> OmwAgentForm {
-    let providers: Vec<ProviderRow> = cfg
+    form_from_config_with_order(cfg, &[])
+}
+
+/// Like `form_from_config`, but emits `providers` in a stable order based
+/// on `preferred_order`. Ids that appear in `preferred_order` come first
+/// in that order; remaining (newly-added) ids come after, in the
+/// underlying BTreeMap's natural alphabetical order. Used by Apply so the
+/// visible row order doesn't scramble after save: the on-disk
+/// `[providers]` table is a TOML map, so `cfg.providers` is a BTreeMap
+/// (alphabetical, not user-authored). Without a prior-order hint, Apply
+/// would re-sort rows on every save, leaving the per-slot editor inputs +
+/// MouseStateHandles pointing at the wrong row underneath their position
+/// — visibly switching kinds and mismatching titles.
+pub fn form_from_config_with_order(
+    cfg: &Config,
+    preferred_order: &[String],
+) -> OmwAgentForm {
+    let mut by_id: std::collections::BTreeMap<String, ProviderRow> = cfg
         .providers
         .iter()
-        .map(|(id, pcfg)| ProviderRow {
-            id: id.as_str().to_string(),
-            kind: kind_from_config(pcfg),
-            model: pcfg.default_model().unwrap_or("").to_string(),
-            base_url: base_url_from_config(pcfg).unwrap_or_default(),
-            key_ref_token: pcfg
-                .key_ref()
-                .map(|k| k.to_string())
-                .unwrap_or_default(),
-            api_key_input: String::new(),
+        .map(|(id, pcfg)| {
+            let id_str = id.as_str().to_string();
+            (
+                id_str.clone(),
+                ProviderRow {
+                    id: id_str,
+                    kind: kind_from_config(pcfg),
+                    model: pcfg.default_model().unwrap_or("").to_string(),
+                    base_url: base_url_from_config(pcfg).unwrap_or_default(),
+                    key_ref_token: pcfg
+                        .key_ref()
+                        .map(|k| k.to_string())
+                        .unwrap_or_default(),
+                    api_key_input: String::new(),
+                },
+            )
         })
         .collect();
+
+    let mut providers = Vec::with_capacity(by_id.len());
+    for id in preferred_order {
+        if let Some(row) = by_id.remove(id) {
+            providers.push(row);
+        }
+    }
+    for (_, row) in by_id {
+        providers.push(row);
+    }
 
     OmwAgentForm {
         agent_enabled: cfg.agent.enabled,
@@ -817,9 +850,21 @@ impl OmwAgentPageView {
             }
         }
 
-        // 7. Re-derive form from the new saved config.
+        // 7. Re-derive form from the new saved config, preserving the
+        //    user-authored row order so per-slot editor inputs keep
+        //    pointing at the same row after save (cfg.providers is a
+        //    BTreeMap, alphabetical — without the order hint, Apply would
+        //    visibly reorder rows and the kind/id labels would appear to
+        //    swap underneath the inputs).
+        let prior_order: Vec<String> = self
+            .state
+            .form
+            .providers
+            .iter()
+            .map(|r| r.id.clone())
+            .collect();
         self.state.saved_config = cfg.clone();
-        self.state.form = form_from_config(&cfg);
+        self.state.form = form_from_config_with_order(&cfg, &prior_order);
         self.state.pending_secrets.clear();
         self.state.pending_renames.clear();
         self.state.is_dirty = false;
@@ -850,7 +895,7 @@ fn make_provider_row_editors(
     ctx: &mut ViewContext<OmwAgentPageView>,
 ) -> ProviderRowEditors {
     let id_input = ctx.add_typed_action_view(|ctx| {
-        let mut input = SubmittableTextInput::new(ctx);
+        let mut input = SubmittableTextInput::new(ctx).keep_buffer_on_submit();
         input.set_placeholder_text("provider id (e.g. openai-prod)", ctx);
         input
     });
@@ -861,7 +906,7 @@ fn make_provider_row_editors(
     });
 
     let model_input = ctx.add_typed_action_view(|ctx| {
-        let mut input = SubmittableTextInput::new(ctx);
+        let mut input = SubmittableTextInput::new(ctx).keep_buffer_on_submit();
         input.set_placeholder_text("model id (e.g. gpt-4o)", ctx);
         input
     });
@@ -872,7 +917,7 @@ fn make_provider_row_editors(
     });
 
     let base_url_input = ctx.add_typed_action_view(|ctx| {
-        let mut input = SubmittableTextInput::new(ctx);
+        let mut input = SubmittableTextInput::new(ctx).keep_buffer_on_submit();
         input.set_placeholder_text("https://api.openai.com/v1 (optional)", ctx);
         input
     });
@@ -946,16 +991,18 @@ impl TypedActionView for OmwAgentPageView {
         // method so the pure reducer + side-effecting `apply` keep their
         // single source of truth. `notify()` so the new state is
         // re-rendered on the next frame.
-        // Discard/Add/Remove are structural — every editor buffer must
-        // re-sync with the form. Other Set* actions are scalar and we
-        // only restore the specific input that just submitted (after
-        // dispatch, below) so we don't blank away neighboring fields'
-        // typed-but-not-committed text.
+        // Structural actions (rows added/removed/discarded) and Apply
+        // (rows may reorder back from cfg, api_key_input is cleared as
+        // a secret, etc.) require a full editor buffer re-sync from
+        // form state. Other Set* actions are scalar and the
+        // SubmittableTextInput's `keep_buffer_on_submit` opt-in already
+        // preserves the user's typed buffer, so no refresh is needed.
         let needs_full_buffer_refresh = matches!(
             action,
             OmwAgentPageAction::Discard
                 | OmwAgentPageAction::AddProvider
                 | OmwAgentPageAction::RemoveProvider(_)
+                | OmwAgentPageAction::Apply
         );
         // Before Apply: flush any typed-but-not-yet-submitted text from
         // each row's editor inputs into form state. Without this, users
@@ -974,70 +1021,8 @@ impl TypedActionView for OmwAgentPageView {
             // Re-sync every editor buffer from the (possibly mutated)
             // form so typed values keep showing the canonical text.
             self.refresh_editor_buffers(ctx);
-        } else {
-            // Targeted restore: SubmittableTextInput.on_try_submit
-            // clears its own editor buffer after emitting Submit, which
-            // makes the field appear blank to the user even though the
-            // value lives in form state. Re-set the buffer for the
-            // specific input that just dispatched so the user sees what
-            // they typed. We deliberately do NOT restore the api_key
-            // input — keeping the secret out of the on-screen buffer
-            // is by design.
-            match action {
-                OmwAgentPageAction::SetProviderId(idx, _) => {
-                    self.refresh_id_buffer(*idx, ctx);
-                }
-                OmwAgentPageAction::SetProviderModel(idx, _) => {
-                    self.refresh_model_buffer(*idx, ctx);
-                }
-                OmwAgentPageAction::SetProviderBaseUrl(idx, _) => {
-                    self.refresh_base_url_buffer(*idx, ctx);
-                }
-                _ => {}
-            }
         }
         ctx.notify();
-    }
-}
-
-impl OmwAgentPageView {
-    fn refresh_id_buffer(&mut self, idx: usize, ctx: &mut ViewContext<Self>) {
-        let text = self
-            .state
-            .form
-            .providers
-            .get(idx)
-            .map(|r| r.id.clone())
-            .unwrap_or_default();
-        if let Some(editors) = self.provider_editors.get(idx) {
-            set_input_text(&editors.id_input, &text, ctx);
-        }
-    }
-
-    fn refresh_model_buffer(&mut self, idx: usize, ctx: &mut ViewContext<Self>) {
-        let text = self
-            .state
-            .form
-            .providers
-            .get(idx)
-            .map(|r| r.model.clone())
-            .unwrap_or_default();
-        if let Some(editors) = self.provider_editors.get(idx) {
-            set_input_text(&editors.model_input, &text, ctx);
-        }
-    }
-
-    fn refresh_base_url_buffer(&mut self, idx: usize, ctx: &mut ViewContext<Self>) {
-        let text = self
-            .state
-            .form
-            .providers
-            .get(idx)
-            .map(|r| r.base_url.clone())
-            .unwrap_or_default();
-        if let Some(editors) = self.provider_editors.get(idx) {
-            set_input_text(&editors.base_url_input, &text, ctx);
-        }
     }
 }
 
@@ -1444,13 +1429,16 @@ impl SettingsWidget for OmwAgentPageWidget {
                     ProviderKindForm::OpenAiCompatible => "openai-compat",
                     ProviderKindForm::Ollama => "ollama",
                 };
-                // Header line: id summary + default marker.
+                // Header line: position + kind + default marker. The id
+                // is shown in the editable input below; including it
+                // here too caused a visible mismatch when the user typed
+                // a new id but hadn't pressed Enter yet (form state
+                // lagging the buffer).
                 col.add_child(
                     Container::new(
                         Text::new(
                             format!(
-                                "Provider #{idx}: {} [{}]{}",
-                                row.id,
+                                "Provider #{idx} [{}]{}",
                                 kind_str,
                                 if is_default { " ★ default" } else { "" }
                             ),
@@ -1708,8 +1696,14 @@ impl SettingsWidget for OmwAgentPageWidget {
         // intact for non-dropdown handlers.
         let page = col.finish();
         if view.state.default_provider_dropdown.is_expanded {
+            // Listen for mouse_UP, not mouse_down. Buttons (Hoverable)
+            // fire their on_click on LeftMouseUp; using mouse_down here
+            // would Close the dropdown before the menu item's button
+            // ever sees its mouse_up — the menu item would unrender mid-
+            // click and SetDefaultProviderById would never dispatch, so
+            // the user's selection silently failed to take effect.
             EventHandler::new(page)
-                .on_left_mouse_down(|ctx, _, _| {
+                .on_left_mouse_up(|ctx, _, _| {
                     ctx.dispatch_typed_action(
                         OmwAgentPageAction::CloseDefaultProviderDropdown,
                     );

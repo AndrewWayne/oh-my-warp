@@ -223,6 +223,9 @@ impl SessionRegistry {
             cmd = cmd.cwd(cwd.clone());
         }
         if let Some(env) = &spec.env {
+            if advertises_color_terminal(env) {
+                cmd = cmd.env_remove("NO_COLOR").env_remove("NODE_DISABLE_COLORS");
+            }
             for (k, v) in env {
                 cmd = cmd.env(k, v);
             }
@@ -320,7 +323,10 @@ impl SessionRegistry {
     /// Register an externally-owned session — one whose I/O is provided as
     /// channels and whose lifecycle is driven by a caller-supplied `kill`
     /// closure rather than a `Pty` the registry owns.
-    pub async fn register_external(self: &Arc<Self>, spec: ExternalSessionSpec) -> Result<SessionId> {
+    pub async fn register_external(
+        self: &Arc<Self>,
+        spec: ExternalSessionSpec,
+    ) -> Result<SessionId> {
         let id: SessionId = uuid::Uuid::new_v4();
         let created_at = Utc::now();
         let alive = Arc::new(AtomicBool::new(true));
@@ -394,9 +400,7 @@ impl SessionRegistry {
             let entry = map.get(&id).ok_or(Error::NotFound(id))?;
             match &entry.source {
                 SessionSource::Owned { writer, .. } => InputHandle::Owned(writer.clone()),
-                SessionSource::External { input_tx, .. } => {
-                    InputHandle::External(input_tx.clone())
-                }
+                SessionSource::External { input_tx, .. } => InputHandle::External(input_tx.clone()),
             }
         };
 
@@ -602,5 +606,36 @@ impl SessionRegistry {
         // is a no-op for external since `kill` was already taken above.
         drop(entry);
         Ok(())
+    }
+}
+
+fn advertises_color_terminal(env: &HashMap<String, String>) -> bool {
+    env.get("COLORTERM").is_some_and(|v| !v.is_empty())
+        || env
+            .get("TERM")
+            .is_some_and(|v| v.contains("256color") || v.contains("truecolor"))
+        || env.get("FORCE_COLOR").is_some_and(|v| v != "0")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::advertises_color_terminal;
+    use std::collections::HashMap;
+
+    #[test]
+    fn advertises_color_terminal_from_truecolor_or_256color_env() {
+        let mut env = HashMap::new();
+        assert!(!advertises_color_terminal(&env));
+
+        env.insert("TERM".to_string(), "xterm-256color".to_string());
+        assert!(advertises_color_terminal(&env));
+
+        env.clear();
+        env.insert("COLORTERM".to_string(), "truecolor".to_string());
+        assert!(advertises_color_terminal(&env));
+
+        env.clear();
+        env.insert("FORCE_COLOR".to_string(), "1".to_string());
+        assert!(advertises_color_terminal(&env));
     }
 }

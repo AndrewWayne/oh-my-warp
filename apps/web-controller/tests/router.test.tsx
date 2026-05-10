@@ -45,5 +45,45 @@ describe("App routing", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/host-42/)).toBeInTheDocument();
     expect(screen.getByText(/sess-7/)).toBeInTheDocument();
+    expect(screen.getByTestId("app-root")).toHaveClass(
+      "fixed",
+      "inset-0",
+      "overflow-hidden",
+      "sm:static",
+    );
+    expect(screen.getByTestId("app-header")).toHaveClass("hidden", "sm:block");
+    expect(screen.getByTestId("app-main")).toHaveClass(
+      "overflow-hidden",
+      "p-0",
+      "sm:p-4",
+    );
+  });
+
+  it("locks document scroll while the terminal route is mounted", () => {
+    const { unmount } = render(
+      <MemoryRouter initialEntries={["/terminal/host-42/sess-7"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(document.documentElement.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.overscrollBehavior).toBe("none");
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.body.style.overscrollBehavior).toBe("none");
+    expect(document.body.style.position).toBe("fixed");
+    expect(document.body.style.inset).toBe("0");
+    expect(document.body.style.width).toBe("100%");
+    expect(document.body.style.height).toBe("100%");
+
+    unmount();
+
+    expect(document.documentElement.style.overflow).toBe("");
+    expect(document.documentElement.style.overscrollBehavior).toBe("");
+    expect(document.body.style.overflow).toBe("");
+    expect(document.body.style.overscrollBehavior).toBe("");
+    expect(document.body.style.position).toBe("");
+    expect(document.body.style.inset).toBe("");
+    expect(document.body.style.width).toBe("");
+    expect(document.body.style.height).toBe("");
   });
 });

@@ -7,6 +7,8 @@
   ],
   "scripts": {
     "build": "cargo build --workspace && npm run build --workspaces --if-present",
-    "build:release": "cargo build --workspace --release && npm run build --workspaces --if-present"
+    "build:release": "cargo build --workspace --release && npm run build --workspaces --if-present",
+    "qa:mobile-web": "node scripts/qa/mobile-web-controller-host.mjs",
+    "qa:mobile-web:auto": "node scripts/qa/mobile-web-controller-auto.mjs"
   }
 }

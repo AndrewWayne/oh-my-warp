@@ -52,6 +52,7 @@ fn form_to_config_round_trip_with_openai_provider() {
             key_ref_token: "keychain:omw/openai-prod".to_string(),
             api_key_input: String::new(),
         }],
+        agents_md_path: String::new(),
     };
     let cfg = form_to_config(&form, &BTreeMap::new()).unwrap();
     let back = form_from_config(&cfg);
@@ -73,6 +74,7 @@ fn form_to_config_round_trip_with_ollama_no_key() {
             key_ref_token: String::new(),
             api_key_input: String::new(),
         }],
+        agents_md_path: String::new(),
     };
     let cfg = form_to_config(&form, &BTreeMap::new()).unwrap();
     assert!(matches!(
@@ -97,6 +99,7 @@ fn validate_rejects_invalid_provider_id() {
             key_ref_token: "keychain:omw/foo".to_string(),
             api_key_input: String::new(),
         }],
+        agents_md_path: String::new(),
     };
     let err = validate_form(&form).unwrap_err();
     assert!(matches!(err[0], FormError::InvalidProviderId(_)));
@@ -119,6 +122,7 @@ fn validate_rejects_duplicate_provider_id() {
         approval_mode: ApprovalMode::AskBeforeWrite,
         default_provider: None,
         providers: vec![row.clone(), row],
+        agents_md_path: String::new(),
     };
     let err = validate_form(&form).unwrap_err();
     assert!(err.iter().any(|e| matches!(e, FormError::DuplicateProviderId(_))));
@@ -138,6 +142,7 @@ fn validate_requires_base_url_for_openai_compatible() {
             key_ref_token: "keychain:omw/azure".to_string(),
             api_key_input: String::new(),
         }],
+        agents_md_path: String::new(),
     };
     let err = validate_form(&form).unwrap_err();
     assert!(err.iter().any(|e| matches!(e, FormError::BaseUrlRequired(_))));
@@ -150,6 +155,7 @@ fn validate_rejects_default_pointing_at_missing_provider() {
         approval_mode: ApprovalMode::AskBeforeWrite,
         default_provider: Some("ghost".to_string()),
         providers: vec![],
+        agents_md_path: String::new(),
     };
     let err = validate_form(&form).unwrap_err();
     assert!(err.iter().any(|e| matches!(e, FormError::DefaultProviderMissing(_))));
@@ -169,6 +175,7 @@ fn validate_requires_key_for_openai_when_no_existing_keyref_and_no_paste() {
             key_ref_token: String::new(),
             api_key_input: String::new(),
         }],
+        agents_md_path: String::new(),
     };
     let err = validate_form(&form).unwrap_err();
     assert!(err.iter().any(|e| matches!(e, FormError::ApiKeyRequired(_))));
@@ -200,6 +207,7 @@ fn validate_skips_completeness_for_non_default_rows() {
                 api_key_input: String::new(),
             },
         ],
+        agents_md_path: String::new(),
     };
     assert!(validate_form(&form).is_ok());
 }
@@ -218,6 +226,7 @@ fn validate_still_runs_syntactic_checks_on_non_default_rows() {
             key_ref_token: String::new(),
             api_key_input: String::new(),
         }],
+        agents_md_path: String::new(),
     };
     let err = validate_form(&form).unwrap_err();
     assert!(err.iter().any(|e| matches!(e, FormError::InvalidProviderId(_))));
@@ -247,6 +256,7 @@ fn form_to_config_skips_incomplete_non_default_rows() {
                 api_key_input: String::new(),
             },
         ],
+        agents_md_path: String::new(),
     };
     let cfg = form_to_config(&form, &BTreeMap::new()).unwrap();
     assert_eq!(cfg.providers.len(), 1, "incomplete stub should not be serialized");
@@ -272,6 +282,7 @@ fn validate_no_default_means_no_completeness_required() {
             key_ref_token: String::new(),
             api_key_input: String::new(),
         }],
+        agents_md_path: String::new(),
     };
     assert!(validate_form(&form).is_ok());
 }
@@ -785,4 +796,59 @@ fn apply_discard_resets_form_and_clears_pending() {
     assert!(s.form.agent_enabled);
     assert!(s.pending_secrets.is_empty());
     assert!(!s.is_dirty);
+}
+
+// ---------------- AGENTS.md path field ----------------
+
+#[test]
+fn apply_set_agents_md_path_trims_and_stores() {
+    let mut s = empty_state();
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetAgentsMdPath("  /Users/me/AGENTS.md  ".into()),
+    );
+    assert_eq!(s.form.agents_md_path, "/Users/me/AGENTS.md");
+    assert!(s.is_dirty);
+}
+
+#[test]
+fn apply_set_agents_md_path_empty_clears_field() {
+    let mut s = empty_state();
+    s.form.agents_md_path = "/old/path.md".into();
+    apply_action(&mut s, OmwAgentPageAction::SetAgentsMdPath(String::new()));
+    assert!(s.form.agents_md_path.is_empty());
+}
+
+#[test]
+fn form_to_config_round_trips_agents_md_path() {
+    let form = OmwAgentForm {
+        agent_enabled: true,
+        approval_mode: ApprovalMode::AskBeforeWrite,
+        default_provider: None,
+        providers: vec![],
+        agents_md_path: "/Users/me/dotfiles/AGENTS.md".into(),
+    };
+    let cfg = form_to_config(&form, &BTreeMap::new()).unwrap();
+    assert_eq!(
+        cfg.agent.agents_md_path.as_ref().and_then(|p| p.to_str()),
+        Some("/Users/me/dotfiles/AGENTS.md"),
+    );
+    let back = form_from_config(&cfg);
+    assert_eq!(back.agents_md_path, form.agents_md_path);
+}
+
+#[test]
+fn form_to_config_empty_agents_md_path_serializes_as_none() {
+    let form = OmwAgentForm {
+        agent_enabled: true,
+        approval_mode: ApprovalMode::AskBeforeWrite,
+        default_provider: None,
+        providers: vec![],
+        agents_md_path: "   ".into(), // whitespace-only, treated as unset
+    };
+    let cfg = form_to_config(&form, &BTreeMap::new()).unwrap();
+    assert!(
+        cfg.agent.agents_md_path.is_none(),
+        "whitespace-only path must serialize as None"
+    );
 }

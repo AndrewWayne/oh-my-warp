@@ -5,6 +5,7 @@
 //! private-IP blocking would break the local-Ollama default and was deferred.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use crate::key_ref::KeyRef;
@@ -301,11 +302,21 @@ pub struct ApprovalConfig {
 #[serde(default)]
 pub struct AgentConfig {
     pub enabled: bool,
+    /// Path to a user-managed AGENTS.md. When set and readable, its
+    /// contents are copied to the canonical AGENTS.md location on every
+    /// session create (see `crate::sync_agents_md`). Empty / unset →
+    /// the canonical file is used as-is (or no system prompt if that
+    /// file is also missing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents_md_path: Option<PathBuf>,
 }
 
 impl Default for AgentConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            agents_md_path: None,
+        }
     }
 }
 
@@ -641,5 +652,32 @@ enabled = false
         let s = toml::to_string(&cfg).unwrap();
         let round: Config = toml::from_str(&s).unwrap();
         assert!(!round.agent.enabled);
+    }
+
+    #[test]
+    fn agent_block_round_trips_agents_md_path() {
+        let toml = r#"
+[agent]
+enabled = true
+agents_md_path = "/Users/me/dotfiles/AGENTS.md"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            cfg.agent.agents_md_path,
+            Some(PathBuf::from("/Users/me/dotfiles/AGENTS.md"))
+        );
+        let s = toml::to_string(&cfg).unwrap();
+        let round: Config = toml::from_str(&s).unwrap();
+        assert_eq!(round.agent.agents_md_path, cfg.agent.agents_md_path);
+    }
+
+    #[test]
+    fn agents_md_path_omitted_when_unset() {
+        let cfg = Config::default();
+        let s = toml::to_string(&cfg).unwrap();
+        assert!(
+            !s.contains("agents_md_path"),
+            "default config must not serialize agents_md_path key"
+        );
     }
 }

@@ -1477,6 +1477,29 @@ fn build_session_params_from_config(
         omw_config::ApprovalMode::Trusted => Some("trusted".into()),
     };
 
+    // Best-effort: ensure the canonical AGENTS.md exists (writes the
+    // bundled baseline on first run), re-sync the user-managed source
+    // path → canonical path if set, then load the canonical contents
+    // as the session's system prompt. Any failure (path resolution,
+    // missing source, oversize file, write perms) is logged and
+    // treated as "no system prompt" so a broken AGENTS.md never blocks
+    // session creation.
+    if let Err(e) = omw_config::bootstrap_agents_md_if_missing() {
+        log::warn!("omw# input: AGENTS.md bootstrap failed: {e}");
+    }
+    if let Err(e) =
+        omw_config::sync_agents_md(cfg.agent.agents_md_path.as_deref())
+    {
+        log::warn!("omw# input: AGENTS.md sync failed: {e}");
+    }
+    let system_prompt = match omw_config::read_agents_md() {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("omw# input: AGENTS.md read failed: {e}");
+            None
+        }
+    };
+
     Ok(crate::ai_assistant::omw_agent_state::OmwAgentSessionParams {
         provider_kind: provider.kind_str().to_string(),
         key_ref: provider.key_ref().map(|k| k.to_string()),
@@ -1496,7 +1519,7 @@ fn build_session_params_from_config(
             .default_model()
             .map(|s| s.to_string())
             .unwrap_or_default(),
-        system_prompt: None,
+        system_prompt,
         cwd: None,
         approval_mode,
     })

@@ -118,6 +118,7 @@ fn clicking_apply_writes_to_temp_config_path() {
             key_ref_token: "keychain:omw/openai-prod".to_string(),
             api_key_input: String::new(),
         }],
+        agents_md_path: String::new(),
     };
     view.state.is_dirty = true;
 

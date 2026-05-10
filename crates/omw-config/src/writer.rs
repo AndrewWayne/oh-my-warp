@@ -88,6 +88,19 @@ fn apply_managed_fields(doc: &mut DocumentMut, cfg: &Config) {
     // [agent]
     let agent = doc["agent"].or_insert(toml_edit::table());
     agent["enabled"] = value(cfg.agent.enabled);
+    let agents_md_path_str = cfg
+        .agent
+        .agents_md_path
+        .as_ref()
+        .and_then(|p| p.to_str())
+        .map(|s| s.to_owned());
+    let agent_tbl = agent.as_table_mut().expect("agent must be a table");
+    match &agents_md_path_str {
+        Some(s) => agent_tbl["agents_md_path"] = value(s.as_str()),
+        None => {
+            agent_tbl.remove("agents_md_path");
+        }
+    }
 
     // [providers]
     let providers = doc["providers"].or_insert(toml_edit::table());

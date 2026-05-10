@@ -7,6 +7,7 @@
 #![cfg(feature = "omw_local")]
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use omw_config::{
@@ -20,6 +21,11 @@ pub struct OmwAgentForm {
     pub approval_mode: ApprovalMode,
     pub default_provider: Option<String>,
     pub providers: Vec<ProviderRow>,
+    /// User-supplied path to a source AGENTS.md. Empty string = unset
+    /// (the canonical AGENTS.md is used as-is, or no system prompt if
+    /// it's also missing). On Apply, a non-empty path is synced to the
+    /// canonical location before save.
+    pub agents_md_path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +99,7 @@ pub enum OmwAgentPageAction {
     SetDefaultProviderById(Option<String>),
     ToggleDefaultProviderDropdown,
     CloseDefaultProviderDropdown,
+    SetAgentsMdPath(String),
     Apply,
     Discard,
 }
@@ -154,6 +161,13 @@ pub fn form_from_config_with_order(
         approval_mode: cfg.approval.mode,
         default_provider: cfg.default_provider.as_ref().map(|p| p.as_str().to_string()),
         providers,
+        agents_md_path: cfg
+            .agent
+            .agents_md_path
+            .as_ref()
+            .and_then(|p| p.to_str())
+            .map(|s| s.to_owned())
+            .unwrap_or_default(),
     }
 }
 
@@ -360,6 +374,15 @@ pub fn form_to_config(
         .as_ref()
         .and_then(|s| ProviderId::from_str(s).ok());
 
+    let agents_md_path = {
+        let trimmed = form.agents_md_path.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(trimmed))
+        }
+    };
+
     Ok(Config {
         version: Default::default(),
         default_provider,
@@ -369,6 +392,7 @@ pub fn form_to_config(
         },
         agent: AgentConfig {
             enabled: form.agent_enabled,
+            agents_md_path,
         },
     })
 }
@@ -484,6 +508,12 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
         OmwAgentPageAction::CloseDefaultProviderDropdown => {
             state.default_provider_dropdown.is_expanded = false;
         }
+        OmwAgentPageAction::SetAgentsMdPath(s) => {
+            // Trim whitespace so an accidental trailing newline doesn't
+            // make the form look dirty. Empty string remains a valid
+            // "unset" sentinel.
+            state.form.agents_md_path = s.trim().to_owned();
+        }
         OmwAgentPageAction::Apply => {
             // Apply is a *side-effecting* action; the page glue (Task 6)
             // wraps this branch to call omw-keychain + writer. The pure
@@ -592,6 +622,10 @@ pub struct OmwAgentPageView {
     /// directly without rendering); fully populated when constructed
     /// via [`Self::new`] inside a real `ViewContext`.
     pub provider_editors: Vec<ProviderRowEditors>,
+    /// Input widget for the user-supplied AGENTS.md source path.
+    /// `None` when constructed via [`Self::new_inner`] (tests); `Some`
+    /// when constructed via [`Self::new`].
+    pub agents_md_path_input: Option<ViewHandle<SubmittableTextInput>>,
     page: PageType<Self>,
 }
 
@@ -607,6 +641,22 @@ impl OmwAgentPageView {
         for slot in 0..MAX_PROVIDER_SLOTS {
             me.provider_editors.push(make_provider_row_editors(slot, ctx));
         }
+        // AGENTS.md source-path input. Submit dispatches the same
+        // SetAgentsMdPath action exercised by the L3a logic test.
+        let agents_md_path_input = ctx.add_typed_action_view(|ctx| {
+            let mut input = SubmittableTextInput::new(ctx).keep_buffer_on_submit();
+            input.set_placeholder_text(
+                "/path/to/your/AGENTS.md (optional — leave blank to use canonical only)",
+                ctx,
+            );
+            input
+        });
+        ctx.subscribe_to_view(&agents_md_path_input, move |_, _, event, ctx| {
+            if let SubmittableTextInputEvent::Submit(s) = event {
+                ctx.dispatch_typed_action(&OmwAgentPageAction::SetAgentsMdPath(s.clone()));
+            }
+        });
+        me.agents_md_path_input = Some(agents_md_path_input);
         // Sync the editor buffers to the loaded form so the user sees
         // the existing values.
         me.refresh_editor_buffers(ctx);
@@ -625,6 +675,14 @@ impl OmwAgentPageView {
             Ok(p) => omw_config::Config::load_or_create_default(&p).unwrap_or_default(),
             Err(_) => omw_config::Config::default(),
         };
+        // Materialize the bundled AGENTS.md baseline on first launch so
+        // the canonical file is editable and discoverable (mirrors the
+        // load_or_create_default behavior for config.toml). Best-effort:
+        // a write failure here is non-fatal; the agent will fall back to
+        // no system prompt at session-create time.
+        if let Err(e) = omw_config::bootstrap_agents_md_if_missing() {
+            log::warn!("omw# settings: AGENTS.md bootstrap failed: {e}");
+        }
         let form = form_from_config(&cfg);
         Self {
             state: OmwAgentPageState {
@@ -651,6 +709,7 @@ impl OmwAgentPageView {
                 MouseStateHandle::default()
             }),
             provider_editors: Vec::new(),
+            agents_md_path_input: None,
             // is_dual_scrollable=true: long provider lists need to scroll;
             // PageType::wrap_dual_scrollable handles vertical clipping +
             // adds a horizontal scroll only when the window is narrower
@@ -678,6 +737,10 @@ impl OmwAgentPageView {
             set_input_text(&editors.model_input, &model_text, ctx);
             set_input_text(&editors.base_url_input, &base_url_text, ctx);
             set_input_text(&editors.api_key_input, "", ctx);
+        }
+        if let Some(input) = self.agents_md_path_input.clone() {
+            let path_text = self.state.form.agents_md_path.clone();
+            set_input_text(&input, &path_text, ctx);
         }
     }
 
@@ -810,6 +873,19 @@ impl OmwAgentPageView {
         if let Err(e) = omw_config::save_atomic(&path, &cfg) {
             self.state.last_save_error = Some(format!("save failed: {e}"));
             return;
+        }
+
+        // AGENTS.md sync: best-effort copy of the user's source file to
+        // the canonical location. A failure here does NOT roll back the
+        // TOML save — the next session-create will retry the sync via
+        // `omw_config::sync_agents_md` in `build_session_params_from_config`.
+        // We only log; surfacing this in last_save_error would be noisy
+        // (the most common reason is "user typed a path that doesn't
+        // exist yet", which is recoverable).
+        if let Err(e) =
+            omw_config::sync_agents_md(cfg.agent.agents_md_path.as_deref())
+        {
+            log::warn!("omw# settings: AGENTS.md sync on Apply failed: {e}");
         }
 
         // 6. Orphan cleanup. Any provider id that was in the previous
@@ -1079,6 +1155,21 @@ impl OmwAgentPageView {
                 apply_action(
                     &mut self.state,
                     OmwAgentPageAction::SetProviderApiKey(idx, api_key_text),
+                );
+            }
+        }
+        // AGENTS.md path: same pattern — read the editor buffer, dispatch
+        // SetAgentsMdPath if it differs from form state. Lets users click
+        // Apply without first hitting Enter on the field.
+        if let Some(input) = self.agents_md_path_input.clone() {
+            let text = input.read(ctx, |i, ctx| {
+                i.editor()
+                    .read(ctx, |e, ctx| e.buffer_text(ctx).trim().to_owned())
+            });
+            if text != self.state.form.agents_md_path {
+                apply_action(
+                    &mut self.state,
+                    OmwAgentPageAction::SetAgentsMdPath(text),
                 );
             }
         }
@@ -1360,6 +1451,48 @@ impl SettingsWidget for OmwAgentPageWidget {
             // page below doesn't jump as the dropdown opens/closes.
             col.add_child(
                 Container::new(Flex::column().finish())
+                    .with_margin_bottom(12.)
+                    .finish(),
+            );
+        }
+
+        // AGENTS.md source path. Submit copies the file contents to the
+        // canonical location used by the inline agent as its system
+        // prompt. Empty string = unset (canonical file is used as-is).
+        if let Some(input) = view.agents_md_path_input.as_ref() {
+            col.add_child(
+                Container::new(
+                    Text::new(
+                        "AGENTS.md source path:".to_owned(),
+                        appearance.ui_font_family(),
+                        CONTENT_FONT_SIZE,
+                    )
+                    .with_color(active)
+                    .finish(),
+                )
+                .with_margin_bottom(2.)
+                .finish(),
+            );
+            col.add_child(
+                Container::new(
+                    Text::new(
+                        format!(
+                            "    Synced to {} on Apply.",
+                            omw_config::agents_md_path()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_else(|_| "(canonical AGENTS.md path)".into()),
+                        ),
+                        appearance.ui_font_family(),
+                        CONTENT_FONT_SIZE,
+                    )
+                    .with_color(muted)
+                    .finish(),
+                )
+                .with_margin_bottom(4.)
+                .finish(),
+            );
+            col.add_child(
+                Container::new(ChildView::new(input).finish())
                     .with_margin_bottom(12.)
                     .finish(),
             );

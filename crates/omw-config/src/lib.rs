@@ -34,6 +34,183 @@ pub use writer::save_atomic;
 
 use std::path::{Path, PathBuf};
 
+/// Maximum size (bytes) for an AGENTS.md file. Files larger than this
+/// are silently skipped — `read_agents_md` returns `Ok(None)` and
+/// `sync_agents_md` treats the source as missing. Larger system prompts
+/// are almost always a misconfiguration (someone pointed the field at a
+/// large markdown export); we'd rather drop them than blow up the
+/// model's prompt budget.
+pub const AGENTS_MD_MAX_BYTES: u64 = 64 * 1024;
+
+/// Built-in baseline AGENTS.md, materialized to the canonical path on
+/// first run. Bundled at compile time so a fresh install ships with a
+/// useful system prompt instead of an empty one. Users can edit the
+/// file in place or replace it via Settings → Agent.
+pub const DEFAULT_AGENTS_MD: &str = include_str!("../assets/AGENTS.default.md");
+
+/// Resolve the canonical AGENTS.md path used by the inline agent.
+///
+/// Resolution order: `OMW_AGENTS_MD_PATH` env var (if non-empty) →
+/// `~/Library/Application Support/omw.local.warpOss/AGENTS.md` (macOS).
+/// Mirrors the `OMW_CONFIG` override pattern from [`config_path`] —
+/// tests + power users can redirect with the env var.
+///
+/// The canonical path matches the app data dir from `CLAUDE.md §5.1`.
+/// Linux/Windows resolution is deferred until those targets ship.
+pub fn agents_md_path() -> Result<PathBuf, ConfigError> {
+    if let Some(p) = std::env::var_os("OMW_AGENTS_MD_PATH") {
+        if !p.is_empty() {
+            return Ok(PathBuf::from(p));
+        }
+    }
+    Ok(home_dir()?
+        .join("Library")
+        .join("Application Support")
+        .join("omw.local.warpOss")
+        .join("AGENTS.md"))
+}
+
+/// Materialize the bundled [`DEFAULT_AGENTS_MD`] at the canonical path
+/// if no file exists there yet. Idempotent: existing files are never
+/// overwritten (the user may have edited them).
+///
+/// - `Ok(true)` if the file was written by this call.
+/// - `Ok(false)` if the file already existed (no-op).
+/// - `Err` on path-resolution / write failure.
+///
+/// Designed to be called eagerly on app startup AND defensively before
+/// every session create — the second-and-later call is just a `stat`.
+pub fn bootstrap_agents_md_if_missing() -> Result<bool, ConfigError> {
+    let dest = agents_md_path()?;
+    if dest.exists() {
+        return Ok(false);
+    }
+    if let Some(parent) = dest.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|source| ConfigError::Io {
+                path: dest.clone(),
+                source,
+            })?;
+        }
+    }
+    let mut tmp_name = dest
+        .file_name()
+        .ok_or_else(|| ConfigError::Io {
+            path: dest.clone(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "AGENTS.md path must have a file name",
+            ),
+        })?
+        .to_os_string();
+    tmp_name.push(".tmp");
+    let tmp = dest.with_file_name(tmp_name);
+    std::fs::write(&tmp, DEFAULT_AGENTS_MD.as_bytes()).map_err(|source| ConfigError::Io {
+        path: tmp.clone(),
+        source,
+    })?;
+    std::fs::rename(&tmp, &dest).map_err(|source| ConfigError::Io {
+        path: dest.clone(),
+        source,
+    })?;
+    Ok(true)
+}
+
+/// Read the canonical AGENTS.md if it exists.
+///
+/// - Returns `Ok(None)` if the file does not exist OR is larger than
+///   [`AGENTS_MD_MAX_BYTES`] (warn-logged, treated as absent).
+/// - Returns `Ok(Some(contents))` on success.
+/// - Returns `Err` on path-resolution failure or unrecoverable I/O
+///   error other than `NotFound`.
+///
+/// Caller is expected to be best-effort: a broken AGENTS.md must never
+/// block agent session creation.
+pub fn read_agents_md() -> Result<Option<String>, ConfigError> {
+    let path = agents_md_path()?;
+    read_capped(&path)
+}
+
+/// If `source` is set and points at a readable file under
+/// [`AGENTS_MD_MAX_BYTES`], copy its contents to [`agents_md_path`].
+///
+/// - `Ok(Some(contents))` on a successful copy.
+/// - `Ok(None)` if `source` is `None`, the source file is missing, or
+///   the source is over the size cap (logged).
+/// - `Err` on read/write I/O failure other than NotFound.
+///
+/// Idempotent: writing the same bytes twice has the same final state.
+/// Parent directory is created on demand. Atomic via tmp + rename,
+/// matching the config writer's pattern.
+pub fn sync_agents_md(source: Option<&Path>) -> Result<Option<String>, ConfigError> {
+    let Some(source) = source else {
+        return Ok(None);
+    };
+    let contents = match read_capped(source)? {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    let dest = agents_md_path()?;
+    if let Some(parent) = dest.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|source| ConfigError::Io {
+                path: dest.clone(),
+                source,
+            })?;
+        }
+    }
+    let mut tmp_name = dest
+        .file_name()
+        .ok_or_else(|| ConfigError::Io {
+            path: dest.clone(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "AGENTS.md path must have a file name",
+            ),
+        })?
+        .to_os_string();
+    tmp_name.push(".tmp");
+    let tmp = dest.with_file_name(tmp_name);
+    std::fs::write(&tmp, contents.as_bytes()).map_err(|source| ConfigError::Io {
+        path: tmp.clone(),
+        source,
+    })?;
+    std::fs::rename(&tmp, &dest).map_err(|source| ConfigError::Io {
+        path: dest.clone(),
+        source,
+    })?;
+    Ok(Some(contents))
+}
+
+fn read_capped(path: &Path) -> Result<Option<String>, ConfigError> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(ConfigError::Io {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    if metadata.len() > AGENTS_MD_MAX_BYTES {
+        eprintln!(
+            "omw-config: AGENTS.md at {} is {} bytes (cap {AGENTS_MD_MAX_BYTES}); skipping",
+            path.display(),
+            metadata.len()
+        );
+        return Ok(None);
+    }
+    match std::fs::read_to_string(path) {
+        Ok(s) => Ok(Some(s)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(ConfigError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
 /// Resolve the path to omw's TOML config file.
 ///
 /// Resolution order: `OMW_CONFIG` env var (if non-empty) → `XDG_CONFIG_HOME` /

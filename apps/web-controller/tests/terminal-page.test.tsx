@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import Terminal from "../src/pages/Terminal";
@@ -319,6 +319,30 @@ describe("Terminal page", () => {
     expect(stubConnection.sendInput).toHaveBeenCalledTimes(1);
     const sent = stubConnection.sendInput.mock.calls[0][0] as Uint8Array;
     expect(Array.from(sent)).toEqual(Array.from(terminalControlBytes("esc")));
+  });
+
+  it("hide keyboard control blurs xterm's hidden text input", async () => {
+    await seedPairing("h1");
+    renderAt("/terminal/h1/sess-7");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("conn-status").textContent).toMatch(/connected/i);
+    });
+
+    const textarea = screen
+      .getByTestId("xterm-container")
+      .querySelector("textarea");
+    expect(textarea).toBeInstanceOf(HTMLTextAreaElement);
+
+    (textarea as HTMLTextAreaElement).focus();
+    expect(document.activeElement).toBe(textarea);
+
+    const hideKeyboard = screen.getByRole("button", { name: /hide keyboard/i });
+    fireEvent.pointerDown(hideKeyboard, { pointerType: "touch" });
+    fireEvent.click(hideKeyboard);
+
+    expect(document.activeElement).not.toBe(textarea);
+    expect(stubConnection.sendInput).not.toHaveBeenCalled();
   });
 
   it("does not call sendInput when buttons are disconnected (disabled)", async () => {

@@ -136,6 +136,26 @@ export default function Terminal() {
     xtermRef.current?.scrollToBottom();
   }, []);
 
+  const hideTerminalKeyboard = useCallback(() => {
+    const root = containerRef.current;
+    if (!root) return;
+
+    const active = document.activeElement;
+    if (
+      active instanceof HTMLElement &&
+      root.contains(active) &&
+      isTerminalTextInput(active)
+    ) {
+      active.blur();
+      return;
+    }
+
+    const terminalInput = root.querySelector("textarea, input");
+    if (terminalInput instanceof HTMLElement) {
+      terminalInput.blur();
+    }
+  }, []);
+
   useEffect(() => {
     scheduleFit();
   }, [terminalHeight, viewport.offsetTop, scheduleFit]);
@@ -400,6 +420,7 @@ export default function Terminal() {
       <TerminalShortcutStrip
         enabled={status === "connected"}
         onSendBytes={sendTerminalBytes}
+        onHideKeyboard={hideTerminalKeyboard}
         onLayoutChange={scheduleFit}
         keyboardDock={keyboardDock}
       />
@@ -453,6 +474,10 @@ function StatusBadge({ status }: { status: Status }) {
 function isScrolledToBottom(xterm: XTerm): boolean {
   const activeBuffer = xterm.buffer.active;
   return activeBuffer.viewportY >= activeBuffer.baseY;
+}
+
+function isTerminalTextInput(element: Element): boolean {
+  return element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement;
 }
 
 function errStr(e: unknown): string {

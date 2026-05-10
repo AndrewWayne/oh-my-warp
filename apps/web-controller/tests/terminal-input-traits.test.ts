@@ -14,6 +14,16 @@ describe("configureTerminalInputTraits", () => {
     expect(textarea).toHaveAttribute("autocapitalize", "none");
     expect(textarea).toHaveAttribute("spellcheck", "false");
     expect(textarea).toHaveAttribute("enterkeyhint", "enter");
+    expect(textarea).toHaveAttribute("inputmode", "search");
+    expect(textarea).toHaveAttribute("aria-autocomplete", "none");
+    expect(textarea).toHaveAttribute("name", "omw-terminal-input");
+    expect(textarea).toHaveAttribute("data-terminal-input", "true");
+    expect(textarea).toHaveAttribute("autofill", "off");
+    expect(textarea).toHaveAttribute("autofill-prediction", "off");
+    expect(textarea).toHaveAttribute("data-form-type", "other");
+    expect(textarea).toHaveAttribute("data-lpignore", "true");
+    expect(textarea).toHaveAttribute("data-1p-ignore", "true");
+    expect(textarea).toHaveAttribute("data-bwignore", "true");
     expect(textarea.spellcheck).toBe(false);
   });
 });

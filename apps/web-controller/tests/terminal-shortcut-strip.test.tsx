@@ -1,20 +1,25 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import TerminalShortcutStrip from "../src/components/TerminalShortcutStrip";
 import { terminalControlBytes } from "../src/lib/terminal-control-bytes";
 
 describe("TerminalShortcutStrip", () => {
-  it("renders all primary keys", () => {
+  it("renders left/right arrows in the primary row without a redundant Enter key", () => {
     render(<TerminalShortcutStrip enabled onSendBytes={() => undefined} />);
-    expect(screen.getByRole("button", { name: /shift.?tab/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^esc$/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^tab$/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /\^C/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /arrow up/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /arrow down/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^enter$/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /more/i })).toBeInTheDocument();
+    const primary = within(screen.getByTestId("terminal-shortcut-primary-row"));
+
+    expect(primary.getByRole("button", { name: /shift.?tab/i })).toBeInTheDocument();
+    expect(primary.getByRole("button", { name: /^esc$/i })).toBeInTheDocument();
+    expect(primary.getByRole("button", { name: /^tab$/i })).toBeInTheDocument();
+    expect(primary.getByRole("button", { name: /\^C/i })).toBeInTheDocument();
+    expect(primary.getByRole("button", { name: /arrow up/i })).toBeInTheDocument();
+    expect(primary.getByRole("button", { name: /arrow down/i })).toBeInTheDocument();
+    expect(primary.getByRole("button", { name: /arrow left/i })).toBeInTheDocument();
+    expect(primary.getByRole("button", { name: /arrow right/i })).toBeInTheDocument();
+    expect(primary.getByRole("button", { name: /more/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^enter$/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /hide keyboard/i })).toBeInTheDocument();
   });
 
   it("keeps the primary controls in one 44px-tall horizontal lane", () => {
@@ -25,10 +30,30 @@ describe("TerminalShortcutStrip", () => {
     expect(primaryRow).toHaveClass("flex-nowrap");
     expect(primaryRow).toHaveClass("overflow-x-auto");
     expect(primaryRow).toHaveClass("justify-between");
-    for (const btn of screen.getAllByRole("button")) {
-      expect(btn).toHaveClass("w-11");
+    expect(primaryRow).toHaveClass("gap-px");
+    const shortcutButtons = within(primaryRow).getAllByRole("button");
+    for (const btn of shortcutButtons) {
+      expect(btn).toHaveClass("w-[34px]");
       expect(btn).toHaveClass("h-11");
     }
+  });
+
+  it("keeps the compact row within a 375px phone width", () => {
+    const surfacePaddingX = 8;
+    const primaryButtons = 9;
+    const primaryButtonWidth = 34;
+    const primaryButtonGaps = 8;
+    const topRowGap = 1;
+    const hideButtonWidth = 34;
+
+    const minimumWidth =
+      surfacePaddingX +
+      primaryButtons * primaryButtonWidth +
+      primaryButtonGaps +
+      topRowGap +
+      hideButtonWidth;
+
+    expect(minimumWidth).toBeLessThanOrEqual(375);
   });
 
   it("can dock the surface to the visual viewport while preserving layout space", () => {
@@ -51,26 +76,47 @@ describe("TerminalShortcutStrip", () => {
     });
   });
 
-  it("calls onSendBytes with the exact bytes for the tapped primary key", async () => {
-    const user = userEvent.setup();
+  it("sends primary shortcuts on pointerdown and suppresses the follow-up click", () => {
     const onSendBytes = vi.fn();
     render(<TerminalShortcutStrip enabled onSendBytes={onSendBytes} />);
+    const btn = screen.getByRole("button", { name: /shift.?tab/i });
 
-    await user.click(screen.getByRole("button", { name: /shift.?tab/i }));
+    fireEvent.pointerDown(btn, { pointerType: "touch" });
     expect(onSendBytes).toHaveBeenCalledTimes(1);
     expect(Array.from(onSendBytes.mock.calls[0][0])).toEqual(
       Array.from(terminalControlBytes("shift-tab")),
     );
 
-    await user.click(screen.getByRole("button", { name: /^esc$/i }));
-    expect(Array.from(onSendBytes.mock.calls[1][0])).toEqual(
+    fireEvent.click(btn);
+    expect(onSendBytes).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps keyboard-activated shortcut clicks working", () => {
+    const onSendBytes = vi.fn();
+    render(<TerminalShortcutStrip enabled onSendBytes={onSendBytes} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^esc$/i }));
+    expect(onSendBytes).toHaveBeenCalledTimes(1);
+    expect(Array.from(onSendBytes.mock.calls[0][0])).toEqual(
       Array.from(terminalControlBytes("esc")),
     );
+  });
 
-    await user.click(screen.getByRole("button", { name: /\^C/i }));
-    expect(Array.from(onSendBytes.mock.calls[2][0])).toEqual(
-      Array.from(terminalControlBytes("ctrl-c")),
+  it("sends overflow shortcuts on pointerdown and suppresses the follow-up click", async () => {
+    const user = userEvent.setup();
+    const onSendBytes = vi.fn();
+    render(<TerminalShortcutStrip enabled onSendBytes={onSendBytes} />);
+    await user.click(screen.getByRole("button", { name: /more/i }));
+    const btn = screen.getByRole("button", { name: /\^D/i });
+
+    fireEvent.pointerDown(btn, { pointerType: "touch" });
+    expect(onSendBytes).toHaveBeenCalledTimes(1);
+    expect(Array.from(onSendBytes.mock.calls[0][0])).toEqual(
+      Array.from(terminalControlBytes("ctrl-d")),
     );
+
+    fireEvent.click(btn);
+    expect(onSendBytes).toHaveBeenCalledTimes(1);
   });
 
   it("disables every button when enabled is false", () => {
@@ -106,7 +152,18 @@ describe("TerminalShortcutStrip", () => {
     expect(screen.queryByRole("button", { name: /\^L/i })).toBeNull();
   });
 
-  it("toggles the overflow drawer when more is tapped", async () => {
+  it("opens the overflow drawer on pointerdown without closing on the follow-up click", () => {
+    render(<TerminalShortcutStrip enabled onSendBytes={() => undefined} />);
+    const more = screen.getByRole("button", { name: /more/i });
+
+    fireEvent.pointerDown(more, { pointerType: "touch" });
+    expect(screen.getByTestId("terminal-shortcut-overflow")).toBeInTheDocument();
+
+    fireEvent.click(more);
+    expect(screen.getByTestId("terminal-shortcut-overflow")).toBeInTheDocument();
+  });
+
+  it("toggles the overflow drawer when more is tapped without duplicating primary arrows", async () => {
     const user = userEvent.setup();
     render(<TerminalShortcutStrip enabled onSendBytes={() => undefined} />);
     const more = screen.getByRole("button", { name: /more/i });
@@ -117,24 +174,45 @@ describe("TerminalShortcutStrip", () => {
     expect(screen.getByRole("button", { name: /\//i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /\|/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /\?/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /arrow left/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /arrow right/i })).toBeInTheDocument();
+    const overflow = within(screen.getByTestId("terminal-shortcut-overflow"));
+    expect(overflow.queryByRole("button", { name: /arrow left/i })).toBeNull();
+    expect(overflow.queryByRole("button", { name: /arrow right/i })).toBeNull();
 
     await user.click(more);
     expect(screen.queryByRole("button", { name: /\^D/i })).toBeNull();
   });
 
-  it("overflow key tap sends bytes and keeps the drawer open", async () => {
-    const user = userEvent.setup();
+  it("hide keyboard button is compact and calls the hide callback without sending bytes", () => {
+    const onSendBytes = vi.fn();
+    const onHideKeyboard = vi.fn();
+    render(
+      <TerminalShortcutStrip
+        enabled
+        onSendBytes={onSendBytes}
+        onHideKeyboard={onHideKeyboard}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: /hide keyboard/i });
+
+    expect(btn).toHaveClass("w-[34px]");
+    fireEvent.pointerDown(btn, { pointerType: "touch" });
+    fireEvent.click(btn);
+    expect(onHideKeyboard).toHaveBeenCalledTimes(1);
+    expect(onSendBytes).not.toHaveBeenCalled();
+  });
+
+  it("does not double-send when two pointer activations resolve clicks out of order", () => {
     const onSendBytes = vi.fn();
     render(<TerminalShortcutStrip enabled onSendBytes={onSendBytes} />);
-    await user.click(screen.getByRole("button", { name: /more/i }));
+    const esc = screen.getByRole("button", { name: /^esc$/i });
+    const tab = screen.getByRole("button", { name: /^tab$/i });
 
-    await user.click(screen.getByRole("button", { name: /\^D/i }));
-    expect(Array.from(onSendBytes.mock.calls[0][0])).toEqual(
-      Array.from(terminalControlBytes("ctrl-d")),
-    );
-    // Drawer remains open so the user can chain another control.
-    expect(screen.getByRole("button", { name: /\^L/i })).toBeInTheDocument();
+    fireEvent.pointerDown(esc, { pointerType: "touch" });
+    fireEvent.pointerDown(tab, { pointerType: "touch" });
+    expect(onSendBytes).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(esc);
+    fireEvent.click(tab);
+    expect(onSendBytes).toHaveBeenCalledTimes(2);
   });
 });

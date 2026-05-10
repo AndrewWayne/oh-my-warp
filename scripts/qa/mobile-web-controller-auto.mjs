@@ -13,6 +13,8 @@ const hostScript = join(repoRoot, "scripts/qa/mobile-web-controller-host.mjs");
 const distDir = join(repoRoot, "apps/web-controller/dist");
 const pairToken = "ABCD1234";
 const expectedSessionId = "11111111-1111-4111-8111-111111111111";
+const mobileViewportWidth = 375;
+const mobileViewportHeight = 844;
 
 const now = new Date();
 const stamp = now.toISOString().replace(/[:.]/g, "-");
@@ -88,7 +90,7 @@ async function main() {
     "--disable-background-networking",
     "--disable-extensions",
     "--disable-features=Translate,MediaRouter",
-    "--window-size=390,844",
+    `--window-size=${mobileViewportWidth},${mobileViewportHeight}`,
     "about:blank",
   ];
   if (!headed) chromeArgs.unshift("--headless=new");
@@ -127,26 +129,40 @@ async function main() {
 
       await assertNoHorizontalOverflow(cdp);
       await assertShortcutStripVisible(cdp);
+      await assertPrimaryShortcutRowFits(cdp);
 
       await tapSelector(cdp, '[data-testid="xterm-container"]');
       await delay(100);
-      await cdp.send("Input.insertText", { text: "echo qa-auto" });
+      await cdp.send("Input.insertText", { text: "echo qa-auto\r" });
       await delay(250);
-      await tapButton(cdp, "enter");
-      pass("normal terminal text and Enter were sent");
+      pass("normal terminal text and Return were sent");
 
-      for (const label of ["shift tab", "esc", "tab", "^C", "arrow up", "arrow down"]) {
+      for (const label of [
+        "shift tab",
+        "esc",
+        "tab",
+        "^C",
+        "arrow up",
+        "arrow down",
+        "arrow left",
+        "arrow right",
+      ]) {
         await tapButton(cdp, label);
       }
       await tapButton(cdp, "more");
       await waitForVisible(cdp, '[data-testid="terminal-shortcut-overflow"]');
       await screenshot(cdp, "02-more-drawer.png");
-      for (const label of ["^D", "^L", "/", "|", "?", "arrow left", "arrow right"]) {
+      for (const label of ["^D", "^L", "/", "|", "?"]) {
         await tapButton(cdp, label);
       }
       pass("primary and overflow terminal shortcuts were tapped");
 
-      await emulateKeyboard(cdp, { height: 520, width: 390, offsetTop: 0, offsetLeft: 0 });
+      await emulateKeyboard(cdp, {
+        height: 520,
+        width: mobileViewportWidth,
+        offsetTop: 0,
+        offsetLeft: 0,
+      });
       await waitFor(
         async () => {
           const dock = await evaluate(cdp, dockStateExpression());
@@ -158,7 +174,12 @@ async function main() {
       pass("shortcut strip docks to the visual viewport when keyboard is open");
       await screenshot(cdp, "03-keyboard-docked.png");
 
-      await emulateKeyboard(cdp, { height: 844, width: 390, offsetTop: 0, offsetLeft: 0 });
+      await emulateKeyboard(cdp, {
+        height: mobileViewportHeight,
+        width: mobileViewportWidth,
+        offsetTop: 0,
+        offsetLeft: 0,
+      });
       await waitFor(
         async () => {
           const dock = await evaluate(cdp, dockStateExpression());
@@ -251,10 +272,10 @@ async function setupMobilePage(cdp) {
     platform: "iPhone",
   });
   await cdp.send("Emulation.setDeviceMetricsOverride", {
-    width: 390,
-    height: 844,
-    screenWidth: 390,
-    screenHeight: 844,
+    width: mobileViewportWidth,
+    height: mobileViewportHeight,
+    screenWidth: mobileViewportWidth,
+    screenHeight: mobileViewportHeight,
     deviceScaleFactor: 3,
     mobile: true,
   });
@@ -269,8 +290,8 @@ function visualViewportQaShim() {
 (() => {
   const eventTarget = new EventTarget();
   let state = {
-    width: 390,
-    height: 844,
+    width: ${mobileViewportWidth},
+    height: ${mobileViewportHeight},
     offsetLeft: 0,
     offsetTop: 0,
     pageLeft: 0,
@@ -330,6 +351,26 @@ async function assertShortcutStripVisible(cdp) {
   pass("shortcut strip is visible", `${Math.round(rect.width)}x${Math.round(rect.height)}`);
 }
 
+async function assertPrimaryShortcutRowFits(cdp) {
+  const metrics = await evaluate(cdp, `(() => {
+    const row = document.querySelector('[data-testid="terminal-shortcut-primary-row"]');
+    if (!row) return null;
+    return {
+      clientWidth: row.clientWidth,
+      scrollWidth: row.scrollWidth,
+      buttonCount: row.querySelectorAll("button").length,
+    };
+  })()`);
+  if (!metrics) fail("primary shortcut row exists");
+  if (metrics.scrollWidth > metrics.clientWidth + 1) {
+    fail("primary shortcut row fits 375px phones", JSON.stringify(metrics));
+  }
+  pass(
+    "primary shortcut row fits 375px phones",
+    `${metrics.scrollWidth}/${metrics.clientWidth} with ${metrics.buttonCount} buttons`,
+  );
+}
+
 async function validateHostLogs(baseUrl) {
   const { logs } = await getJson(`${baseUrl}/qa/logs`);
   const wsOpenCount = logs.filter((entry) => entry.type === "ws-open").length;
@@ -359,14 +400,13 @@ async function validateHostLogs(baseUrl) {
     ["Ctrl-C", [3]],
     ["Up", [27, 91, 65]],
     ["Down", [27, 91, 66]],
-    ["Enter", [13]],
+    ["Left", [27, 91, 68]],
+    ["Right", [27, 91, 67]],
     ["Ctrl-D", [4]],
     ["Ctrl-L", [12]],
     ["Slash", [47]],
     ["Pipe", [124]],
     ["Question", [63]],
-    ["Left", [27, 91, 68]],
-    ["Right", [27, 91, 67]],
   ]);
   for (const [name, bytes] of expected) {
     const seen = inputFrames.some((entry) => sameBytes(entry.bytes, bytes));

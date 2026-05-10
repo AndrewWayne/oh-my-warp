@@ -65,6 +65,7 @@ See [`specs/fork-strategy.md`](./specs/fork-strategy.md) for the upstream-sync w
 
 - [PRD.md](./PRD.md) — product scope, principles, roadmap
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — how to contribute
+- [Mobile Web Controller Phone QA](./docs/mobile-web-controller-phone-qa.md) — phone and iOS simulator QA for terminal changes
 - [`specs/`](./specs/) — protocol specs, test plan, fork strategy
 
 ## License

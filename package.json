@@ -8,7 +8,18 @@
   "scripts": {
     "build": "cargo build --workspace && npm run build --workspaces --if-present",
     "build:release": "cargo build --workspace --release && npm run build --workspaces --if-present",
+    "qa:phone": "npm run qa:mobile-web:auto",
+    "qa:phone:ios": "npm run qa:mobile-ios:auto",
+    "qa:phone:claude": "npm run qa:mobile-ios:real-claude",
     "qa:mobile-web": "node scripts/qa/mobile-web-controller-host.mjs",
-    "qa:mobile-web:auto": "node scripts/qa/mobile-web-controller-auto.mjs"
+    "qa:mobile-web:auto": "node scripts/qa/mobile-web-controller-auto.mjs",
+    "qa:mobile-ios:install": "APPIUM_HOME=.tmp/appium NPM_CONFIG_CACHE=.tmp/npm-cache appium driver install xcuitest",
+    "qa:mobile-ios:doctor": "APPIUM_HOME=.tmp/appium NPM_CONFIG_CACHE=.tmp/npm-cache appium driver list --installed && APPIUM_HOME=.tmp/appium NPM_CONFIG_CACHE=.tmp/npm-cache appium driver doctor xcuitest && xcrun simctl list runtimes && xcrun simctl list devices available",
+    "qa:mobile-ios:auto": "node scripts/qa/mobile-ios-controller-auto.mjs",
+    "qa:mobile-ios:real-claude": "node scripts/qa/mobile-ios-controller-auto.mjs --real-claude"
+  },
+  "devDependencies": {
+    "appium": "^3.4.2",
+    "webdriverio": "^9.27.1"
   }
 }

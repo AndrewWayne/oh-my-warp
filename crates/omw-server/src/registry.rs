@@ -388,6 +388,21 @@ impl SessionRegistry {
     /// spec-provided mpsc Sender. Returns [`crate::Error::NotFound`] if the
     /// id is unknown.
     pub async fn write_input(&self, id: SessionId, bytes: &[u8]) -> Result<()> {
+        // Optional diagnostic mirror for mobile QA: OMW_INPUT_DUMP captures
+        // the raw bytes the phone sent into the PTY, complementing
+        // OMW_BYTE_DUMP's output-side capture.
+        if let Some(path) = std::env::var_os("OMW_INPUT_DUMP") {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                let _ = f.write_all(bytes);
+                let _ = f.flush();
+            }
+        }
+
         // Two-phase: extract the per-source handle under the sync mutex,
         // then perform the await outside the lock.
         enum InputHandle {

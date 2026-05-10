@@ -58,6 +58,19 @@ Project-local slash commands live under [`.claude/skills/`](./.claude/skills/). 
 
 All commands are read-only. None of them modify files, push to remote, or run real-API calls without explicit guards.
 
+## Phone / Web Controller QA
+
+If you change phone pairing, Web Controller terminal UI, mobile keyboard behavior,
+the shortcut strip, session navigation, or PTY WebSocket behavior, follow
+[Mobile Web Controller Phone QA](./docs/mobile-web-controller-phone-qa.md).
+
+Use the quick ladder:
+
+- `npm run qa:phone` — fast mobile Web Controller regression lane.
+- `npm run qa:phone:ios` — native Mobile Safari simulator lane.
+- `npm run qa:phone:claude` — native Mobile Safari against a real Claude Code
+  PTY in a disposable QA workspace.
+
 ## Pull requests
 
 Before opening a PR:

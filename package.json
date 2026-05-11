@@ -8,13 +8,11 @@
   "scripts": {
     "build": "cargo build --workspace && npm run build --workspaces --if-present",
     "build:release": "cargo build --workspace --release && npm run build --workspaces --if-present",
-    "qa:mobile:web": "node scripts/qa/mobile-web-controller-auto.mjs",
-    "qa:mobile:web:manual": "node scripts/qa/mobile-web-controller-host.mjs",
-    "qa:mobile:ios:install": "APPIUM_HOME=.tmp/appium NPM_CONFIG_CACHE=.tmp/npm-cache appium driver install xcuitest",
-    "qa:mobile:ios:doctor": "APPIUM_HOME=.tmp/appium NPM_CONFIG_CACHE=.tmp/npm-cache appium driver list --installed && APPIUM_HOME=.tmp/appium NPM_CONFIG_CACHE=.tmp/npm-cache appium driver doctor xcuitest && xcrun simctl list runtimes && xcrun simctl list devices available",
-    "qa:mobile:ios": "node scripts/qa/mobile-ios-controller-auto.mjs",
-    "qa:mobile:remote-control": "node scripts/qa/mobile-ios-controller-auto.mjs --remote-control --shell-first",
-    "qa:mobile:remote-control:manual": "node scripts/qa/mobile-remote-control-manual-host.mjs"
+    "qa:mobile": "node scripts/qa/mobile-web-controller-auto.mjs",
+    "qa:mobile:full": "node scripts/qa/mobile-ios-controller-auto.mjs --remote-control --shell-first",
+    "qa:mobile:manual": "node scripts/qa/mobile-remote-control-manual-host.mjs",
+    "qa:mobile:setup": "APPIUM_HOME=.tmp/appium NPM_CONFIG_CACHE=.tmp/npm-cache appium driver install xcuitest",
+    "qa:mobile:doctor": "APPIUM_HOME=.tmp/appium NPM_CONFIG_CACHE=.tmp/npm-cache appium driver list --installed && APPIUM_HOME=.tmp/appium NPM_CONFIG_CACHE=.tmp/npm-cache appium driver doctor xcuitest && xcrun simctl list runtimes && xcrun simctl list devices available"
   },
   "devDependencies": {
     "appium": "^3.4.2",

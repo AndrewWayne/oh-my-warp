@@ -1,7 +1,7 @@
 # Mobile Web Controller Phone QA
 
 This runbook verifies the current local branch before push. The fast lanes use
-the production Web Controller build served by a local mock omw host, so Safari
+the production Web Controller build served by a local mock omw host, so the browser
 exercises the real pairing, session, terminal, WebSocket, resize, and
 shortcut-strip code paths without needing a deployed build. The fullest local
 lane uses Simulator Safari against a real `omw-remote` server, a real shell,
@@ -9,20 +9,18 @@ Claude Code, and Codex CLI in a disposable QA workspace.
 
 ## Quick Start
 
-- `npm run qa:mobile:web` — run this on every phone terminal PR.
-- `npm run qa:mobile:ios` — add this when native Safari keyboard, shortcut, or
-  scroll behavior matters.
-- `npm run qa:mobile:remote-control` — add this before pushing terminal UX
-  changes that must work through the real omw remote-control path.
-- `npm run qa:mobile:remote-control:manual` — use this for hands-on Simulator
-  or physical-phone QA against a real shell, Claude Code, and Codex CLI.
+- `npm run qa:mobile` — run this on every phone terminal PR.
+- `npm run qa:mobile:full` — add this before pushing terminal UX changes that
+  must work through the real omw remote-control path.
+- `npm run qa:mobile:manual` — use this for hands-on Simulator or
+  physical-phone QA against a real shell, Claude Code, and Codex CLI.
 
 For one-time native iOS setup:
 
 ```bash
 npm install
-npm run qa:mobile:ios:install
-npm run qa:mobile:ios:doctor
+npm run qa:mobile:setup
+npm run qa:mobile:doctor
 ```
 
 ## When To Use
@@ -45,7 +43,7 @@ change touches behavior the browser automation cannot model.
    push.
 
    ```bash
-   npm run qa:mobile:web
+   npm run qa:mobile
    ```
 
    This builds the Web Controller, starts the local mock omw host on a free
@@ -69,78 +67,57 @@ change touches behavior the browser automation cannot model.
    iOS Safari. It does not prove the real iOS keyboard, the browser-owned
    autofill accessory row, or Safari's exact scroll physics.
 
-2. **Manual real-phone mock-host lane**: use when the change affects native
-   keyboard feel, thumb ergonomics, or browser chrome. Start the host with
-   `npm run qa:mobile:web:manual`, then open the printed URL on the iPhone.
+2. **Native iOS remote-control lane**: use before pushing terminal UX changes
+   that should hold up with the real remote-control server, shell, Claude Code,
+   and Codex CLI, not only the byte-asserting mock shell.
 
-3. **Native iOS automation lane**: use for pre-push Safari coverage when the
-   change touches native keyboard behavior, shortcut reachability with the
-   keyboard open, or touch scrolling.
+   ```bash
+   npm run qa:mobile:full
+   ```
+
+   This starts a QA-only `omw-remote` harness, opens Mobile Safari in the
+   simulator, creates a shell from Sessions, reconnects it, launches Claude Code
+   from the phone-started shell, verifies `/help`, returns to the shell, smokes
+   Codex CLI, stops the session, starts a fresh shell, and records PTY
+   input/output through `OMW_INPUT_DUMP` and `OMW_BYTE_DUMP`. It writes
+   screenshots plus byte-dump evidence under
+   `.gstack/qa-reports/mobile-ios-remote-control-*`.
+
+3. **Manual real remote-control lane**: use when the change affects native
+   keyboard feel, thumb ergonomics, browser chrome, or physical-phone behavior.
+   Start the host with `npm run qa:mobile:manual`, then open the printed URL on
+   the iPhone or Simulator.
 
    Local setup:
 
    ```bash
    npm install
-   npm run qa:mobile:ios:install
-   npm run qa:mobile:ios:doctor
+   npm run qa:mobile:setup
+   npm run qa:mobile:doctor
    ```
 
-   Run:
-
-   ```bash
-   npm run qa:mobile:ios
-   ```
-
-   `qa:mobile:ios:install` installs the XCUITest driver into repo-local
-   `.tmp/appium`, and `qa:mobile:ios:doctor` verifies the installed Appium
+   `qa:mobile:setup` installs the XCUITest driver into repo-local
+   `.tmp/appium`, and `qa:mobile:doctor` verifies the installed Appium
    driver plus available Xcode simulator runtimes/devices. On this Mac, the
    native QA simulator is named `omw QA iPhone`.
 
-   The runner starts the same mock host as the browser lane, boots Simulator
-   with the software keyboard forced on, launches real Mobile Safari through
-   Appium/XCUITest, opens the pair URL, and uses host WebSocket logs as the
-   source of truth for terminal input/control bytes. It captures screenshots at
-   terminal-connected, keyboard-visible, More-drawer, and scroll milestones.
-   The normal command builds the current branch before serving it; only set
-   `OMW_QA_SKIP_BUILD=1` while debugging the runner itself, not for final
-   pre-push evidence.
-
-4. **Native iOS remote-control lane**: use before pushing terminal UX changes
-   that should hold up with the real remote-control server, shell, Claude Code,
-   and Codex CLI, not only the byte-asserting mock shell.
-
-   ```bash
-   npm run qa:mobile:remote-control
-   ```
-
-   This reuses the native iOS runner but starts a QA-only `omw-remote` harness
-   instead of the mock host. The harness creates a disposable workspace under
-   the report directory, starts the journey at Sessions, drives Start a new
-   shell, reconnects the same shell, launches Claude Code from the phone-started
-   shell, verifies `/help`, returns to the shell, smokes Codex CLI, stops the
-   session, starts a fresh shell, and records PTY input/output through
-   `OMW_INPUT_DUMP` and `OMW_BYTE_DUMP`. It writes screenshots plus byte-dump
-   evidence under `.gstack/qa-reports/mobile-ios-remote-control-*`.
-
-   The mock iOS lane remains the exact assertion for every shortcut byte and
-   tiny-resize regression. The remote-control lane proves that the same mobile
-   UI can drive a real TUI over the real remote server without a deploy or
-   phone.
+   For a one-off mock-host phone pass, run
+   `node scripts/qa/mobile-web-controller-host.mjs` and open the printed URL.
 
 ## Lessons Baked Into QA
 
 The issue #20 trajectory exposed several things that browser-only automation
 missed. Keep these explicit in future QA changes:
 
-- Native keyboard and browser-owned accessory behavior must be checked in the
-  native iOS lane or on a real phone; Chrome mobile emulation cannot prove it.
+- Native keyboard and browser-owned accessory behavior must be checked in
+  `qa:mobile:full` or on a real phone; Chrome mobile emulation cannot prove it.
 - Terminal resize assertions must inspect host-bound control frames and reject
   tiny rows/cols, because a visual pass can still hide a SIGWINCH storm.
 - Shortcut taps must be verified by exact byte sequences in the host log, not
   by button visibility alone.
 - Native runner failures should keep host logs and screenshots before teardown;
   losing evidence makes coordinate and keyboard issues much slower to diagnose.
-- Do not serve a stale Web Controller `dist` for final QA. The native lane must
+- Do not serve a stale Web Controller `dist` for final QA. The full lane must
   build first so screenshots and byte assertions reflect the current source.
 - Real-TUI coverage needs a disposable workspace plus input and output byte
   dumps. Screenshots alone cannot prove Claude actually received input and
@@ -184,7 +161,7 @@ ipconfig getifaddr en0
 Start the host, replacing the IP with the one the phone can reach:
 
 ```bash
-OMW_QA_PUBLIC_BASE_URL=http://100.95.88.74:8787 npm run qa:mobile:web:manual
+OMW_QA_PUBLIC_BASE_URL=http://100.95.88.74:8787 node scripts/qa/mobile-web-controller-host.mjs
 ```
 
 The script binds to `0.0.0.0:8787` by default and prints:

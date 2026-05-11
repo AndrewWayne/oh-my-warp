@@ -3,7 +3,7 @@
 Use the iOS Simulator as the default pre-push mobile remote-control gate:
 
 ```sh
-npm run qa:mobile:remote-control
+npm run qa:mobile:full
 ```
 
 This lane opens Mobile Safari in the simulator against a real local
@@ -28,7 +28,7 @@ The simulator journey covers:
 For hands-on exploratory testing, run:
 
 ```sh
-npm run qa:mobile:remote-control:manual
+npm run qa:mobile:manual
 ```
 
 The manual host starts a real shell by default and prints a fresh pair URL. Use

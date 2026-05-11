@@ -80,7 +80,7 @@ async function main() {
     fail("Appium is installed", "run npm install");
   }
   if (!existsSync(join(appiumHome, "node_modules/appium-xcuitest-driver"))) {
-    fail("XCUITest driver is installed", "run npm run qa:mobile:ios:install");
+    fail("XCUITest driver is installed", "run npm run qa:mobile:setup");
   }
   pass("Appium and XCUITest dependencies are present");
 

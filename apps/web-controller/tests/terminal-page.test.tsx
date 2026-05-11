@@ -102,7 +102,8 @@ describe("Terminal page", () => {
     );
     expect(screen.getByTestId("xterm-container")).toHaveClass(
       "min-w-0",
-      "overflow-hidden",
+      "overflow-x-auto",
+      "overflow-y-hidden",
     );
     expect(screen.getByTestId("terminal-host-session-meta")).toHaveClass(
       "hidden",
@@ -127,6 +128,31 @@ describe("Terminal page", () => {
       "border-y",
       "sm:rounded",
     );
+  });
+
+  it("uses a horizontally pannable wide terminal canvas on mobile", () => {
+    const originalInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 390,
+    });
+
+    try {
+      renderAt("/terminal/h1/sess-7");
+      expect(screen.getByTestId("xterm-container")).toHaveClass(
+        "overflow-x-auto",
+        "overscroll-x-contain",
+      );
+      expect(screen.getByTestId("xterm-host")).toHaveStyle({
+        minWidth: "840px",
+        width: "840px",
+      });
+    } finally {
+      Object.defineProperty(window, "innerWidth", {
+        configurable: true,
+        value: originalInnerWidth,
+      });
+    }
   });
 
   it("renders a back button that links to /host/:hostId (Stage C.4)", () => {
@@ -259,6 +285,54 @@ describe("Terminal page", () => {
     }
   });
 
+  it("keeps the shortcut dock at the keyboard edge during iOS rubber-band viewport offsets", async () => {
+    const originalInnerHeight = window.innerHeight;
+    const originalVisualViewport = (
+      window as Window & { visualViewport?: VisualViewport }
+    ).visualViewport;
+    const rectSpy = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        const top = this.getAttribute("data-testid") === "terminal-shell" ? 80 : 0;
+        return new DOMRect(0, top, 0, 0);
+      });
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 700,
+    });
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: {
+        height: 360,
+        width: 390,
+        offsetLeft: 0,
+        offsetTop: -140,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+    });
+
+    try {
+      renderAt("/terminal/h1/sess-7");
+      await waitFor(() => {
+        expect(screen.getByTestId("terminal-shortcut-surface")).toHaveStyle({
+          transform: "translate3d(0px, -385px, 0)",
+          width: "390px",
+        });
+      });
+    } finally {
+      rectSpy.mockRestore();
+      Object.defineProperty(window, "innerHeight", {
+        configurable: true,
+        value: originalInnerHeight,
+      });
+      Object.defineProperty(window, "visualViewport", {
+        configurable: true,
+        value: originalVisualViewport,
+      });
+    }
+  });
+
   it("redirects to /pair when no PairingRecord exists for the hostId", async () => {
     renderAt("/terminal/missing-host/sess-1");
     await waitFor(() => {
@@ -336,6 +410,10 @@ describe("Terminal page", () => {
 
     (textarea as HTMLTextAreaElement).focus();
     expect(document.activeElement).toBe(textarea);
+
+    const more = screen.getByRole("button", { name: /show extra shortcuts/i });
+    fireEvent.pointerDown(more, { pointerType: "touch" });
+    fireEvent.click(more);
 
     const hideKeyboard = screen.getByRole("button", { name: /hide keyboard/i });
     fireEvent.pointerDown(hideKeyboard, { pointerType: "touch" });

@@ -66,10 +66,11 @@ the shortcut strip, session navigation, or PTY WebSocket behavior, follow
 
 Use the quick ladder:
 
-- `npm run qa:phone` — fast mobile Web Controller regression lane.
-- `npm run qa:phone:ios` — native Mobile Safari simulator lane.
-- `npm run qa:phone:claude` — native Mobile Safari against a real Claude Code
-  PTY in a disposable QA workspace.
+- `npm run qa:mobile:web` — fast mobile Web Controller regression lane.
+- `npm run qa:mobile:ios` — native Mobile Safari simulator lane.
+- `npm run qa:mobile:remote-control` — native Mobile Safari against a real
+  omw remote-control host, shell, Claude Code, and Codex CLI in a disposable QA
+  workspace.
 
 ## Pull requests
 

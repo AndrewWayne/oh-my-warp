@@ -4,23 +4,25 @@ This runbook verifies the current local branch before push. The fast lanes use
 the production Web Controller build served by a local mock omw host, so Safari
 exercises the real pairing, session, terminal, WebSocket, resize, and
 shortcut-strip code paths without needing a deployed build. The fullest local
-lane uses Simulator Safari against a real `omw-remote` server with a real
-Claude Code PTY in a disposable QA workspace.
+lane uses Simulator Safari against a real `omw-remote` server, a real shell,
+Claude Code, and Codex CLI in a disposable QA workspace.
 
 ## Quick Start
 
-- `npm run qa:phone` — run this on every phone terminal PR.
-- `npm run qa:phone:ios` — add this when native Safari keyboard, shortcut, or
+- `npm run qa:mobile:web` — run this on every phone terminal PR.
+- `npm run qa:mobile:ios` — add this when native Safari keyboard, shortcut, or
   scroll behavior matters.
-- `npm run qa:phone:claude` — add this before pushing terminal UX changes that
-  must work with the real Claude Code TUI.
+- `npm run qa:mobile:remote-control` — add this before pushing terminal UX
+  changes that must work through the real omw remote-control path.
+- `npm run qa:mobile:remote-control:manual` — use this for hands-on Simulator
+  or physical-phone QA against a real shell, Claude Code, and Codex CLI.
 
 For one-time native iOS setup:
 
 ```bash
 npm install
-npm run qa:mobile-ios:install
-npm run qa:mobile-ios:doctor
+npm run qa:mobile:ios:install
+npm run qa:mobile:ios:doctor
 ```
 
 ## When To Use
@@ -43,13 +45,13 @@ change touches behavior the browser automation cannot model.
    push.
 
    ```bash
-   npm run qa:phone
+   npm run qa:mobile:web
    ```
 
    This builds the Web Controller, starts the local mock omw host on a free
    loopback port, launches Chrome with iPhone viewport/touch emulation, opens
    the real pair URL, drives the terminal journey, captures screenshots, and
-   writes a JSON report under `.gstack/qa-reports/mobile-web-auto-*`.
+   writes a JSON report under `.gstack/qa-reports/mobile-web-mock-*`.
 
    It verifies:
 
@@ -69,7 +71,7 @@ change touches behavior the browser automation cannot model.
 
 2. **Manual real-phone mock-host lane**: use when the change affects native
    keyboard feel, thumb ergonomics, or browser chrome. Start the host with
-   `npm run qa:mobile-web`, then open the printed URL on the iPhone.
+   `npm run qa:mobile:web:manual`, then open the printed URL on the iPhone.
 
 3. **Native iOS automation lane**: use for pre-push Safari coverage when the
    change touches native keyboard behavior, shortcut reachability with the
@@ -79,18 +81,18 @@ change touches behavior the browser automation cannot model.
 
    ```bash
    npm install
-   npm run qa:mobile-ios:install
-   npm run qa:mobile-ios:doctor
+   npm run qa:mobile:ios:install
+   npm run qa:mobile:ios:doctor
    ```
 
    Run:
 
    ```bash
-   npm run qa:phone:ios
+   npm run qa:mobile:ios
    ```
 
-   `qa:mobile-ios:install` installs the XCUITest driver into repo-local
-   `.tmp/appium`, and `qa:mobile-ios:doctor` verifies the installed Appium
+   `qa:mobile:ios:install` installs the XCUITest driver into repo-local
+   `.tmp/appium`, and `qa:mobile:ios:doctor` verifies the installed Appium
    driver plus available Xcode simulator runtimes/devices. On this Mac, the
    native QA simulator is named `omw QA iPhone`.
 
@@ -103,30 +105,27 @@ change touches behavior the browser automation cannot model.
    `OMW_QA_SKIP_BUILD=1` while debugging the runner itself, not for final
    pre-push evidence.
 
-4. **Native iOS real-Claude lane**: use before pushing terminal UX changes that
-   should hold up with the actual Claude Code TUI, not only the byte-asserting
-   mock shell.
+4. **Native iOS remote-control lane**: use before pushing terminal UX changes
+   that should hold up with the real remote-control server, shell, Claude Code,
+   and Codex CLI, not only the byte-asserting mock shell.
 
    ```bash
-   npm run qa:phone:claude
+   npm run qa:mobile:remote-control
    ```
 
    This reuses the native iOS runner but starts a QA-only `omw-remote` harness
-   instead of the mock host. The harness creates a `real-claude-host`
-   workspace under the report directory, pre-registers a real Claude Code PTY
-   there, issues a pair URL, and records PTY output through `OMW_BYTE_DUMP`.
-   Mobile Safari opens the pair URL, auto-opens the single active Claude
-   session, verifies the terminal starts without the keyboard, taps into
-   keyboard mode, types real text, hides and reopens the keyboard, sends
-   `/help`, taps primary and safe overflow shortcut controls, performs native
-   drag scrolls inside the terminal pane in both directions, rejects accidental
-   literal keyboard text from those scrolls while allowing normal TUI navigation
-   escape sequences, and writes screenshots plus input/output byte-dump
-   evidence under `.gstack/qa-reports/mobile-ios-real-claude-*`.
+   instead of the mock host. The harness creates a disposable workspace under
+   the report directory, starts the journey at Sessions, drives Start a new
+   shell, reconnects the same shell, launches Claude Code from the phone-started
+   shell, verifies `/help`, returns to the shell, smokes Codex CLI, stops the
+   session, starts a fresh shell, and records PTY input/output through
+   `OMW_INPUT_DUMP` and `OMW_BYTE_DUMP`. It writes screenshots plus byte-dump
+   evidence under `.gstack/qa-reports/mobile-ios-remote-control-*`.
 
    The mock iOS lane remains the exact assertion for every shortcut byte and
-   tiny-resize regression. The real-Claude lane proves that the same mobile UI
-   can drive a real TUI over the real remote server without a deploy or phone.
+   tiny-resize regression. The remote-control lane proves that the same mobile
+   UI can drive a real TUI over the real remote server without a deploy or
+   phone.
 
 ## Lessons Baked Into QA
 
@@ -185,7 +184,7 @@ ipconfig getifaddr en0
 Start the host, replacing the IP with the one the phone can reach:
 
 ```bash
-OMW_QA_PUBLIC_BASE_URL=http://100.95.88.74:8787 npm run qa:mobile-web
+OMW_QA_PUBLIC_BASE_URL=http://100.95.88.74:8787 npm run qa:mobile:web:manual
 ```
 
 The script binds to `0.0.0.0:8787` by default and prints:

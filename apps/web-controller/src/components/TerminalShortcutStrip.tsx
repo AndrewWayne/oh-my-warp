@@ -166,14 +166,14 @@ export default function TerminalShortcutStrip({
       }
     : undefined;
   const primaryBtnClass =
-    "h-11 w-[34px] shrink-0 rounded-md border border-white/10 bg-white/[0.07] px-0.5 text-neutral-100 text-[12px] font-mono whitespace-nowrap touch-manipulation transition-colors active:bg-white/[0.14] focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer";
+    "h-11 w-[39px] shrink-0 rounded-md border border-white/10 bg-white/[0.07] px-0.5 text-neutral-100 text-[12px] font-mono whitespace-nowrap touch-manipulation transition-colors active:bg-white/[0.14] focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer";
   const overflowBtnClass =
     "h-11 w-11 shrink-0 rounded-md border border-white/10 bg-white/[0.07] px-2 text-neutral-100 text-[13px] font-mono whitespace-nowrap touch-manipulation transition-colors active:bg-white/[0.14] focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer";
   const hideBtnClass =
-    "h-11 w-[34px] shrink-0 rounded-md border border-white/10 bg-white/[0.07] px-0.5 text-neutral-100 text-[15px] font-mono whitespace-nowrap touch-manipulation transition-colors active:bg-white/[0.14] focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer";
+    "h-11 w-16 shrink-0 rounded-md border border-white/10 bg-white/[0.07] px-2 text-neutral-100 text-[12px] font-mono whitespace-nowrap touch-manipulation transition-colors active:bg-white/[0.14] focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer";
   const rowClass =
     "flex min-w-0 flex-nowrap items-center justify-between gap-px overflow-x-auto overscroll-x-contain";
-  const topRowClass = "flex min-w-0 items-center gap-px";
+  const topRowClass = "flex min-w-0 items-center";
   const surfaceClass = docked
     ? "fixed bottom-0 left-0 z-50 flex flex-col gap-1 border-y border-neutral-700/70 bg-[#1b1c1f] px-1 py-1 shadow-[0_-1px_0_rgba(255,255,255,0.06)]"
     : "sticky bottom-0 z-10 flex shrink-0 flex-col gap-1 border-y border-neutral-900 bg-[#1b1c1f] px-1 py-1 shadow-[0_-1px_0_rgba(255,255,255,0.05)] sm:static sm:border-y-0 sm:bg-transparent sm:px-0 sm:py-0 sm:shadow-none";
@@ -204,33 +204,33 @@ export default function TerminalShortcutStrip({
           ))}
           <button
             type="button"
-            aria-label="more"
+            aria-label={moreOpen ? "hide extra shortcuts" : "show extra shortcuts"}
             aria-expanded={moreOpen}
             disabled={!enabled}
             onPointerDown={moreOnPointerDown}
             onClick={moreOnClick}
             className={primaryBtnClass}
           >
-            ...
+            ⋯
           </button>
         </div>
-        <button
-          type="button"
-          aria-label="hide keyboard"
-          title="Hide keyboard"
-          disabled={!enabled}
-          onPointerDown={hideOnPointerDown}
-          onClick={hideOnClick}
-          className={hideBtnClass}
-        >
-          ⌄
-        </button>
       </div>
       {moreOpen ? (
         <div
           data-testid="terminal-shortcut-overflow"
           className={rowClass}
         >
+          <button
+            type="button"
+            aria-label="hide keyboard"
+            title="Hide keyboard"
+            disabled={!enabled}
+            onPointerDown={hideOnPointerDown}
+            onClick={hideOnClick}
+            className={hideBtnClass}
+          >
+            hide
+          </button>
           {OVERFLOW.map((k) => (
             <button
               key={k.id}

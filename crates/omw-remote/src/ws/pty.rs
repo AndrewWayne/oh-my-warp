@@ -51,8 +51,8 @@ pub struct ShellSpec {
 }
 
 impl ShellSpec {
-    /// Default shell for the current platform: `/bin/sh` on Unix, `cmd.exe`
-    /// on Windows.
+    /// Default shell for the current platform: `$SHELL` on Unix when set,
+    /// `cmd.exe` on Windows.
     pub fn default_for_host() -> Self {
         #[cfg(windows)]
         {
@@ -63,11 +63,64 @@ impl ShellSpec {
         }
         #[cfg(not(windows))]
         {
-            ShellSpec {
-                program: "/bin/sh".into(),
-                args: vec![],
-            }
+            default_unix_shell_from_env(std::env::var_os("SHELL"))
         }
+    }
+}
+
+#[cfg(not(windows))]
+fn default_unix_shell_from_env(shell_env: Option<OsString>) -> ShellSpec {
+    let program = shell_env
+        .filter(|value| !value.as_os_str().is_empty())
+        .unwrap_or_else(default_unix_shell_fallback);
+
+    ShellSpec {
+        program,
+        args: vec![],
+    }
+}
+
+#[cfg(all(not(windows), target_os = "macos"))]
+fn default_unix_shell_fallback() -> OsString {
+    "/bin/zsh".into()
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn default_unix_shell_fallback() -> OsString {
+    "/bin/sh".into()
+}
+
+#[cfg(test)]
+#[cfg(not(windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unix_default_shell_prefers_non_empty_shell_env() {
+        let spec = default_unix_shell_from_env(Some("/opt/homebrew/bin/fish".into()));
+
+        assert_eq!(spec.program, OsString::from("/opt/homebrew/bin/fish"));
+        assert!(spec.args.is_empty());
+    }
+
+    #[test]
+    fn unix_default_shell_uses_platform_fallback_when_shell_env_is_missing_or_empty() {
+        let expected: OsString = {
+            #[cfg(target_os = "macos")]
+            {
+                "/bin/zsh".into()
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                "/bin/sh".into()
+            }
+        };
+
+        assert_eq!(default_unix_shell_from_env(None).program, expected);
+        assert_eq!(
+            default_unix_shell_from_env(Some(OsString::new())).program,
+            expected
+        );
     }
 }
 

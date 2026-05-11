@@ -32,6 +32,8 @@ pub struct PtyCommand {
     /// time (the Executor decides whether to inherit or scrub the parent env;
     /// for the v1 wrapper, additions are merged on top of the parent env).
     pub envs: BTreeMap<OsString, OsString>,
+    /// Environment keys to remove from the inherited process env.
+    pub env_removes: Vec<OsString>,
     pub cwd: Option<PathBuf>,
     pub size: PtySize,
 }
@@ -43,6 +45,7 @@ impl PtyCommand {
             program: program.into(),
             args: Vec::new(),
             envs: BTreeMap::new(),
+            env_removes: Vec::new(),
             cwd: None,
             size: PtySize::default(),
         }
@@ -65,6 +68,11 @@ impl PtyCommand {
     pub fn env(mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> Self {
         self.envs
             .insert(key.as_ref().to_os_string(), value.as_ref().to_os_string());
+        self
+    }
+
+    pub fn env_remove(mut self, key: impl AsRef<OsStr>) -> Self {
+        self.env_removes.push(key.as_ref().to_os_string());
         self
     }
 
@@ -96,6 +104,7 @@ mod tests {
         assert_eq!(c.program, OsString::from("bash"));
         assert!(c.args.is_empty());
         assert!(c.envs.is_empty());
+        assert!(c.env_removes.is_empty());
         assert!(c.cwd.is_none());
         assert_eq!(c.size, PtySize::default());
     }
@@ -130,6 +139,20 @@ mod tests {
     }
 
     #[test]
+    fn env_remove_records_keys_to_strip_from_inherited_env() {
+        let c = PtyCommand::new("sh")
+            .env_remove("NO_COLOR")
+            .env_remove("NODE_DISABLE_COLORS");
+        assert_eq!(
+            c.env_removes,
+            vec![
+                OsString::from("NO_COLOR"),
+                OsString::from("NODE_DISABLE_COLORS")
+            ]
+        );
+    }
+
+    #[test]
     fn cwd_sets_dir() {
         let c = PtyCommand::new("sh").cwd("/tmp");
         assert_eq!(c.cwd.as_deref(), Some(std::path::Path::new("/tmp")));
@@ -153,11 +176,13 @@ mod tests {
             .arg("-lc")
             .arg("echo hi")
             .env("LANG", "C")
+            .env_remove("NO_COLOR")
             .cwd("/")
             .size(100, 30);
         assert_eq!(c.program, OsString::from("bash"));
         assert_eq!(c.args.len(), 2);
         assert_eq!(c.envs.len(), 1);
+        assert_eq!(c.env_removes.len(), 1);
         assert!(c.cwd.is_some());
         assert_eq!(
             c.size,

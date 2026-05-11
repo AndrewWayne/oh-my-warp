@@ -249,6 +249,9 @@ impl Pty {
 
             let mut command = CommandBuilder::new(&cmd.program);
             command.args(&cmd.args);
+            for k in &cmd.env_removes {
+                command.env_remove(k);
+            }
             for (k, v) in &cmd.envs {
                 command.env(k, v);
             }

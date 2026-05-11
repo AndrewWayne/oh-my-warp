@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   deletePairing,
   getPairing,
@@ -21,7 +21,9 @@ type LoadState =
 
 export default function Sessions() {
   const { hostId } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
+  const autoOpen = new URLSearchParams(location.search).get("auto") === "1";
 
   const [pairing, setPairing] = useState<PairingRecord | null>(null);
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
@@ -51,13 +53,15 @@ export default function Sessions() {
         if (!aliveRef.current) return;
         setLoad({ kind: "ready", sessions });
 
-        // Auto-navigate when there's exactly one alive session — typically
-        // means the host's only open Warp pane was just registered via
+        // Auto-navigate when the pair flow lands here with exactly one alive
+        // session — typically
+        // means the host's only open pane was just registered via
         // share_self_pane. Restores the "pair -> immediately on a working
         // terminal" UX without going through createDefaultSession (which
-        // would spawn a sibling shell, not the Warp pane). Fires once per
-        // mount.
-        if (!autoNavigatedRef.current && p.hostId) {
+        // would spawn a sibling shell, not the active pane). Fires once per
+        // mount. Plain /host/:hostId stays on the Sessions page so the
+        // terminal's "Sessions" back button is usable.
+        if (autoOpen && !autoNavigatedRef.current && p.hostId) {
           const alive = sessions.filter((s) => s.alive);
           if (alive.length === 1) {
             autoNavigatedRef.current = true;
@@ -77,7 +81,7 @@ export default function Sessions() {
         }
       }
     },
-    [navigate],
+    [autoOpen, navigate],
   );
 
   // Load pairing on mount; redirect if missing.
@@ -213,7 +217,7 @@ export default function Sessions() {
             type="button"
             onClick={() => void handleStartNew()}
             disabled={!pairing || starting}
-            title="Spawn a fresh shell session on the host (sibling to any open Warp panes)"
+            title="Spawn a fresh shell session on the host (sibling to any open panes)"
             className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-500 text-sm font-semibold"
           >
             {starting ? "Starting…" : "Start a new shell"}
@@ -255,7 +259,7 @@ export default function Sessions() {
       {load.kind === "ready" && load.sessions.length === 0 && (
         <div className="rounded border border-neutral-800 bg-neutral-900/40 p-4 text-sm text-neutral-400">
           No active sessions on this host. Click <strong>Start a new shell</strong>{" "}
-          to spawn one. (Auto-sharing of open Warp panes is not yet wired —
+          to spawn one. (Auto-sharing of open host panes is not yet wired —
           shells started from here are siblings to any panes the laptop has
           open.)
         </div>

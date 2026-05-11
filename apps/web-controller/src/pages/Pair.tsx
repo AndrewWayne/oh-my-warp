@@ -178,17 +178,17 @@ export default function Pair() {
       };
       await savePairing(pairingRecord);
 
-      // Land on the Sessions page so the user can pick the shared Warp
+      // Land on the Sessions page so the user can pick the shared host
       // pane (registered by share_self_pane on the host side at Phone-
       // click). Auto-creating a session here would spawn a NEW sibling
       // shell and navigate the phone to *it*, defeating the auto-share —
-      // the Warp pane would be in the registry but the phone would never
+      // the host pane would be in the registry but the phone would never
       // land on it.
       //
       // Sessions.tsx auto-navigates when there's exactly one active
-      // session, so the common case (single open Warp pane) still feels
+      // session, so the common case (single open host pane) still feels
       // like "pair -> immediately on a working terminal."
-      navigate(`/host/${encodeURIComponent(result.hostId)}`);
+      navigate(`/host/${encodeURIComponent(result.hostId)}?auto=1`);
     } catch (e) {
       if (e instanceof PairError) {
         setErrorMsg(friendlyError(e.code));

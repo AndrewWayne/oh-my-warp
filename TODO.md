@@ -172,6 +172,9 @@ Sequenced after v0.2 (policy + audit) and v0.3 (stripped GUI + omw-server) land.
 - [ ] Web Controller: diff view.
 - [ ] Web Controller: settings page (read-only providers, device info, permissions).
 - [ ] Web Controller: responsive layout (dense on phone, multi-pane on desktop).
+- [ ] Web Controller: mobile terminal gesture-navigation spike — after issue #20's visible shortcut-strip V1 dogfoods successfully, evaluate Termius-style swipes for arrows and possibly a non-conflicting Esc gesture. Do not fold this into issue #20: visible controls are the accessibility/discoverability baseline, and gesture conflicts with scrolling, selection, browser navigation, and terminal mouse events need a separate real-iPhone spike.
+- [ ] Web Controller: mobile terminal push-to-talk voice mode — after issue #20's native-keyboard + shortcut-strip V1 is stable, add a push-to-talk affordance to the same bottom input/control surface. Initial behavior should insert transcribed text into the terminal input line and require explicit Enter/tap-to-send; do not auto-send commands, and keep Esc/Ctrl-C reachable while voice UI is visible.
+- [ ] Web Controller: mobile terminal native-quality keyboard accessory behavior — tracked in [#27](https://github.com/AndrewWayne/oh-my-warp/issues/27).
 - [ ] Web Controller: PWA service worker for fast re-attach.
 - [ ] Audit "Activity" view in the stripped client (depends on `omw-audit` from v0.2).
 - [ ] **External protocol/design review sign-off in repo** (or merged reviewer-driven rework if v0.4-thin proceeded in parallel).

@@ -70,7 +70,7 @@ pub(crate) async fn create(
         command,
         args,
         cwd: None,
-        env: Some(HashMap::new()),
+        env: Some(terminal_session_env()),
         cols: None,
         rows: None,
     };
@@ -279,6 +279,14 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
     out
 }
 
+fn terminal_session_env() -> HashMap<String, String> {
+    HashMap::from([
+        ("TERM".to_string(), "xterm-256color".to_string()),
+        ("COLORTERM".to_string(), "truecolor".to_string()),
+        ("TERM_PROGRAM".to_string(), "omw".to_string()),
+    ])
+}
+
 /// Build an error response. Sized as `Response` for direct return; wrap in
 /// `Box::new` at signed-request call sites to keep the boxed `Result` shape.
 fn err(status: StatusCode, code: &str) -> axum::response::Response {
@@ -291,4 +299,17 @@ fn boxed_err(status: StatusCode, code: &str) -> Box<axum::response::Response> {
 
 fn err_with_msg(status: StatusCode, code: &str, msg: &str) -> axum::response::Response {
     (status, Json(json!({ "error": code, "message": msg }))).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::terminal_session_env;
+
+    #[test]
+    fn terminal_session_env_advertises_color_terminal_capabilities() {
+        let env = terminal_session_env();
+        assert_eq!(env.get("TERM").map(String::as_str), Some("xterm-256color"));
+        assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
+        assert_eq!(env.get("TERM_PROGRAM").map(String::as_str), Some("omw"));
+    }
 }

@@ -31,3 +31,4 @@ apps/web-controller/tailwind.config.js
 
 # Logs
 *.log
+.gstack/

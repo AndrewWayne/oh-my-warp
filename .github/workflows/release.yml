@@ -94,7 +94,11 @@ jobs:
     if: >-
       needs.prepare.outputs.ref != 'omw-local-preview-v0.0.3'
       && (github.event_name != 'workflow_dispatch' || github.event.inputs.targets != 'windows')
-    timeout-minutes: 90
+    # 90 min was too tight — v0.0.4 and v0.0.6 both hit the timeout cold-cache;
+    # v0.0.5 squeezed in at ~85 min. A full vendor/warp-stripped Rust build is
+    # ~22 min hot-cache locally on M1 Pro but GitHub macOS runners start cold
+    # each run, so budget for that plus the Node bundle + DMG packaging.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - name: Install protoc
@@ -129,7 +133,9 @@ jobs:
     if: >-
       needs.prepare.outputs.ref != 'omw-local-preview-v0.0.3'
       && (github.event_name != 'workflow_dispatch' || github.event.inputs.targets != 'mac')
-    timeout-minutes: 90
+    # Same rationale as mac: 90 was tight (Windows finished at ~67 min in
+    # v0.0.6, still inside the budget but no headroom). 180 leaves room.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - name: Install protoc

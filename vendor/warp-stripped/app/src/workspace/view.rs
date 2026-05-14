@@ -18386,8 +18386,10 @@ impl Workspace {
                         if is_incoming_version_past_current(new_version.soft_cutoff.as_deref()) {
                             VERSION_DEPRECATION_WITHOUT_PERMISSIONS_BANNER_TEXT.to_owned()
                         } else {
-                            "A new version is available but Warp is unable to perform the update."
-                                .to_owned()
+                            #[cfg(feature = "omw_local")]
+                            { "A new version is available but the app is unable to perform the update.".to_owned() }
+                            #[cfg(not(feature = "omw_local"))]
+                            { "A new version is available but Warp is unable to perform the update.".to_owned() }
                         };
 
                     Some(WorkspaceBannerFields {
@@ -18397,6 +18399,9 @@ impl Workspace {
                         description,
                         secondary_button: None,
                         button: Some(WorkspaceBannerButtonDetails {
+                            #[cfg(feature = "omw_local")]
+                            text: "Update manually".to_string(),
+                            #[cfg(not(feature = "omw_local"))]
                             text: "Update Warp manually".to_string(),
                             action: WorkspaceAction::DownloadNewVersion,
                             variant: BannerButtonVariant::Outlined,
@@ -18412,7 +18417,10 @@ impl Workspace {
                         if is_incoming_version_past_current(new_version.soft_cutoff.as_deref()) {
                             VERSION_DEPRECATION_WITHOUT_PERMISSIONS_BANNER_TEXT.to_owned()
                         } else {
-                            "Warp was unable to launch the new installed version.".to_owned()
+                            #[cfg(feature = "omw_local")]
+                            { "The app was unable to launch the new installed version.".to_owned() }
+                            #[cfg(not(feature = "omw_local"))]
+                            { "Warp was unable to launch the new installed version.".to_owned() }
                         };
 
                     Some(WorkspaceBannerFields {
@@ -18422,6 +18430,9 @@ impl Workspace {
                         description,
                         secondary_button: None,
                         button: Some(WorkspaceBannerButtonDetails {
+                            #[cfg(feature = "omw_local")]
+                            text: "Update manually".to_string(),
+                            #[cfg(not(feature = "omw_local"))]
                             text: "Update Warp manually".to_string(),
                             action: WorkspaceAction::DownloadNewVersion,
                             variant: BannerButtonVariant::Outlined,
@@ -18432,6 +18443,31 @@ impl Workspace {
                 }
                 AutoupdateStage::UpdateReady { new_version, .. }
                 | AutoupdateStage::UpdatedPendingRestart { new_version } => {
+                    // omw preview-track releases don't carry soft_cutoff or
+                    // update_by metadata (the GitHub Releases API has no
+                    // equivalent), so the upstream gates below would never
+                    // fire and the user would never see a "restart to update"
+                    // banner. Show it unconditionally on UpdateReady instead.
+                    #[cfg(feature = "omw_local")]
+                    {
+                        let _ = new_version;
+                        return Some(WorkspaceBannerFields {
+                            banner_type: WorkspaceBanner::VersionDeprecated,
+                            severity: BannerSeverity::Warning,
+                            heading: None,
+                            description:
+                                "A new version is available — Restart to update.".to_string(),
+                            secondary_button: None,
+                            button: Some(WorkspaceBannerButtonDetails {
+                                text: "Restart and update".to_string(),
+                                action: WorkspaceAction::ApplyUpdate,
+                                variant: BannerButtonVariant::Outlined,
+                                icon: None,
+                                more_info_button_action: None,
+                            }),
+                        });
+                    }
+                    #[cfg_attr(feature = "omw_local", allow(unreachable_code))]
                     if is_incoming_version_past_current(new_version.soft_cutoff.as_deref()) {
                         Some(WorkspaceBannerFields {
                             banner_type: WorkspaceBanner::VersionDeprecated,

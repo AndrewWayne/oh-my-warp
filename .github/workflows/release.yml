@@ -115,6 +115,7 @@ jobs:
         run: |
           gh release upload "${{ needs.prepare.outputs.ref }}" \
             "dist/omw-warp-oss-v${{ needs.prepare.outputs.version }}-aarch64-apple-darwin.dmg" \
+            "dist/omw-warp-oss-v${{ needs.prepare.outputs.version }}-aarch64-apple-darwin.dmg.sha256" \
             --clobber
 
   windows:

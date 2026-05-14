@@ -50,6 +50,8 @@ export PROTOC="${PROTOC:-/opt/homebrew/bin/protoc}"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
 
 echo "==> Building omw_local release binary (version ${VERSION}) ..."
+# option_env!("GIT_RELEASE_TAG") is captured at Rust compile time, so this
+# export MUST happen before `cargo build`, not just before packaging.
 export GIT_RELEASE_TAG="omw-local-preview-v${VERSION}"
 (
     cd "${VENDOR_DIR}"
@@ -292,6 +294,7 @@ hdiutil create \
     -format UDZO \
     "${DMG_PATH}"
 
+# Companion .sha256 for the autoupdater's tamper check; uploaded as a release asset.
 ( cd "${DIST_DIR}" && shasum -a 256 "$(basename "${DMG_PATH}")" > "$(basename "${DMG_PATH}").sha256" )
 
 echo

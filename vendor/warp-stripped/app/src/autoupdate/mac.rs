@@ -310,6 +310,9 @@ async fn is_directory_writable(directory: &Path) -> Result<bool> {
 /// Verifies that the staged bundle path has a valid macOS code signature, and that its
 /// team identifier matches Warp's team identifier.
 async fn verify_code_signature(component: &str, path: &Path) -> Result<()> {
+    if cfg!(feature = "omw_local") {
+        return Ok(());
+    }
     // Verify the signature of the staged update bundle with team identifier
     let codesign_verify_output = Command::new("/usr/bin/codesign")
         .arg("-v")
@@ -378,6 +381,34 @@ async fn apply_update(channel: Channel, version_info: &VersionInfo, update_id: &
 
     let staged_bundle =
         StagedBundle::for_bundle_path(channel, version_info, temp_app_path, &bundle_path).await?;
+
+    // Strip the quarantine xattr from the unsigned omw preview bundle so
+    // Gatekeeper doesn't block first launch after the swap. Idempotent (`-r`
+    // recursive, no-op on already-clean bundles). Failure here is non-fatal —
+    // the user would just see the Gatekeeper dialog instead of a silent
+    // launch, which is recoverable.
+    #[cfg(feature = "omw_local")]
+    if matches!(channel, Channel::Oss) {
+        let xattr_output = Command::new("/usr/bin/xattr")
+            .arg("-dr")
+            .arg("com.apple.quarantine")
+            .arg(&staged_bundle.path)
+            .output()
+            .await;
+        match xattr_output {
+            Ok(out) if out.status.success() => {
+                log::info!("Stripped com.apple.quarantine from staged bundle");
+            }
+            Ok(out) => {
+                log::warn!(
+                    "xattr quarantine strip exited non-zero (continuing): {out:?}"
+                );
+            }
+            Err(e) => {
+                log::warn!("xattr command failed to spawn (continuing): {e}");
+            }
+        }
+    }
 
     // Copy permissions to new app
     let bundle_metadata = async_fs::metadata(&bundle_path).await?;
@@ -647,6 +678,11 @@ async fn download_dmg(
         .timeout(Duration::from_secs(DMG_TIMEOUT_S))
         .send()
         .await?;
+    // Reject HTML error pages, 404s, etc. before streaming megabytes into a
+    // file that would then fail to mount.
+    if !res.status().is_success() {
+        bail!("DMG fetch returned non-success status {} for {update_url}", res.status());
+    }
     let dmg_file = dmg_path(channel, version_info, update_id);
 
     let mut file = async_fs::File::create(&dmg_file).await?;
@@ -658,6 +694,18 @@ async fn download_dmg(
     )
     .await?;
     file.sync_data().await?;
+    drop(file);
+
+    // Oss preview track verifies SHA-256 against the GitHub-published sidecar
+    // before mounting, so a tampered DMG is rejected before it can run code.
+    #[cfg(feature = "omw_local")]
+    if matches!(channel, Channel::Oss) {
+        if let Some(sha_url) = super::oss::current_sha_url() {
+            super::oss::verify_sha256(&dmg_file, &sha_url, client).await?;
+        } else {
+            bail!("omw autoupdate: SHA-256 sidecar URL missing — refusing to apply unverified DMG");
+        }
+    }
 
     log::info!("Wrote DMG to tempfile at {:?}", &dmg_file);
     Ok(dmg_file)
@@ -701,6 +749,15 @@ async fn mount_dmg(dmg_dir: &Path, update_id: &str) -> Result<PathBuf> {
 }
 
 fn update_url(channel: Channel, version: &str) -> String {
+    // Oss uses GitHub's CDN-signed `browser_download_url` stashed during
+    // `fetch_version` — constructing `{base}/{tag}/{name}` works in tests but
+    // GitHub redirects to a short-lived signed JWT in production.
+    #[cfg(feature = "omw_local")]
+    if matches!(channel, Channel::Oss) {
+        if let Some(url) = super::oss::current_dmg_url() {
+            return url;
+        }
+    }
     format!(
         "{}/{}",
         release_assets_directory_url(channel, version),
@@ -737,7 +794,7 @@ fn app_name_prefix(channel: Channel) -> &'static str {
         Channel::Local => "warp",
         Channel::Integration => "integration",
         Channel::Dev => "WarpDev",
-        Channel::Oss => "warp-oss",
+        Channel::Oss => "omw-warp-oss",
     }
 }
 
@@ -748,7 +805,7 @@ fn executable_name(channel: Channel) -> &'static str {
         Channel::Local => "warp",
         Channel::Integration => "integration",
         Channel::Dev => "dev",
-        Channel::Oss => "warp-oss",
+        Channel::Oss => "omw-warp-oss",
     }
 }
 

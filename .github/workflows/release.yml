@@ -73,11 +73,11 @@ jobs:
           else
             notes="RELEASE_NOTES_v$version.md"
             if [[ -f "$notes" ]]; then
-              gh release create "$ref" --prerelease \
+              gh release create "$ref" \
                 --title "omw-local-preview v$version" \
                 --notes-file "$notes"
             else
-              gh release create "$ref" --prerelease \
+              gh release create "$ref" \
                 --title "omw-local-preview v$version" \
                 --generate-notes
             fi
@@ -115,6 +115,7 @@ jobs:
         run: |
           gh release upload "${{ needs.prepare.outputs.ref }}" \
             "dist/omw-warp-oss-v${{ needs.prepare.outputs.version }}-aarch64-apple-darwin.dmg" \
+            "dist/omw-warp-oss-v${{ needs.prepare.outputs.version }}-aarch64-apple-darwin.dmg.sha256" \
             --clobber
 
   windows:

@@ -67,8 +67,12 @@ impl AppExecutionMode {
     }
 
     /// Whether the app can *automatically* update. This does not prevent manual updates.
+    ///
+    /// omw_local builds autoupdate against GitHub Releases (see `autoupdate::oss`), not the
+    /// official cloud services — so they bypass the cloud-services gate here.
     pub fn can_autoupdate(&self) -> bool {
-        self.is_app() && ChannelState::official_cloud_services_enabled()
+        self.is_app()
+            && (cfg!(feature = "omw_local") || ChannelState::official_cloud_services_enabled())
     }
 
     /// Whether the app can automatically start MCP servers from the previous session.

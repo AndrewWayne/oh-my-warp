@@ -1154,6 +1154,16 @@ fn release_assets_directory_url(channel: Channel, version: &str) -> String {
             format!("{releases_base_url}/preview/{version}")
         }
         Channel::Dev => format!("{releases_base_url}/dev/{version}"),
+        #[cfg(feature = "omw_local")]
+        Channel::Oss => {
+            // Fallback path only — `mac::update_url` short-circuits Oss via
+            // `oss::current_dmg_url()` whenever fetch_version has stashed
+            // URLs. This arm exists so that pre-fetch code paths (e.g. a
+            // manual download triggered before the first poll completes)
+            // produce a valid GitHub release URL instead of panicking.
+            format!("{releases_base_url}/download/{version}")
+        }
+        #[cfg_attr(feature = "omw_local", allow(unreachable_patterns))]
         Channel::Local | Channel::Integration | Channel::Oss => {
             unreachable!("local/integration/oss autoupdate not supported");
         }

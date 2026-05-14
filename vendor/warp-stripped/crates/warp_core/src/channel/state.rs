@@ -6,7 +6,8 @@ use url::{Origin, ParseError, Url};
 use crate::AppId;
 use crate::{
     channel::config::{
-        ChannelConfig, McpOAuthProviderConfig, OzConfig, RudderStackDestination, WarpServerConfig,
+        AutoupdateConfig, ChannelConfig, McpOAuthProviderConfig, OzConfig, RudderStackDestination,
+        WarpServerConfig,
     },
     features::FeatureFlag,
 };
@@ -74,7 +75,12 @@ impl ChannelState {
             config.server_config = WarpServerConfig::omw_local();
             config.oz_config = OzConfig::omw_local();
             config.telemetry_config = None;
-            config.autoupdate_config = None;
+            config.autoupdate_config = Some(AutoupdateConfig {
+                releases_base_url: Cow::Borrowed(
+                    "https://api.github.com/repos/AndrewWayne/oh-my-warp/releases",
+                ),
+                show_autoupdate_menu_items: true,
+            });
             config.crash_reporting_config = None;
             config.mcp_static_config = None;
         }

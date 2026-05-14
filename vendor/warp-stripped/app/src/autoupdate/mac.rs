@@ -310,6 +310,9 @@ async fn is_directory_writable(directory: &Path) -> Result<bool> {
 /// Verifies that the staged bundle path has a valid macOS code signature, and that its
 /// team identifier matches Warp's team identifier.
 async fn verify_code_signature(component: &str, path: &Path) -> Result<()> {
+    if cfg!(feature = "omw_local") {
+        return Ok(());
+    }
     // Verify the signature of the staged update bundle with team identifier
     let codesign_verify_output = Command::new("/usr/bin/codesign")
         .arg("-v")
@@ -737,7 +740,7 @@ fn app_name_prefix(channel: Channel) -> &'static str {
         Channel::Local => "warp",
         Channel::Integration => "integration",
         Channel::Dev => "WarpDev",
-        Channel::Oss => "warp-oss",
+        Channel::Oss => "omw-warp-oss",
     }
 }
 
@@ -748,7 +751,7 @@ fn executable_name(channel: Channel) -> &'static str {
         Channel::Local => "warp",
         Channel::Integration => "integration",
         Channel::Dev => "dev",
-        Channel::Oss => "warp-oss",
+        Channel::Oss => "omw-warp-oss",
     }
 }
 

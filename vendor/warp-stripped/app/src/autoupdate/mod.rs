@@ -4,6 +4,8 @@ mod channel_versions;
 pub mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
+#[cfg(feature = "omw_local")]
+mod oss;
 #[cfg(windows)]
 mod windows;
 

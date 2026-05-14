@@ -356,6 +356,17 @@ impl AutoupdateState {
         new_version: &VersionInfo,
         current_version: &str,
     ) -> Result<bool> {
+        // Oss tags like `omw-local-preview-v0.0.5` don't match upstream's
+        // `v<x>.<y>.<z>_<build>` regex, so try the omw parser first. Falls
+        // through to upstream for non-Oss channels (and for the impossible
+        // case where omw tag malformed enough to bypass the regex above).
+        #[cfg(feature = "omw_local")]
+        if let (Some(curr), Some(new)) = (
+            oss::parse_omw_semver(current_version),
+            oss::parse_omw_semver(new_version.version.as_str()),
+        ) {
+            return Ok(curr > new);
+        }
         let current_version = ParsedVersion::try_from(current_version)?;
         let new_version = ParsedVersion::try_from(new_version.version.as_str())?;
         Ok(current_version > new_version)
@@ -757,6 +768,20 @@ async fn fetch_version(
         Channel::Stable => versions.stable,
         Channel::Preview => versions.preview,
         Channel::Dev => versions.dev,
+        #[cfg(feature = "omw_local")]
+        Channel::Oss => {
+            // omw preview track polls GitHub Releases directly instead of
+            // upstream's channel-versions endpoint. Stash the asset URLs so
+            // `mac::update_url` and the SHA-256 verifier can pick them up.
+            let releases_base = ChannelState::releases_base_url();
+            let current_tag = ChannelState::app_version().unwrap_or_default();
+            let (version_info, urls) =
+                oss::omw_fetch_latest_release(server_api.http_client(), &releases_base, &current_tag)
+                    .await?;
+            oss::set_pending_assets(urls);
+            return Ok(version_info);
+        }
+        #[cfg_attr(feature = "omw_local", allow(unreachable_patterns))]
         Channel::Integration | Channel::Local | Channel::Oss => {
             // These channels don't ship release artifacts, so there's no
             // version to fetch. This branch is normally unreachable because

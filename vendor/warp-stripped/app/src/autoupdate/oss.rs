@@ -6,6 +6,7 @@
 //! surface self-contained; T4 wires these symbols into the state machine.
 
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
@@ -37,6 +38,36 @@ lazy_static! {
     static ref SHA_ASSET_REGEX: Regex =
         Regex::new(r"^omw-warp-oss-v.+-aarch64-apple-darwin\.dmg\.sha256$")
             .expect("sha asset regex is valid");
+
+    /// Stash for asset URLs returned by `omw_fetch_latest_release` so the
+    /// downstream download/verify code paths (in `mac.rs`) can read them
+    /// without threading new parameters through five layers of upstream code.
+    static ref PENDING_ASSETS: Mutex<Option<OmwAssetUrls>> = Mutex::new(None);
+}
+
+/// Called by `fetch_version` after a successful fetch. Replaces any previous
+/// stash — the latest fetch always wins (poll cycles are serialized).
+pub(super) fn set_pending_assets(urls: OmwAssetUrls) {
+    *PENDING_ASSETS.lock().expect("pending-assets mutex poisoned") = Some(urls);
+}
+
+/// Read the DMG URL from the most recent fetch. Returns `None` if no fetch has
+/// stashed anything yet (e.g. first poll never succeeded).
+pub(super) fn current_dmg_url() -> Option<String> {
+    PENDING_ASSETS
+        .lock()
+        .expect("pending-assets mutex poisoned")
+        .as_ref()
+        .map(|u| u.dmg_url.clone())
+}
+
+/// Read the SHA-256 sidecar URL from the most recent fetch.
+pub(super) fn current_sha_url() -> Option<String> {
+    PENDING_ASSETS
+        .lock()
+        .expect("pending-assets mutex poisoned")
+        .as_ref()
+        .map(|u| u.sha_url.clone())
 }
 
 /// URLs for the two release assets we care about on a given GitHub release.

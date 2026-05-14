@@ -50,6 +50,7 @@ export PROTOC="${PROTOC:-/opt/homebrew/bin/protoc}"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
 
 echo "==> Building omw_local release binary (version ${VERSION}) ..."
+export GIT_RELEASE_TAG="omw-local-preview-v${VERSION}"
 (
     cd "${VENDOR_DIR}"
     cargo build --release -p warp --bin warp-oss --no-default-features --features omw_local
@@ -290,6 +291,8 @@ hdiutil create \
     -ov \
     -format UDZO \
     "${DMG_PATH}"
+
+( cd "${DIST_DIR}" && shasum -a 256 "$(basename "${DMG_PATH}")" > "$(basename "${DMG_PATH}").sha256" )
 
 echo
 echo "==> Done."

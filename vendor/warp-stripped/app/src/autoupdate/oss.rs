@@ -18,6 +18,7 @@ use sha2::{Digest, Sha256};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const GITHUB_ACCEPT: &str = "application/vnd.github+json";
+const GITHUB_API_VERSION: &str = "2022-11-28";
 const USER_AGENT_PREFIX: &str = "omw-warp-oss";
 /// Cap the prefix of any non-success response body that we log so a wayward
 /// HTML error page doesn't balloon the log.
@@ -29,14 +30,16 @@ lazy_static! {
         Regex::new(r"^omw-local-preview-v\d+\.\d+\.\d+$").expect("tag regex is valid");
 
     /// Matches the arm64 darwin DMG asset name. The version is part of the
-    /// filename (curl validation 2026-05-13), so we anchor the suffix only.
+    /// filename (curl validation 2026-05-13). Strict semver triple in the
+    /// version segment (matches `TAG_REGEX`) so we don't accept asset names
+    /// that don't correspond to a publishable tag.
     static ref DMG_ASSET_REGEX: Regex =
-        Regex::new(r"^omw-warp-oss-v.+-aarch64-apple-darwin\.dmg$")
+        Regex::new(r"^omw-warp-oss-v\d+\.\d+\.\d+-aarch64-apple-darwin\.dmg$")
             .expect("dmg asset regex is valid");
 
     /// Matches the corresponding `.sha256` sidecar uploaded alongside the DMG.
     static ref SHA_ASSET_REGEX: Regex =
-        Regex::new(r"^omw-warp-oss-v.+-aarch64-apple-darwin\.dmg\.sha256$")
+        Regex::new(r"^omw-warp-oss-v\d+\.\d+\.\d+-aarch64-apple-darwin\.dmg\.sha256$")
             .expect("sha asset regex is valid");
 
     /// Stash for asset URLs returned by `omw_fetch_latest_release` so the
@@ -48,7 +51,7 @@ lazy_static! {
 /// Called by `fetch_version` after a successful fetch. Replaces any previous
 /// stash — the latest fetch always wins (poll cycles are serialized).
 pub(super) fn set_pending_assets(urls: OmwAssetUrls) {
-    *PENDING_ASSETS.lock().expect("pending-assets mutex poisoned") = Some(urls);
+    *PENDING_ASSETS.lock().unwrap_or_else(|e| e.into_inner()) = Some(urls);
 }
 
 /// Read the DMG URL from the most recent fetch. Returns `None` if no fetch has
@@ -56,7 +59,7 @@ pub(super) fn set_pending_assets(urls: OmwAssetUrls) {
 pub(super) fn current_dmg_url() -> Option<String> {
     PENDING_ASSETS
         .lock()
-        .expect("pending-assets mutex poisoned")
+        .unwrap_or_else(|e| e.into_inner())
         .as_ref()
         .map(|u| u.dmg_url.clone())
 }
@@ -65,7 +68,7 @@ pub(super) fn current_dmg_url() -> Option<String> {
 pub(super) fn current_sha_url() -> Option<String> {
     PENDING_ASSETS
         .lock()
-        .expect("pending-assets mutex poisoned")
+        .unwrap_or_else(|e| e.into_inner())
         .as_ref()
         .map(|u| u.sha_url.clone())
 }
@@ -137,6 +140,7 @@ pub(super) async fn omw_fetch_latest_release(
         .get(url.as_str())
         .header("User-Agent", user_agent.as_str())
         .header("Accept", GITHUB_ACCEPT)
+        .header("X-GitHub-Api-Version", GITHUB_API_VERSION)
         .timeout(REQUEST_TIMEOUT)
         .send()
         .await
@@ -147,7 +151,10 @@ pub(super) async fn omw_fetch_latest_release(
         200 => {
             // fall through to body parsing
         }
-        403 => {
+        403 | 429 => {
+            // GitHub's docs: primary rate-limit may come back as either 403
+            // (with X-RateLimit-Reset) or 429 (with Retry-After). Treat both
+            // the same — the caller just needs to know "back off, try later".
             let reset = response
                 .headers()
                 .get("X-RateLimit-Reset")
@@ -155,7 +162,7 @@ pub(super) async fn omw_fetch_latest_release(
                 .map(|s| s.to_owned())
                 .unwrap_or_else(|| "unknown".to_string());
             return Err(anyhow!(
-                "omw autoupdate: GitHub API rate limit (403). reset_epoch={reset}"
+                "omw autoupdate: GitHub API rate limit ({status}). reset_epoch={reset}"
             ));
         }
         404 => {
@@ -245,6 +252,7 @@ pub(super) async fn verify_sha256(
     let response = client
         .get(sha256_url)
         .header("User-Agent", user_agent.as_str())
+        .header("X-GitHub-Api-Version", GITHUB_API_VERSION)
         .timeout(REQUEST_TIMEOUT)
         .send()
         .await

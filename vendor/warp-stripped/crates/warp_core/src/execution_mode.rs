@@ -124,3 +124,41 @@ impl SingletonEntity for AppExecutionMode {}
 pub fn current_client_id() -> Option<&'static str> {
     GLOBAL_EXECUTION_MODE.get().map(|mode| mode.client_id())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression guard for the v0.0.6/v0.0.7 inert-poll bug (PR #63).
+    ///
+    /// Under `omw_local`, `ChannelState::official_cloud_services_enabled()` is
+    /// intentionally false (that's what strips cloud surfaces). Before PR #63
+    /// `can_autoupdate()` required it to be true, so the gate at
+    /// `autoupdate/mod.rs::AutoupdateState::register` never fired. omw builds
+    /// have their own GitHub-Releases autoupdate path (`autoupdate::oss`) that
+    /// doesn't go through the cloud, so the gate has to bypass for omw.
+    #[cfg(feature = "omw_local")]
+    #[test]
+    fn omw_local_app_can_autoupdate() {
+        let mode = AppExecutionMode {
+            mode: ExecutionMode::App,
+            is_sandboxed: false,
+        };
+        assert!(
+            mode.can_autoupdate(),
+            "omw_local App-mode must allow autoupdate even when official cloud \
+             services are disabled — it polls GitHub Releases, not the cloud."
+        );
+    }
+
+    /// SDK mode never autoupdates regardless of channel — there's no user
+    /// present to relaunch.
+    #[test]
+    fn sdk_mode_cannot_autoupdate() {
+        let mode = AppExecutionMode {
+            mode: ExecutionMode::Sdk,
+            is_sandboxed: false,
+        };
+        assert!(!mode.can_autoupdate());
+    }
+}

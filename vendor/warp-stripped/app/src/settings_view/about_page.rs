@@ -94,6 +94,8 @@ struct AboutPageWidget {
     #[cfg(feature = "omw_local")]
     omw_link_mouse_state: MouseStateHandle,
     #[cfg(feature = "omw_local")]
+    check_for_updates_mouse_state: MouseStateHandle,
+    #[cfg(feature = "omw_local")]
     license_scroll_state: ClippedScrollStateHandle,
 }
 
@@ -248,6 +250,32 @@ impl SettingsWidget for AboutPageWidget {
         .with_margin_top(8.)
         .finish();
 
+        let updates_header = Container::new(
+            Text::new("Updates".to_owned(), appearance.ui_font_family(), 14.)
+                .with_color(active_color)
+                .with_style(warpui::fonts::Properties::default().weight(Weight::Semibold))
+                .finish(),
+        )
+        .with_margin_top(24.)
+        .finish();
+
+        let check_for_updates_button = Container::new(
+            appearance
+                .ui_builder()
+                .button(
+                    ButtonVariant::Link,
+                    self.check_for_updates_mouse_state.clone(),
+                )
+                .with_text_label("Check for updates".to_owned())
+                .build()
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(WorkspaceAction::CheckForUpdate);
+                })
+                .finish(),
+        )
+        .with_margin_top(2.)
+        .finish();
+
         let acknowledgements_header = Container::new(
             Text::new(
                 "Acknowledgements".to_owned(),
@@ -353,6 +381,8 @@ impl SettingsWidget for AboutPageWidget {
                 .with_child(version_row.finish())
                 .with_child(app_name)
                 .with_child(description)
+                .with_child(updates_header)
+                .with_child(check_for_updates_button)
                 .with_child(acknowledgements_header)
                 .with_child(upstream_blurb)
                 .with_child(upstream_link)

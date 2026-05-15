@@ -103,6 +103,14 @@ impl ChannelState {
         self
     }
 
+    /// Inspect the per-state `additional_features` set without going through
+    /// the global. Mainly used by tests that build a `ChannelState` in-memory
+    /// and want to assert the wiring up to (but not including)
+    /// `ChannelState::set`.
+    pub fn additional_features_set(&self) -> &HashSet<FeatureFlag> {
+        &self.additional_features
+    }
+
     pub fn set(state: ChannelState) {
         *CHANNEL_STATE.lock() = state;
     }

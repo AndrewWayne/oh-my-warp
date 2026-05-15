@@ -810,7 +810,13 @@ fn executable_name(channel: Channel) -> &'static str {
 }
 
 fn executable_path(channel: Channel) -> String {
-    if ChannelState::is_release_bundle() {
+    // omw_local + Oss is always packaged as a macOS .app bundle by
+    // scripts/build-mac-dmg.sh, but the build doesn't pass `release_bundle`,
+    // so `is_release_bundle()` reports false. Treat it as bundled here so
+    // `apply_update` resolves the correct path to the new executable.
+    let bundled = ChannelState::is_release_bundle()
+        || (cfg!(feature = "omw_local") && matches!(channel, Channel::Oss));
+    if bundled {
         format!("Contents/MacOS/{}", executable_name(channel))
     } else {
         executable_name(channel).to_owned()

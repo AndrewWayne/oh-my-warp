@@ -762,34 +762,36 @@ async fn fetch_version(
     update_id: &str,
     server_api: Arc<ServerApi>,
 ) -> Result<VersionInfo> {
+    // omw_local + Channel::Oss never touches the upstream channel-versions
+    // endpoint — it polls GitHub Releases directly. Resolve here BEFORE
+    // `fetch_channel_versions` runs; under omw the cloud server is stripped
+    // and the GCP fallback hits `${releases_base_url}/channel_versions.json`
+    // which resolves against the GitHub API base (404), so the upstream call
+    // errors out and the poll bails before reaching the match arm below.
+    #[cfg(feature = "omw_local")]
+    if matches!(channel, Channel::Oss) {
+        let releases_base = ChannelState::releases_base_url();
+        let current_tag = ChannelState::app_version().unwrap_or_default();
+        let (version_info, urls) =
+            oss::omw_fetch_latest_release(server_api.http_client(), &releases_base, &current_tag)
+                .await?;
+        oss::set_pending_assets(urls);
+        return Ok(version_info);
+    }
+
     let versions = fetch_channel_versions(update_id, server_api.clone(), false, is_daily).await?;
 
     let channel_version = match channel {
         Channel::Stable => versions.stable,
         Channel::Preview => versions.preview,
         Channel::Dev => versions.dev,
-        #[cfg(feature = "omw_local")]
-        Channel::Oss => {
-            // omw preview track polls GitHub Releases directly instead of
-            // upstream's channel-versions endpoint. Stash the asset URLs so
-            // `mac::update_url` and the SHA-256 verifier can pick them up.
-            let releases_base = ChannelState::releases_base_url();
-            let current_tag = ChannelState::app_version().unwrap_or_default();
-            let (version_info, urls) =
-                oss::omw_fetch_latest_release(server_api.http_client(), &releases_base, &current_tag)
-                    .await?;
-            oss::set_pending_assets(urls);
-            return Ok(version_info);
-        }
-        #[cfg_attr(feature = "omw_local", allow(unreachable_patterns))]
         Channel::Integration | Channel::Local | Channel::Oss => {
-            // These channels don't ship release artifacts, so there's no
-            // version to fetch. This branch is normally unreachable because
-            // `AutoupdateState::register` gates the poll loop on the
-            // `Autoupdate` feature flag, but builds (e.g. local wasm bundles)
-            // can end up with `Autoupdate` enabled while running on one of
-            // these channels. Return an error rather than panicking so the
-            // poll loop just logs and bails.
+            // These channels don't ship release artifacts via the upstream
+            // channel-versions endpoint. The omw_local + Oss path is handled
+            // above; this arm catches non-omw Oss builds and the test/dev
+            // channels — `AutoupdateState::register` normally gates these out
+            // via the `Autoupdate` feature flag, but bail safely if a build
+            // ends up here with the flag forced on.
             anyhow::bail!(
                 "Local, integration, and open-source channel binaries don't support autoupdate"
             );

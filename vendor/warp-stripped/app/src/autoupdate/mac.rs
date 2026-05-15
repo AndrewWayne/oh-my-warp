@@ -809,8 +809,19 @@ fn executable_name(channel: Channel) -> &'static str {
     }
 }
 
+// Contract: `executable_path(Channel::Oss)` under `cfg(feature = "omw_local")`
+// MUST return `"Contents/MacOS/omw-warp-oss"`. `apply_update` joins this with
+// `staged_bundle.path` to check the new binary exists before the atomic
+// rename swap; a flat path would fail that check every time because the omw
+// build packages the binary inside an `.app` bundle (scripts/build-mac-dmg.sh).
+// This isn't asserted with a unit test because the `warp` lib test crate has
+// pre-existing breakage under `omw_local` (`test_exports`/`SettingsSection`
+// references that don't compile here). Verified by runtime smoke test against
+// the omw build before each release.
 fn executable_path(channel: Channel) -> String {
-    if ChannelState::is_release_bundle() {
+    let bundled = ChannelState::is_release_bundle()
+        || (cfg!(feature = "omw_local") && matches!(channel, Channel::Oss));
+    if bundled {
         format!("Contents/MacOS/{}", executable_name(channel))
     } else {
         executable_name(channel).to_owned()

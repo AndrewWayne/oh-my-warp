@@ -548,7 +548,22 @@ const TAB_BAR_PILL_WIDTH: f32 = 100.;
 const PILL_FONT_SIZE: f32 = 12.;
 // We use the word "Warp" in the Update Ready button to make it obvious that the terminal is Warp.
 // This can lead to free advertising when users screen-share Warp when an update is available.
+// omw_local builds rebrand per CLAUDE.md §5 — the literal `Warp` wordmark is forbidden in
+// product-surface strings reachable by omw users.
+#[cfg(not(feature = "omw_local"))]
 const UPDATE_READY_TEXT: &str = "Update Warp";
+#[cfg(feature = "omw_local")]
+const UPDATE_READY_TEXT: &str = "Update omw-warp-oss";
+
+#[cfg(not(feature = "omw_local"))]
+const UPDATE_MANUAL_TEXT: &str = "Update Warp manually";
+#[cfg(feature = "omw_local")]
+const UPDATE_MANUAL_TEXT: &str = "Update omw-warp-oss manually";
+
+#[cfg(not(feature = "omw_local"))]
+const UPDATE_AND_RELAUNCH_TEXT: &str = "Update and relaunch Warp";
+#[cfg(feature = "omw_local")]
+const UPDATE_AND_RELAUNCH_TEXT: &str = "Update and relaunch omw-warp-oss";
 
 const TAB_BAR_OVERFLOW_MENU_WIDTH: f32 = 300.;
 
@@ -6558,7 +6573,7 @@ impl Workspace {
                             .into_item(),
                     ),
                     AutoupdateStage::UnableToUpdateToNewVersion { .. } => menu_items.push(
-                        MenuItemFields::new("Update Warp manually")
+                        MenuItemFields::new(UPDATE_MANUAL_TEXT)
                             .with_on_select_action(WorkspaceAction::DownloadNewVersion)
                             .into_item(),
                     ),
@@ -8285,7 +8300,7 @@ impl Workspace {
                     ) =>
                 {
                     items.push(
-                        MenuItemFields::new("Update and relaunch Warp")
+                        MenuItemFields::new(UPDATE_AND_RELAUNCH_TEXT)
                             .with_on_select_action(WorkspaceAction::ApplyUpdate)
                             .with_override_text_color(appearance.theme().ansi_fg_red())
                             .into_item(),
@@ -8308,7 +8323,7 @@ impl Workspace {
                     ) =>
                 {
                     items.push(
-                        MenuItemFields::new("Update Warp manually")
+                        MenuItemFields::new(UPDATE_MANUAL_TEXT)
                             .with_on_select_action(WorkspaceAction::DownloadNewVersion)
                             .with_override_text_color(appearance.theme().ansi_fg_red())
                             .into_item(),
@@ -19769,18 +19784,19 @@ fn is_omw_local_hidden_settings_section(_section: Option<SettingsSection>) -> bo
 fn is_official_cloud_workspace_action(action: &WorkspaceAction) -> bool {
     use WorkspaceAction::*;
 
+    // NOTE: autoupdate-related actions (AutoupdateFailureLink, ApplyUpdate,
+    // DownloadNewVersion, CheckForUpdate) are intentionally NOT in this list.
+    // They go through omw's own GitHub-Releases autoupdate path
+    // (see `autoupdate::oss`) and must remain reachable from the UI even
+    // when official cloud services are disabled.
     matches!(
         action,
-        AutoupdateFailureLink
-            | ApplyUpdate
-            | DownloadNewVersion
-            | ShowUpgrade
+        ShowUpgrade
             | ShowReferralSettingsPage
             | JoinSlack
             | ViewLatestChangelog
             | ViewPrivacyPolicy
             | SendFeedback
-            | CheckForUpdate
             | ToggleResourceCenter
             | ClickedAIAssistantIcon
             | ToggleAIAssistant

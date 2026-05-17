@@ -1,7 +1,7 @@
-//! `OMW_KEYCHAIN_BACKEND=os` on a non-macOS platform must fail closed.
-//! v0.1 only supports the macOS keychain; Linux/Windows are Beyond v1.
+//! `OMW_KEYCHAIN_BACKEND=os` on platforms without an OS backend must fail closed.
+//! macOS and Linux have OS credential store implementations.
 
-#![cfg(not(target_os = "macos"))]
+#![cfg(not(any(target_os = "macos", target_os = "linux")))]
 
 mod common;
 

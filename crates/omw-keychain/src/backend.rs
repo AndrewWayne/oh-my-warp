@@ -1,10 +1,11 @@
-//! Backend selection and the in-memory + macOS-OS implementations.
+//! Backend selection and the in-memory + OS implementations.
 //!
 //! The backend is resolved once per process via `OnceLock` based on the
 //! `OMW_KEYCHAIN_BACKEND` env var read at first call. Recognised values:
 //! `auto` (the default and any unrecognised value), `memory`, `os`. On
-//! non-macOS platforms `os` resolves to a fail-closed `OsUnavailable` so
-//! v0.1 callers get a clear `BackendUnavailable` error rather than a panic.
+//! macOS and Linux, `auto` resolves to the OS credential store; elsewhere it
+//! resolves to memory. Explicit `os` fails closed when no OS implementation is
+//! available.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -34,7 +35,7 @@ fn resolve() -> Resolved {
     match normalized {
         "memory" => Resolved::Memory,
         "os" => {
-            if cfg!(target_os = "macos") {
+            if os_backend_available() {
                 Resolved::Os
             } else {
                 Resolved::OsUnavailable
@@ -42,13 +43,17 @@ fn resolve() -> Resolved {
         }
         // "auto" or unrecognized — fall through to platform default.
         _ => {
-            if cfg!(target_os = "macos") {
+            if os_backend_available() {
                 Resolved::Os
             } else {
                 Resolved::Memory
             }
         }
     }
+}
+
+fn os_backend_available() -> bool {
+    cfg!(any(target_os = "macos", target_os = "linux"))
 }
 
 fn resolved() -> Resolved {
@@ -100,8 +105,7 @@ pub(crate) fn list_omw() -> Result<Vec<String>, KeychainError> {
 
 fn backend_unavailable() -> KeychainError {
     KeychainError::BackendUnavailable {
-        reason: "OS keychain backend is unavailable on this platform (Linux/Windows are Beyond v1)"
-            .into(),
+        reason: "OS keychain backend is unavailable on this platform".into(),
     }
 }
 
@@ -146,12 +150,11 @@ fn memory_list_omw() -> Result<Vec<String>, KeychainError> {
         .collect())
 }
 
-// ---- macOS OS backend ----
+// ---- OS backend ----
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod os_impl {
     use super::{KeychainError, SERVICE};
-    use security_framework::item::{ItemClass, ItemSearchOptions, Limit, SearchResult};
 
     pub(super) fn get(account: &str) -> Result<String, KeychainError> {
         match keyring::Entry::new(SERVICE, account)
@@ -186,7 +189,19 @@ mod os_impl {
         }
     }
 
+    fn box_os(e: keyring::Error) -> KeychainError {
+        match e {
+            keyring::Error::NoEntry => KeychainError::NotFound,
+            other => KeychainError::Os {
+                source: Box::new(other),
+            },
+        }
+    }
+
+    #[cfg(target_os = "macos")]
     pub(super) fn list_omw() -> Result<Vec<String>, KeychainError> {
+        use security_framework::item::{ItemClass, ItemSearchOptions, Limit, SearchResult};
+
         let mut search = ItemSearchOptions::new();
         search
             .class(ItemClass::generic_password())
@@ -208,17 +223,15 @@ mod os_impl {
             .collect())
     }
 
-    fn box_os(e: keyring::Error) -> KeychainError {
-        match e {
-            keyring::Error::NoEntry => KeychainError::NotFound,
-            other => KeychainError::Os {
-                source: Box::new(other),
-            },
-        }
+    #[cfg(target_os = "linux")]
+    pub(super) fn list_omw() -> Result<Vec<String>, KeychainError> {
+        Err(KeychainError::BackendUnavailable {
+            reason: "listing Linux Secret Service entries is not supported by this backend".into(),
+        })
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 mod os_impl {
     use super::KeychainError;
 
@@ -236,7 +249,7 @@ mod os_impl {
     }
     fn unavailable() -> KeychainError {
         KeychainError::BackendUnavailable {
-            reason: "OS keychain not implemented on this platform (Beyond v1)".into(),
+            reason: "OS keychain not implemented on this platform".into(),
         }
     }
 }

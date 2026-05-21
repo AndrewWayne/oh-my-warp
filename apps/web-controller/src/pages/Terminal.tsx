@@ -13,14 +13,20 @@ import {
   type TerminalGridSize,
 } from "../lib/terminal-resize";
 import { configureTerminalInputTraits } from "../lib/terminal-input-traits";
+import { computeKeyboardDockEdge } from "../lib/keyboard-dock";
 
 type Status = "loading" | "connecting" | "connected" | "disconnected" | "error";
+
+const MOBILE_BREAKPOINT_PX = 640;
+const MOBILE_TERMINAL_CANVAS_WIDTH_PX = 840;
+const MIN_READABLE_MOBILE_COLS = 80;
 
 export default function Terminal() {
   const { hostId, sessionId } = useParams();
   const navigate = useNavigate();
   const shellRef = useRef<HTMLElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const xtermHostRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [retryNonce, setRetryNonce] = useState(0);
@@ -44,17 +50,39 @@ export default function Terminal() {
 
   const viewport = useVisualViewportSize();
   const [shellTop, setShellTop] = useState(0);
+  const [stableKeyboardDockEdge, setStableKeyboardDockEdge] = useState(0);
+  const [keyboardDockLatched, setKeyboardDockLatched] = useState(false);
   const layoutViewportHeight =
     typeof window !== "undefined" ? window.innerHeight : 0;
   const layoutViewportWidth =
     typeof window !== "undefined" ? window.innerWidth : 0;
-  const compactInputMode =
+  const mobileTerminalLayout =
+    layoutViewportWidth > 0 && layoutViewportWidth < MOBILE_BREAKPOINT_PX;
+  const mobileTerminalLayoutRef = useRef(mobileTerminalLayout);
+  mobileTerminalLayoutRef.current = mobileTerminalLayout;
+  const terminalCanvasWidth = mobileTerminalLayout
+    ? Math.max(layoutViewportWidth, MOBILE_TERMINAL_CANVAS_WIDTH_PX)
+    : undefined;
+  const rawCompactInputMode =
     viewport.height > 0 &&
     layoutViewportHeight > 0 &&
     viewport.height < layoutViewportHeight * 0.72;
+  const compactInputMode = rawCompactInputMode || keyboardDockLatched;
+  const keyboardDockEdge =
+    compactInputMode && layoutViewportHeight > 0
+      ? rawCompactInputMode || stableKeyboardDockEdge <= 0
+        ? computeKeyboardDockEdge({
+            layoutViewportHeight,
+            visualViewportHeight: viewport.height,
+            visualViewportOffsetTop: viewport.offsetTop,
+            previousDockEdge: stableKeyboardDockEdge,
+          })
+        : stableKeyboardDockEdge
+      : 0;
+  const keyboardDockOffsetY = keyboardDockEdge - layoutViewportHeight;
   const effectiveViewportHeight =
-    compactInputMode && viewport.height > 0
-      ? viewport.height
+    compactInputMode && keyboardDockEdge > 0
+      ? keyboardDockEdge
       : layoutViewportHeight || viewport.height;
   const terminalHeight =
     effectiveViewportHeight > 0
@@ -64,10 +92,41 @@ export default function Terminal() {
     compactInputMode && layoutViewportHeight > 0
       ? {
           offsetLeft: viewport.offsetLeft,
-          offsetY: viewport.offsetTop + viewport.height - layoutViewportHeight,
+          offsetY: keyboardDockOffsetY,
           width: viewport.width || layoutViewportWidth,
         }
       : undefined;
+
+  const isTerminalInputFocused = useCallback(() => {
+    const root = containerRef.current;
+    const active = document.activeElement;
+    return (
+      !!root &&
+      active instanceof HTMLElement &&
+      root.contains(active) &&
+      isTerminalTextInput(active)
+    );
+  }, []);
+
+  useEffect(() => {
+    if (rawCompactInputMode) {
+      setKeyboardDockLatched(true);
+      return;
+    }
+    if (!isTerminalInputFocused()) {
+      setKeyboardDockLatched(false);
+    }
+  }, [isTerminalInputFocused, rawCompactInputMode, viewport.height, viewport.offsetTop]);
+
+  useEffect(() => {
+    if (!compactInputMode) {
+      setStableKeyboardDockEdge(0);
+      return;
+    }
+    setStableKeyboardDockEdge((prev) =>
+      prev === keyboardDockEdge ? prev : keyboardDockEdge,
+    );
+  }, [compactInputMode, keyboardDockEdge]);
 
   const measureShellTop = useCallback(() => {
     const next = Math.max(0, Math.round(shellRef.current?.getBoundingClientRect().top ?? 0));
@@ -77,6 +136,24 @@ export default function Terminal() {
   useLayoutEffect(() => {
     measureShellTop();
   }, [viewport.height, viewport.offsetTop, measureShellTop]);
+
+  useEffect(() => {
+    const resetRootScroll = () => {
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      if (window.scrollX !== 0 || window.scrollY !== 0) {
+        window.scrollTo(0, 0);
+      }
+    };
+
+    resetRootScroll();
+    window.addEventListener("scroll", resetRootScroll, { passive: true });
+    window.visualViewport?.addEventListener("scroll", resetRootScroll);
+    return () => {
+      window.removeEventListener("scroll", resetRootScroll);
+      window.visualViewport?.removeEventListener("scroll", resetRootScroll);
+    };
+  }, []);
 
   // Fit scheduler. Resize is fed by several event sources; wait for iOS
   // visualViewport animations to settle, then dedupe rows/cols before sending.
@@ -147,18 +224,20 @@ export default function Terminal() {
       isTerminalTextInput(active)
     ) {
       active.blur();
+      setKeyboardDockLatched(false);
       return;
     }
 
     const terminalInput = root.querySelector("textarea, input");
     if (terminalInput instanceof HTMLElement) {
       terminalInput.blur();
+      setKeyboardDockLatched(false);
     }
   }, []);
 
   useEffect(() => {
     scheduleFit();
-  }, [terminalHeight, viewport.offsetTop, scheduleFit]);
+  }, [terminalCanvasWidth, terminalHeight, viewport.offsetTop, scheduleFit]);
 
   useEffect(() => {
     if (!hostId || !sessionId) return;
@@ -184,18 +263,20 @@ export default function Terminal() {
         return;
       }
 
-      if (!containerRef.current || cancelled) return;
+      if (!xtermHostRef.current || cancelled) return;
+      const mobileAtOpen =
+        typeof window !== "undefined" && window.innerWidth < MOBILE_BREAKPOINT_PX;
       xterm = new XTerm({
         cursorBlink: true,
         fontFamily:
           'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
-        fontSize: 13,
+        fontSize: mobileAtOpen ? 12 : 13,
         theme: { background: "#0a0a0a" },
       });
       fit = new FitAddon();
       xterm.loadAddon(fit);
-      xterm.open(containerRef.current);
-      configureTerminalInputTraits(containerRef.current);
+      xterm.open(xtermHostRef.current);
+      configureTerminalInputTraits(xtermHostRef.current);
       try {
         fit.fit();
       } catch {
@@ -246,11 +327,10 @@ export default function Terminal() {
       //    laptop user sees no change. (This is what fixed the desktop
       //    browser duplicate-render bug.)
       //
-      // 2. Phone/narrow client (fit-derived size < laptop): the laptop's
-      //    cursor positioning would clamp on phone's smaller grid and pile
-      //    up. Instead, tell the laptop to shrink to phone's fit-size; the
-      //    laptop's TUI re-flows for the narrow viewport via SIGWINCH and
-      //    bytes flow at phone size — no clamping, readable text.
+      // 2. Phone client: render on a wider, horizontally pannable canvas so
+      //    TUIs like Claude Code keep a readable 80+ column shape instead of
+      //    wrapping into the physical viewport width. Only shrink a non-phone
+      //    client when it truly cannot render the incoming grid.
       if (typeof connection.onControl === "function") {
         connection.onControl((payload) => {
           if (
@@ -272,10 +352,13 @@ export default function Terminal() {
             `size msg laptop=${laptopRows}x${laptopCols} phone=${phoneRows}x${phoneCols}`,
           );
 
-          const TOO_NARROW = 80;
-          if (phoneCols >= TOO_NARROW) {
-            xterm.resize(laptopCols, laptopRows);
-            lastSizeRef.current = { rows: laptopRows, cols: laptopCols };
+          const mobileWideCanvas = mobileTerminalLayoutRef.current;
+          if (mobileWideCanvas || phoneCols >= MIN_READABLE_MOBILE_COLS) {
+            const nextCols = mobileWideCanvas
+              ? Math.max(laptopCols, MIN_READABLE_MOBILE_COLS)
+              : laptopCols;
+            xterm.resize(nextCols, laptopRows);
+            lastSizeRef.current = { rows: laptopRows, cols: nextCols };
           } else if (connection) {
             const next = { rows: phoneRows, cols: phoneCols };
             const last = lastSizeRef.current;
@@ -286,7 +369,7 @@ export default function Terminal() {
               return;
             }
             appendDebug(
-              `request laptop shrink to ${phoneRows}x${phoneCols} (phone < 80 cols)`,
+              `request remote shrink to ${phoneRows}x${phoneCols} (client < 80 cols)`,
             );
             void connection
               .sendControl({ type: "resize", ...next })
@@ -414,8 +497,18 @@ export default function Terminal() {
       <div
         ref={containerRef}
         data-testid="xterm-container"
-        className="flex-1 min-h-0 min-w-0 overflow-hidden border-y border-neutral-900 bg-black p-1 sm:rounded sm:border sm:border-neutral-800 sm:p-2"
-      />
+        className="flex-1 min-h-0 min-w-0 overflow-x-auto overflow-y-hidden overscroll-x-contain border-y border-neutral-900 bg-black p-1 sm:rounded sm:border sm:border-neutral-800 sm:p-2"
+      >
+        <div
+          ref={xtermHostRef}
+          data-testid="xterm-host"
+          className="h-full min-h-full"
+          style={{
+            minWidth: terminalCanvasWidth ? `${terminalCanvasWidth}px` : "100%",
+            width: terminalCanvasWidth ? `${terminalCanvasWidth}px` : "100%",
+          }}
+        />
+      </div>
 
       <TerminalShortcutStrip
         enabled={status === "connected"}

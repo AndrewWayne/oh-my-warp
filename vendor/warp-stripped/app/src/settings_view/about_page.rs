@@ -8,6 +8,8 @@ use super::{
 use crate::{
     appearance::Appearance, channel::ChannelState, workspace::WorkspaceAction,
 };
+#[cfg(feature = "omw_local")]
+use crate::autoupdate::{self, AutoupdateStage};
 #[cfg(not(feature = "omw_local"))]
 use crate::themes::theme::ColorScheme;
 use warpui::{
@@ -93,6 +95,8 @@ struct AboutPageWidget {
     upstream_link_mouse_state: MouseStateHandle,
     #[cfg(feature = "omw_local")]
     omw_link_mouse_state: MouseStateHandle,
+    #[cfg(feature = "omw_local")]
+    check_for_updates_mouse_state: MouseStateHandle,
     #[cfg(feature = "omw_local")]
     license_scroll_state: ClippedScrollStateHandle,
 }
@@ -188,7 +192,7 @@ impl SettingsWidget for AboutPageWidget {
         &self,
         _view: &AboutPageView,
         appearance: &Appearance,
-        _app: &AppContext,
+        app: &AppContext,
     ) -> Box<dyn Element> {
         let theme = appearance.theme();
         let ui_builder = appearance.ui_builder();
@@ -247,6 +251,62 @@ impl SettingsWidget for AboutPageWidget {
         )
         .with_margin_top(8.)
         .finish();
+
+        let updates_header = Container::new(
+            Text::new("Updates".to_owned(), appearance.ui_font_family(), 14.)
+                .with_color(active_color)
+                .with_style(warpui::fonts::Properties::default().weight(Weight::Semibold))
+                .finish(),
+        )
+        .with_margin_top(24.)
+        .finish();
+
+        let check_for_updates_button = Container::new(
+            appearance
+                .ui_builder()
+                .button(
+                    ButtonVariant::Link,
+                    self.check_for_updates_mouse_state.clone(),
+                )
+                .with_text_label("Check for updates".to_owned())
+                .build()
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(WorkspaceAction::CheckForUpdate);
+                })
+                .finish(),
+        )
+        .with_margin_top(2.)
+        .finish();
+
+        let update_status_text = match autoupdate::get_update_state(app) {
+            AutoupdateStage::NoUpdateAvailable => Some("Up to date".to_owned()),
+            AutoupdateStage::CheckingForUpdate => Some("Checking for update…".to_owned()),
+            AutoupdateStage::DownloadingUpdate => Some("Downloading update…".to_owned()),
+            AutoupdateStage::UpdateReady { new_version, .. } => Some(format!(
+                "Update ready: {} (relaunch to apply)",
+                new_version.version
+            )),
+            AutoupdateStage::Updating { new_version, .. } => {
+                Some(format!("Applying update {}…", new_version.version))
+            }
+            AutoupdateStage::UnableToUpdateToNewVersion { new_version } => Some(format!(
+                "Update available ({}) but cannot install — check permissions on /Applications/omw-warp-oss.app",
+                new_version.version
+            )),
+            AutoupdateStage::UnableToLaunchNewVersion { new_version } => {
+                Some(format!("Update {} downloaded, relaunch failed", new_version.version))
+            }
+            _ => None,
+        };
+        let update_status = update_status_text.map(|text| {
+            Container::new(
+                Text::new(text, appearance.ui_font_family(), 12.)
+                    .with_color(muted_color)
+                    .finish(),
+            )
+            .with_margin_top(4.)
+            .finish()
+        });
 
         let acknowledgements_header = Container::new(
             Text::new(
@@ -353,6 +413,9 @@ impl SettingsWidget for AboutPageWidget {
                 .with_child(version_row.finish())
                 .with_child(app_name)
                 .with_child(description)
+                .with_child(updates_header)
+                .with_child(check_for_updates_button)
+                .with_children(update_status)
                 .with_child(acknowledgements_header)
                 .with_child(upstream_blurb)
                 .with_child(upstream_link)

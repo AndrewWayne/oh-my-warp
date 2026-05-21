@@ -21,7 +21,7 @@ const stamp = now.toISOString().replace(/[:.]/g, "-");
 const defaultReportDir = join(
   repoRoot,
   ".gstack/qa-reports",
-  `mobile-web-auto-${stamp}`,
+  `mobile-web-mock-${stamp}`,
 );
 const reportDir = resolve(process.env.OMW_QA_REPORT_DIR || defaultReportDir);
 const skipBuild = process.env.OMW_QA_SKIP_BUILD === "1";
@@ -149,7 +149,7 @@ async function main() {
       ]) {
         await tapButton(cdp, label);
       }
-      await tapButton(cdp, "more");
+      await tapButton(cdp, "show extra shortcuts");
       await waitForVisible(cdp, '[data-testid="terminal-shortcut-overflow"]');
       await screenshot(cdp, "02-more-drawer.png");
       for (const label of ["^D", "^L", "/", "|", "?"]) {
@@ -174,6 +174,28 @@ async function main() {
       pass("shortcut strip docks to the visual viewport when keyboard is open");
       await screenshot(cdp, "03-keyboard-docked.png");
 
+      await emulateKeyboard(cdp, {
+        height: 520,
+        width: mobileViewportWidth,
+        offsetTop: -180,
+        offsetLeft: 0,
+      });
+      await waitFor(
+        async () => {
+          const dock = await evaluate(cdp, dockStateExpression());
+          return dock.position === "fixed" && dock.bottom <= 528 && dock.bottom > 470;
+        },
+        5_000,
+        "shortcut strip ignores negative iOS rubber-band visual viewport offset",
+      );
+      pass("shortcut strip stays docked through iOS rubber-band viewport offsets");
+
+      await evaluate(cdp, `(() => {
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        return true;
+      })()`);
       await emulateKeyboard(cdp, {
         height: mobileViewportHeight,
         width: mobileViewportWidth,
@@ -250,9 +272,14 @@ async function main() {
     }
   } finally {
     if (!keepOpen) {
-      stopChild(chrome);
-      stopChild(host);
-      await rm(userDataDir, { recursive: true, force: true });
+      await stopChild(chrome);
+      await stopChild(host);
+      await rm(userDataDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 100,
+      });
     } else {
       console.log(`Keeping host and Chrome open. Report: ${reportDir}`);
     }
@@ -817,9 +844,13 @@ function startChild(command, args, { env, label }) {
   return child;
 }
 
-function stopChild(child) {
+async function stopChild(child) {
   if (!child || child.killed || child.exitCode !== null) return;
+  const exited = new Promise((resolvePromise) => {
+    child.once("exit", resolvePromise);
+  });
   child.kill("SIGTERM");
+  await Promise.race([exited, delay(1500)]);
 }
 
 async function freePort() {

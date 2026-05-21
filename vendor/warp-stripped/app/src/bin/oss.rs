@@ -26,6 +26,15 @@ fn main() -> Result<()> {
     if cfg!(debug_assertions) {
         state = state.with_additional_features(warp_core::features::DEBUG_FLAGS);
     }
+    // omw_local builds autoupdate against GitHub Releases (see `autoupdate::oss`).
+    // The cargo `autoupdate` feature and `release_bundle` aren't set on this build,
+    // so without this hint `FeatureFlag::Autoupdate.is_enabled()` is false and both
+    // the poll loop (`autoupdate/mod.rs`) and the "Check for updates" command-palette
+    // binding (`workspace/mod.rs`) skip registration.
+    #[cfg(feature = "omw_local")]
+    {
+        state = state.with_additional_features(warp_core::features::OMW_LOCAL_FLAGS);
+    }
     ChannelState::set(state);
 
     warp::run()

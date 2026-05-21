@@ -17,9 +17,9 @@ describe("TerminalShortcutStrip", () => {
     expect(primary.getByRole("button", { name: /arrow down/i })).toBeInTheDocument();
     expect(primary.getByRole("button", { name: /arrow left/i })).toBeInTheDocument();
     expect(primary.getByRole("button", { name: /arrow right/i })).toBeInTheDocument();
-    expect(primary.getByRole("button", { name: /more/i })).toBeInTheDocument();
+    expect(primary.getByRole("button", { name: /show extra shortcuts/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^enter$/i })).toBeNull();
-    expect(screen.getByRole("button", { name: /hide keyboard/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /hide keyboard/i })).toBeNull();
   });
 
   it("keeps the primary controls in one 44px-tall horizontal lane", () => {
@@ -33,7 +33,7 @@ describe("TerminalShortcutStrip", () => {
     expect(primaryRow).toHaveClass("gap-px");
     const shortcutButtons = within(primaryRow).getAllByRole("button");
     for (const btn of shortcutButtons) {
-      expect(btn).toHaveClass("w-[34px]");
+      expect(btn).toHaveClass("w-[39px]");
       expect(btn).toHaveClass("h-11");
     }
   });
@@ -41,17 +41,13 @@ describe("TerminalShortcutStrip", () => {
   it("keeps the compact row within a 375px phone width", () => {
     const surfacePaddingX = 8;
     const primaryButtons = 9;
-    const primaryButtonWidth = 34;
+    const primaryButtonWidth = 39;
     const primaryButtonGaps = 8;
-    const topRowGap = 1;
-    const hideButtonWidth = 34;
 
     const minimumWidth =
       surfacePaddingX +
       primaryButtons * primaryButtonWidth +
-      primaryButtonGaps +
-      topRowGap +
-      hideButtonWidth;
+      primaryButtonGaps;
 
     expect(minimumWidth).toBeLessThanOrEqual(375);
   });
@@ -106,7 +102,7 @@ describe("TerminalShortcutStrip", () => {
     const user = userEvent.setup();
     const onSendBytes = vi.fn();
     render(<TerminalShortcutStrip enabled onSendBytes={onSendBytes} />);
-    await user.click(screen.getByRole("button", { name: /more/i }));
+    await user.click(screen.getByRole("button", { name: /show extra shortcuts/i }));
     const btn = screen.getByRole("button", { name: /\^D/i });
 
     fireEvent.pointerDown(btn, { pointerType: "touch" });
@@ -154,7 +150,7 @@ describe("TerminalShortcutStrip", () => {
 
   it("opens the overflow drawer on pointerdown without closing on the follow-up click", () => {
     render(<TerminalShortcutStrip enabled onSendBytes={() => undefined} />);
-    const more = screen.getByRole("button", { name: /more/i });
+    const more = screen.getByRole("button", { name: /show extra shortcuts/i });
 
     fireEvent.pointerDown(more, { pointerType: "touch" });
     expect(screen.getByTestId("terminal-shortcut-overflow")).toBeInTheDocument();
@@ -166,9 +162,10 @@ describe("TerminalShortcutStrip", () => {
   it("toggles the overflow drawer when more is tapped without duplicating primary arrows", async () => {
     const user = userEvent.setup();
     render(<TerminalShortcutStrip enabled onSendBytes={() => undefined} />);
-    const more = screen.getByRole("button", { name: /more/i });
+    const more = screen.getByRole("button", { name: /show extra shortcuts/i });
 
     await user.click(more);
+    expect(screen.getByRole("button", { name: /hide keyboard/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /\^D/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /\^L/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /\//i })).toBeInTheDocument();
@@ -178,11 +175,12 @@ describe("TerminalShortcutStrip", () => {
     expect(overflow.queryByRole("button", { name: /arrow left/i })).toBeNull();
     expect(overflow.queryByRole("button", { name: /arrow right/i })).toBeNull();
 
-    await user.click(more);
+    await user.click(screen.getByRole("button", { name: /hide extra shortcuts/i }));
     expect(screen.queryByRole("button", { name: /\^D/i })).toBeNull();
   });
 
-  it("hide keyboard button is compact and calls the hide callback without sending bytes", () => {
+  it("hide keyboard lives in the overflow drawer and calls the hide callback without sending bytes", async () => {
+    const user = userEvent.setup();
     const onSendBytes = vi.fn();
     const onHideKeyboard = vi.fn();
     render(
@@ -192,9 +190,10 @@ describe("TerminalShortcutStrip", () => {
         onHideKeyboard={onHideKeyboard}
       />,
     );
+    await user.click(screen.getByRole("button", { name: /show extra shortcuts/i }));
     const btn = screen.getByRole("button", { name: /hide keyboard/i });
 
-    expect(btn).toHaveClass("w-[34px]");
+    expect(btn).toHaveTextContent("hide");
     fireEvent.pointerDown(btn, { pointerType: "touch" });
     fireEvent.click(btn);
     expect(onHideKeyboard).toHaveBeenCalledTimes(1);

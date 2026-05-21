@@ -854,6 +854,14 @@ static FEATURES_INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Features used in debugging.
 pub const DEBUG_FLAGS: &[FeatureFlag] = &[FeatureFlag::DebugMode, FeatureFlag::RuntimeFeatureFlags];
 
+/// Features that must be enabled for omw_local builds (the audit-clean Warp fork).
+///
+/// omw_local builds don't pass `release_bundle` and don't include the `autoupdate`
+/// cargo feature, so `lib.rs::enabled_features` wouldn't add `FeatureFlag::Autoupdate`
+/// without this list. `bin/oss.rs` wires this into `ChannelState::additional_features`
+/// under `#[cfg(feature = "omw_local")]`. The regression test guards the contract.
+pub const OMW_LOCAL_FLAGS: &[FeatureFlag] = &[FeatureFlag::Autoupdate];
+
 /// Features enabled for the development team.  The expectation is that, over
 /// time, these will move on to PREVIEW_FLAGS before being launched.
 pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[

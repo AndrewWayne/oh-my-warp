@@ -2358,7 +2358,6 @@ pub fn init_feature_flags() {
 /// The omw fork keeps the terminal/editor substrate and leaves these surfaces for omw-owned
 /// replacements instead of presenting official-cloud UI that cannot work locally.
 const OMW_LOCAL_DISABLED_FLAGS: &[FeatureFlag] = &[
-    FeatureFlag::Autoupdate,
     FeatureFlag::Changelog,
     FeatureFlag::CocoaSentry,
     FeatureFlag::CrashReporting,

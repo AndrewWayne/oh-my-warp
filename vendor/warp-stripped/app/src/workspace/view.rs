@@ -548,7 +548,22 @@ const TAB_BAR_PILL_WIDTH: f32 = 100.;
 const PILL_FONT_SIZE: f32 = 12.;
 // We use the word "Warp" in the Update Ready button to make it obvious that the terminal is Warp.
 // This can lead to free advertising when users screen-share Warp when an update is available.
+// omw_local builds rebrand per CLAUDE.md §5 — the literal `Warp` wordmark is forbidden in
+// product-surface strings reachable by omw users.
+#[cfg(not(feature = "omw_local"))]
 const UPDATE_READY_TEXT: &str = "Update Warp";
+#[cfg(feature = "omw_local")]
+const UPDATE_READY_TEXT: &str = "Update omw-warp-oss";
+
+#[cfg(not(feature = "omw_local"))]
+const UPDATE_MANUAL_TEXT: &str = "Update Warp manually";
+#[cfg(feature = "omw_local")]
+const UPDATE_MANUAL_TEXT: &str = "Update omw-warp-oss manually";
+
+#[cfg(not(feature = "omw_local"))]
+const UPDATE_AND_RELAUNCH_TEXT: &str = "Update and relaunch Warp";
+#[cfg(feature = "omw_local")]
+const UPDATE_AND_RELAUNCH_TEXT: &str = "Update and relaunch omw-warp-oss";
 
 const TAB_BAR_OVERFLOW_MENU_WIDTH: f32 = 300.;
 
@@ -6558,7 +6573,7 @@ impl Workspace {
                             .into_item(),
                     ),
                     AutoupdateStage::UnableToUpdateToNewVersion { .. } => menu_items.push(
-                        MenuItemFields::new("Update Warp manually")
+                        MenuItemFields::new(UPDATE_MANUAL_TEXT)
                             .with_on_select_action(WorkspaceAction::DownloadNewVersion)
                             .into_item(),
                     ),
@@ -8285,7 +8300,7 @@ impl Workspace {
                     ) =>
                 {
                     items.push(
-                        MenuItemFields::new("Update and relaunch Warp")
+                        MenuItemFields::new(UPDATE_AND_RELAUNCH_TEXT)
                             .with_on_select_action(WorkspaceAction::ApplyUpdate)
                             .with_override_text_color(appearance.theme().ansi_fg_red())
                             .into_item(),
@@ -8308,7 +8323,7 @@ impl Workspace {
                     ) =>
                 {
                     items.push(
-                        MenuItemFields::new("Update Warp manually")
+                        MenuItemFields::new(UPDATE_MANUAL_TEXT)
                             .with_on_select_action(WorkspaceAction::DownloadNewVersion)
                             .with_override_text_color(appearance.theme().ansi_fg_red())
                             .into_item(),
@@ -18386,8 +18401,10 @@ impl Workspace {
                         if is_incoming_version_past_current(new_version.soft_cutoff.as_deref()) {
                             VERSION_DEPRECATION_WITHOUT_PERMISSIONS_BANNER_TEXT.to_owned()
                         } else {
-                            "A new version is available but Warp is unable to perform the update."
-                                .to_owned()
+                            #[cfg(feature = "omw_local")]
+                            { "A new version is available but the app is unable to perform the update.".to_owned() }
+                            #[cfg(not(feature = "omw_local"))]
+                            { "A new version is available but Warp is unable to perform the update.".to_owned() }
                         };
 
                     Some(WorkspaceBannerFields {
@@ -18397,6 +18414,9 @@ impl Workspace {
                         description,
                         secondary_button: None,
                         button: Some(WorkspaceBannerButtonDetails {
+                            #[cfg(feature = "omw_local")]
+                            text: "Update manually".to_string(),
+                            #[cfg(not(feature = "omw_local"))]
                             text: "Update Warp manually".to_string(),
                             action: WorkspaceAction::DownloadNewVersion,
                             variant: BannerButtonVariant::Outlined,
@@ -18412,7 +18432,10 @@ impl Workspace {
                         if is_incoming_version_past_current(new_version.soft_cutoff.as_deref()) {
                             VERSION_DEPRECATION_WITHOUT_PERMISSIONS_BANNER_TEXT.to_owned()
                         } else {
-                            "Warp was unable to launch the new installed version.".to_owned()
+                            #[cfg(feature = "omw_local")]
+                            { "The app was unable to launch the new installed version.".to_owned() }
+                            #[cfg(not(feature = "omw_local"))]
+                            { "Warp was unable to launch the new installed version.".to_owned() }
                         };
 
                     Some(WorkspaceBannerFields {
@@ -18422,6 +18445,9 @@ impl Workspace {
                         description,
                         secondary_button: None,
                         button: Some(WorkspaceBannerButtonDetails {
+                            #[cfg(feature = "omw_local")]
+                            text: "Update manually".to_string(),
+                            #[cfg(not(feature = "omw_local"))]
                             text: "Update Warp manually".to_string(),
                             action: WorkspaceAction::DownloadNewVersion,
                             variant: BannerButtonVariant::Outlined,
@@ -18432,6 +18458,31 @@ impl Workspace {
                 }
                 AutoupdateStage::UpdateReady { new_version, .. }
                 | AutoupdateStage::UpdatedPendingRestart { new_version } => {
+                    // omw preview-track releases don't carry soft_cutoff or
+                    // update_by metadata (the GitHub Releases API has no
+                    // equivalent), so the upstream gates below would never
+                    // fire and the user would never see a "restart to update"
+                    // banner. Show it unconditionally on UpdateReady instead.
+                    #[cfg(feature = "omw_local")]
+                    {
+                        let _ = new_version;
+                        return Some(WorkspaceBannerFields {
+                            banner_type: WorkspaceBanner::VersionDeprecated,
+                            severity: BannerSeverity::Warning,
+                            heading: None,
+                            description:
+                                "A new version is available — Restart to update.".to_string(),
+                            secondary_button: None,
+                            button: Some(WorkspaceBannerButtonDetails {
+                                text: "Restart and update".to_string(),
+                                action: WorkspaceAction::ApplyUpdate,
+                                variant: BannerButtonVariant::Outlined,
+                                icon: None,
+                                more_info_button_action: None,
+                            }),
+                        });
+                    }
+                    #[cfg_attr(feature = "omw_local", allow(unreachable_code))]
                     if is_incoming_version_past_current(new_version.soft_cutoff.as_deref()) {
                         Some(WorkspaceBannerFields {
                             banner_type: WorkspaceBanner::VersionDeprecated,
@@ -19733,18 +19784,19 @@ fn is_omw_local_hidden_settings_section(_section: Option<SettingsSection>) -> bo
 fn is_official_cloud_workspace_action(action: &WorkspaceAction) -> bool {
     use WorkspaceAction::*;
 
+    // NOTE: autoupdate-related actions (AutoupdateFailureLink, ApplyUpdate,
+    // DownloadNewVersion, CheckForUpdate) are intentionally NOT in this list.
+    // They go through omw's own GitHub-Releases autoupdate path
+    // (see `autoupdate::oss`) and must remain reachable from the UI even
+    // when official cloud services are disabled.
     matches!(
         action,
-        AutoupdateFailureLink
-            | ApplyUpdate
-            | DownloadNewVersion
-            | ShowUpgrade
+        ShowUpgrade
             | ShowReferralSettingsPage
             | JoinSlack
             | ViewLatestChangelog
             | ViewPrivacyPolicy
             | SendFeedback
-            | CheckForUpdate
             | ToggleResourceCenter
             | ClickedAIAssistantIcon
             | ToggleAIAssistant

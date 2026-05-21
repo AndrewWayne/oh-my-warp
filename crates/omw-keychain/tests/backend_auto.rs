@@ -8,7 +8,7 @@ mod common;
 
 use std::sync::Once;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 use common::{key_ref, unique_name};
 
 static INIT: Once = Once::new();
@@ -20,9 +20,20 @@ fn init() {
     });
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn auto_backend_on_non_mac_uses_memory_backend() {
+fn auto_backend_on_supported_platform_uses_os_backend() {
+    init();
+    assert_eq!(
+        omw_keychain::current_backend_kind(),
+        omw_keychain::BackendKind::Os
+    );
+    // Pure introspection, no UI/keyring side-effect.
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[test]
+fn auto_backend_on_unsupported_platform_uses_memory_backend() {
     init();
     assert_eq!(
         omw_keychain::current_backend_kind(),
@@ -33,15 +44,4 @@ fn auto_backend_on_non_mac_uses_memory_backend() {
     omw_keychain::set(&kr, "x").unwrap();
     assert_eq!(omw_keychain::get(&kr).unwrap().expose(), "x");
     let _ = omw_keychain::delete(&kr);
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn auto_backend_on_mac_uses_os_backend() {
-    init();
-    assert_eq!(
-        omw_keychain::current_backend_kind(),
-        omw_keychain::BackendKind::Os
-    );
-    // Pure introspection, no UI side-effect.
 }

@@ -7,6 +7,8 @@
 # Produces: dist/omw-warp-oss-v<version>-<arch>-unknown-linux-gnu/warp-oss
 #
 # Pre-reqs: vendor/warp-stripped/script/linux/install_build_deps, plus rustup.
+#   Also requires libdbus-1-dev (omw-keychain's Linux Secret Service backend
+#   links libdbus via pkg-config): apt-get install -y libdbus-1-dev pkg-config.
 # Does not touch vendor/warp-stripped/ source.
 
 set -euo pipefail

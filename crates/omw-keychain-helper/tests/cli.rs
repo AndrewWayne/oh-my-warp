@@ -194,9 +194,13 @@ fn t5_no_subcommand() {
     );
 }
 
-/// Backend-unavailable applies on Linux/Windows where OS keychain is Beyond v1.
-/// Skipped on macOS because the OS backend works there.
-#[cfg(not(target_os = "macos"))]
+/// Backend-unavailable applies on platforms with no OS-keychain impl
+/// (Windows, as of the Linux Secret Service support added in #68).
+/// Skipped on macOS and Linux because the OS backend exists there — on
+/// Linux the outcome depends on whether a Secret Service daemon is
+/// reachable (headless CI: `Os` error; desktop session: `NotFound`),
+/// so there is no single result to assert.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 #[test]
 fn t6_backend_unavailable_on_linux_windows() {
     let assert = helper()

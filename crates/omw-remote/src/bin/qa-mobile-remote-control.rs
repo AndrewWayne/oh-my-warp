@@ -191,6 +191,9 @@ fn qa_shell_spec(clean_shell: bool, work_dir: &std::path::Path) -> ShellSpec {
 
     #[cfg(not(target_os = "macos"))]
     {
+        // Only the macOS spec builds a cd-into-workdir command line.
+        let _ = work_dir;
+
         if !clean_shell {
             return ShellSpec::default_for_host();
         }
@@ -202,11 +205,12 @@ fn qa_shell_spec(clean_shell: bool, work_dir: &std::path::Path) -> ShellSpec {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
     use std::ffi::OsStr;

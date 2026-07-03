@@ -514,7 +514,7 @@ describe("secret hygiene", () => {
 	});
 
 	it("15. successful getKeychainSecret never calls console.* with the secret", async () => {
-		const SECRET = "sk-leaky-but-not-leaked-XYZ";
+		const SECRET = "sk-leaky-not-leaked";
 		pushScript({ stdout: SECRET + "\n", exitCode: 0 });
 
 		const consoleSpies = [

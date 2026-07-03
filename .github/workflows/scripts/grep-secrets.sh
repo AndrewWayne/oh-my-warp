@@ -9,19 +9,31 @@ set -uo pipefail
 
 # Patterns. The {20,} length lets us tolerate short test fixtures like
 # "sk-test123" (rejected by KeyRef anyway) without false-positiving on every PR
-# that touches the validator's tests.
+# that touches the validator's tests. The (^|[^A-Za-z0-9_-]) left boundary
+# stops "sk-" matching inside ordinary words/URLs (e.g. "...warp-ai-ask-from-
+# block-keybinding..." contains "sk-from-block-keybinding...").
 patterns=(
-  'sk-[A-Za-z0-9_-]{20,}'
-  'sk-ant-[A-Za-z0-9_-]{20,}'
-  'sk-proj-[A-Za-z0-9_-]{20,}'
+  '(^|[^A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}'
+  '(^|[^A-Za-z0-9_-])sk-ant-[A-Za-z0-9_-]{20,}'
+  '(^|[^A-Za-z0-9_-])sk-proj-[A-Za-z0-9_-]{20,}'
 )
 
-# Self-exclusion: this script names the patterns it's looking for.
-exclude=':!.github/workflows/scripts/grep-secrets.sh'
+excludes=(
+  # Self-exclusion: this script names the patterns it's looking for.
+  ':!.github/workflows/scripts/grep-secrets.sh'
+  # Upstream test fixtures inside the vendored fork carry deliberately fake
+  # sk-ant-* keys (structurally valid, obviously synthetic). They predate the
+  # fork and are exercised by upstream's own tests; keep them excluded rather
+  # than diverge from upstream. Any NEW file that trips the scan still fails
+  # CI and needs a human decision here.
+  ':!vendor/warp-stripped/app/src/ai/agent_sdk/driver/harness/claude_code_tests.rs'
+  ':!vendor/warp-stripped/app/src/terminal/model/secrets_test.rs'
+)
 
 found=0
 for pat in "${patterns[@]}"; do
-  if matches=$(git grep -EHn "$pat" -- "$exclude" 2>/dev/null); then
+  # -I: never scan binary blobs (the vendored fasttext model false-positives).
+  if matches=$(git grep -EHnI "$pat" -- "${excludes[@]}" 2>/dev/null); then
     echo "I-1 violation: literal API key prefix found in tracked files:"
     echo "$matches"
     found=1

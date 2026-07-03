@@ -4,17 +4,17 @@
 //!   `{ sessionId }`. Body shape mirrors the kernel's `session/create`
 //!   params: `{ providerConfig, model, systemPrompt?, cwd? }`.
 //! - `WS  /ws/v1/agent/:sessionId` — bidirectional event stream.
-//!     Server -> client: every kernel notification scoped to the session
-//!     (assistant/delta, tool/call_started, tool/call_finished,
-//!     turn/finished, error, agent/crashed) is forwarded as a Text frame
-//!     containing the full JSON-RPC notification.
-//!     Client -> server: Text frames carrying `{ "kind": "prompt", "prompt": "..." }`
-//!     or `{ "kind": "cancel" }` translate to `session/prompt` /
-//!     `session/cancel` requests on the kernel. `{ "kind":
-//!     "approval_decision", ... }` translates to `approval/decide`.
-//!     `{ "kind": "command_data", ... }` and `{ "kind": "command_exit",
-//!     ... }` translate to `bash/data` / `bash/finished` notifications
-//!     (Phase 5a Pattern B — fire-and-forget, no kernel response).
+//!   Server -> client: every kernel notification scoped to the session
+//!   (assistant/delta, tool/call_started, tool/call_finished,
+//!   turn/finished, error, agent/crashed) is forwarded as a Text frame
+//!   containing the full JSON-RPC notification.
+//!   Client -> server: Text frames carrying `{ "kind": "prompt", "prompt": "..." }`
+//!   or `{ "kind": "cancel" }` translate to `session/prompt` /
+//!   `session/cancel` requests on the kernel. `{ "kind":
+//!   "approval_decision", ... }` translates to `approval/decide`.
+//!   `{ "kind": "command_data", ... }` and `{ "kind": "command_exit",
+//!   ... }` translate to `bash/data` / `bash/finished` notifications
+//!   (Phase 5a Pattern B — fire-and-forget, no kernel response).
 
 use std::sync::Arc;
 
@@ -46,7 +46,9 @@ pub async fn create_session(
         })?;
     let result_str = serde_json::to_string(&result).unwrap_or_else(|_| "<unserialisable>".into());
     log::error!("omw# server: kernel session/create result={result_str}");
-    crate::omw_debug(format!("omw# server: kernel session/create result={result_str}"));
+    crate::omw_debug(format!(
+        "omw# server: kernel session/create result={result_str}"
+    ));
     let session_id = result
         .get("sessionId")
         .and_then(|v| v.as_str())
@@ -62,8 +64,13 @@ pub async fn create_session(
         })?
         .to_string();
     log::error!("omw# server: session_id={session_id}; replying 201");
-    crate::omw_debug(format!("omw# server: session_id={session_id}; replying 201"));
-    Ok((StatusCode::CREATED, Json(json!({ "sessionId": session_id }))))
+    crate::omw_debug(format!(
+        "omw# server: session_id={session_id}; replying 201"
+    ));
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({ "sessionId": session_id })),
+    ))
 }
 
 /// `WS /ws/v1/agent/:sessionId` — bridge between the GUI client and the
@@ -132,10 +139,7 @@ async fn handle_socket(socket: WebSocket, agent: Arc<AgentProcess>, session_id: 
             let kind = parsed.get("kind").and_then(|v| v.as_str()).unwrap_or("");
             match kind {
                 "prompt" => {
-                    let prompt = parsed
-                        .get("prompt")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
+                    let prompt = parsed.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
                     let _ = agent_for_inbound
                         .send_method(
                             "session/prompt",

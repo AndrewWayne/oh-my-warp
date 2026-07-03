@@ -70,7 +70,11 @@ fn tail_returns_at_most_n_rows_in_insertion_order() {
             signature: None,
             body_hash: None,
             accepted: i % 2 == 0,
-            reason: if i % 2 == 0 { None } else { Some("ts_skew".into()) },
+            reason: if i % 2 == 0 {
+                None
+            } else {
+                Some("ts_skew".into())
+            },
         };
         log.append(entry).expect("append");
     }

@@ -61,9 +61,7 @@ async fn record_output_feeds_parser() {
     let snapshot_bytes: &[u8] = &snapshot;
     let needle = b"hello";
     assert!(
-        snapshot_bytes
-            .windows(needle.len())
-            .any(|w| w == needle),
+        snapshot_bytes.windows(needle.len()).any(|w| w == needle),
         "expected snapshot to contain {:?}, got {:?}",
         std::str::from_utf8(needle).unwrap(),
         String::from_utf8_lossy(snapshot_bytes),
@@ -104,10 +102,22 @@ async fn subscribe_with_state_returns_serialized_grid() {
     let screen = replay.screen();
 
     let row0 = (0..3)
-        .map(|c| screen.cell(0, c).map(|cell| cell.contents()).unwrap_or_default().to_string())
+        .map(|c| {
+            screen
+                .cell(0, c)
+                .map(|cell| cell.contents())
+                .unwrap_or_default()
+                .to_string()
+        })
         .collect::<String>();
     let row1 = (0..3)
-        .map(|c| screen.cell(1, c).map(|cell| cell.contents()).unwrap_or_default().to_string())
+        .map(|c| {
+            screen
+                .cell(1, c)
+                .map(|cell| cell.contents())
+                .unwrap_or_default()
+                .to_string()
+        })
         .collect::<String>();
 
     assert_eq!(row0, "abc", "row 0 of replayed snapshot");
@@ -193,10 +203,22 @@ async fn resize_changes_parser_screen_size() {
     replay.process(&snapshot);
     let screen = replay.screen();
     // Rows are 0-indexed; col 38 ('a'), col 39 ('b'), then wrap to row 1.
-    assert_eq!(screen.cell(0, 38).map(|c| c.contents().to_string()), Some("a".to_string()));
-    assert_eq!(screen.cell(0, 39).map(|c| c.contents().to_string()), Some("b".to_string()));
-    assert_eq!(screen.cell(1, 0).map(|c| c.contents().to_string()), Some("c".to_string()));
-    assert_eq!(screen.cell(1, 1).map(|c| c.contents().to_string()), Some("d".to_string()));
+    assert_eq!(
+        screen.cell(0, 38).map(|c| c.contents().to_string()),
+        Some("a".to_string())
+    );
+    assert_eq!(
+        screen.cell(0, 39).map(|c| c.contents().to_string()),
+        Some("b".to_string())
+    );
+    assert_eq!(
+        screen.cell(1, 0).map(|c| c.contents().to_string()),
+        Some("c".to_string())
+    );
+    assert_eq!(
+        screen.cell(1, 1).map(|c| c.contents().to_string()),
+        Some("d".to_string())
+    );
 }
 
 /// Alt-screen mode (TUI sessions like Claude Code) round-trips through the
@@ -211,10 +233,7 @@ async fn snapshot_preserves_alt_screen_mode_for_tui_sessions() {
 
     // Enter alt-screen and write content (simulates a TUI like Claude Code).
     registry
-        .record_output(
-            id,
-            Bytes::from_static(b"\x1b[?1049h\x1b[2J\x1b[1;1HTUI"),
-        )
+        .record_output(id, Bytes::from_static(b"\x1b[?1049h\x1b[2J\x1b[1;1HTUI"))
         .expect("record_output alt-screen entry");
 
     let (snapshot, _rx) = registry
@@ -238,7 +257,10 @@ async fn snapshot_preserves_alt_screen_mode_for_tui_sessions() {
                 .unwrap_or_default()
         })
         .collect();
-    assert_eq!(row0, "TUI", "replay row 0 should reflect alt-screen content");
+    assert_eq!(
+        row0, "TUI",
+        "replay row 0 should reflect alt-screen content"
+    );
 }
 
 /// Inverse of the above: a non-TUI session (still in main-screen) MUST

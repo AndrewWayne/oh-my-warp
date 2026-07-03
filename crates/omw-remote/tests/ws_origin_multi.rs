@@ -27,8 +27,8 @@ use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use ws_common::{
-    body_hash, build_handshake_canonical, device_id_from_pubkey, echo_shell, sign_canonical,
-    shell_to_session_spec, WsFixture,
+    body_hash, build_handshake_canonical, device_id_from_pubkey, echo_shell, shell_to_session_spec,
+    sign_canonical, WsFixture,
 };
 
 /// Spawn a server pinned to TWO origins: loopback + tailnet hostname. Returns

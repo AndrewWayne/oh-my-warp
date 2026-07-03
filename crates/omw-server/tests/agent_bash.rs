@@ -171,7 +171,10 @@ async fn create_test_session(server: &Server) -> String {
         "model": "test-model"
     });
     let created = http_create_session(server, body).await;
-    created["sessionId"].as_str().expect("sessionId").to_string()
+    created["sessionId"]
+        .as_str()
+        .expect("sessionId")
+        .to_string()
 }
 
 struct WsClient {
@@ -214,10 +217,13 @@ impl WsClient {
 
 async fn connect_ws(server: &Server, session_id: &str) -> WsClient {
     let url = server.ws_url(&format!("/ws/v1/agent/{session_id}"));
-    let (inner, _resp) = timeout(Duration::from_secs(5), tokio_tungstenite::connect_async(&url))
-        .await
-        .expect("WS connect timeout")
-        .expect("WS connect failed");
+    let (inner, _resp) = timeout(
+        Duration::from_secs(5),
+        tokio_tungstenite::connect_async(&url),
+    )
+    .await
+    .expect("WS connect timeout")
+    .expect("WS connect failed");
     WsClient { inner }
 }
 

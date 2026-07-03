@@ -115,12 +115,9 @@ async fn external_session_round_trips_input_and_output_via_signed_ws() {
         assert_eq!(s, 200, "list sessions status");
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let sessions = v["sessions"].as_array().expect("sessions array");
-        let names: Vec<&str> = sessions
-            .iter()
-            .filter_map(|s| s["name"].as_str())
-            .collect();
+        let names: Vec<&str> = sessions.iter().filter_map(|s| s["name"].as_str()).collect();
         assert!(
-            names.iter().any(|n| *n == "fake-warp-pane"),
+            names.contains(&"fake-warp-pane"),
             "expected fake-warp-pane in sessions list, got {names:?}"
         );
     }
@@ -216,8 +213,7 @@ async fn external_session_round_trips_input_and_output_via_signed_ws() {
                     Ok(fr) => fr,
                     Err(_) => continue,
                 };
-                if frame.kind == FrameKind::Output
-                    && &frame.payload[..] == b"hello from warp pane"
+                if frame.kind == FrameKind::Output && &frame.payload[..] == b"hello from warp pane"
                 {
                     return true;
                 }

@@ -70,7 +70,9 @@ fn frame_sign_verify_roundtrip() {
 
     let mut frame = input_frame();
     let priv_seed = device.to_bytes();
-    let signer = Signer { device_priv: &priv_seed };
+    let signer = Signer {
+        device_priv: &priv_seed,
+    };
     frame.sign(&signer);
 
     frame
@@ -85,7 +87,10 @@ fn frame_tamper_seq_fails() {
     let priv_seed = device.to_bytes();
 
     let mut frame = input_frame();
-    Signer { device_priv: &priv_seed }.sign_into(&mut frame);
+    Signer {
+        device_priv: &priv_seed,
+    }
+    .sign_into(&mut frame);
 
     frame.seq = frame.seq.wrapping_add(1);
 
@@ -102,7 +107,10 @@ fn frame_tamper_payload_fails() {
     let priv_seed = device.to_bytes();
 
     let mut frame = input_frame();
-    Signer { device_priv: &priv_seed }.sign_into(&mut frame);
+    Signer {
+        device_priv: &priv_seed,
+    }
+    .sign_into(&mut frame);
 
     frame.payload = Bytes::from_static(b"goodbye");
 
@@ -119,7 +127,10 @@ fn frame_tamper_kind_fails() {
     let priv_seed = device.to_bytes();
 
     let mut frame = input_frame();
-    Signer { device_priv: &priv_seed }.sign_into(&mut frame);
+    Signer {
+        device_priv: &priv_seed,
+    }
+    .sign_into(&mut frame);
 
     frame.kind = FrameKind::Output;
 

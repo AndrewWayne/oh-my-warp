@@ -50,6 +50,11 @@ pub async fn append(
     let mut writer = audit.lock().await;
     let hash = writer
         .append(&body.kind, body.session_id, body.fields)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("audit append: {e}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("audit append: {e}"),
+            )
+        })?;
     Ok((StatusCode::CREATED, Json(json!({ "hash": hash }))))
 }

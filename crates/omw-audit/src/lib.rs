@@ -100,11 +100,11 @@ pub struct AuditWriter {
 }
 
 impl AuditWriter {
-    /// Open today's audit file under `audit_dir`. Creates the directory
-    /// + file if missing. Reads the existing tail to discover
-    /// `prev_hash`. Cross-day rollover: if `audit_dir` contains a file
-    /// for the previous day, its last `hash` is used as our seed
-    /// `prev_hash` (so the chain spans days).
+    /// Open today's audit file under `audit_dir`. Creates the directory +
+    /// file if missing. Reads the existing tail to discover `prev_hash`.
+    /// Cross-day rollover: if `audit_dir` contains a file for the previous
+    /// day, its last `hash` is used as our seed `prev_hash` (so the chain
+    /// spans days).
     pub fn open(audit_dir: impl Into<PathBuf>) -> Result<Self, AuditError> {
         let audit_dir = audit_dir.into();
         std::fs::create_dir_all(&audit_dir)?;

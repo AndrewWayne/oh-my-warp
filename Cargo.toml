@@ -16,8 +16,8 @@ members = [
 [workspace.package]
 edition = "2021"
 rust-version = "1.85"
-license = "MIT"
-repository = "https://github.com/oh-my-warp/oh-my-warp"
+license = "AGPL-3.0-only"
+repository = "https://github.com/AndrewWayne/oh-my-warp"
 publish = false
 
 [workspace.dependencies]

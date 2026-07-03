@@ -70,13 +70,22 @@ pub fn router(registry: Arc<SessionRegistry>) -> Router {
 /// ```ignore
 /// let app = router(registry).merge(agent_router(agent));
 /// ```
-/// Write a line to /tmp/omw-debug.log unconditionally. Bypasses the log
-/// facade so we can verify code paths even if env_logger's filter or
-/// target routing is dropping our log:: calls. Best-effort — errors are
-/// silently ignored so debug instrumentation never breaks the request
-/// path.
+/// Write a line to /tmp/omw-debug.log. Bypasses the log facade so we can
+/// verify code paths even if env_logger's filter or target routing is
+/// dropping our log:: calls. No-op unless the process was started with
+/// `OMW_DEBUG_LOG=1` (checked once) — a production binary must not write
+/// unbounded debug output to a world-readable path by default. Best-effort
+/// when enabled — errors are silently ignored so debug instrumentation
+/// never breaks the request path.
 pub(crate) fn omw_debug(line: impl AsRef<str>) {
     use std::io::Write;
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    let enabled =
+        *ENABLED.get_or_init(|| std::env::var_os("OMW_DEBUG_LOG").is_some_and(|v| v == "1"));
+    if !enabled {
+        return;
+    }
     let now = chrono::Local::now().format("%H:%M:%S%.3f");
     let _ = std::fs::OpenOptions::new()
         .create(true)
@@ -86,9 +95,7 @@ pub(crate) fn omw_debug(line: impl AsRef<str>) {
 }
 
 pub fn agent_router(agent: Arc<AgentProcess>) -> Router {
-    log::error!(
-        "omw# server: agent_router built (probe — confirms omw_server log:: routes to warp logger)"
-    );
+    log::debug!("omw# server: agent_router built");
     omw_debug("omw# server: agent_router built (probe — direct file write)");
     Router::new()
         .route(

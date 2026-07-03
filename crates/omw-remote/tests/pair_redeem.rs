@@ -30,7 +30,11 @@ fn fresh_host() -> HostKey {
 }
 
 fn default_caps() -> Vec<Capability> {
-    vec![Capability::PtyRead, Capability::AgentRead, Capability::AuditRead]
+    vec![
+        Capability::PtyRead,
+        Capability::AgentRead,
+        Capability::AuditRead,
+    ]
 }
 
 fn dummy_device_pubkey() -> [u8; 32] {
@@ -62,10 +66,20 @@ fn redeem_happy_path_returns_16_hex_device_id() {
     let token = p.issue(Duration::from_secs(600)).expect("issue");
 
     let resp = p
-        .redeem(&token, &dummy_device_pubkey(), "Mark's iPhone", &host, &default_caps())
+        .redeem(
+            &token,
+            &dummy_device_pubkey(),
+            "Mark's iPhone",
+            &host,
+            &default_caps(),
+        )
         .expect("redeem succeeds with valid token");
 
-    assert_eq!(resp.device_id.len(), 16, "device_id is 16 hex chars (spec §3.2)");
+    assert_eq!(
+        resp.device_id.len(),
+        16,
+        "device_id is 16 hex chars (spec §3.2)"
+    );
     assert!(
         resp.device_id.chars().all(|c| c.is_ascii_hexdigit()),
         "device_id must be lowercase hex"
@@ -82,11 +96,23 @@ fn second_redeem_of_same_token_is_already_used() {
     let host = fresh_host();
     let token = p.issue(Duration::from_secs(600)).expect("issue");
 
-    p.redeem(&token, &dummy_device_pubkey(), "iPhone", &host, &default_caps())
-        .expect("first redeem");
+    p.redeem(
+        &token,
+        &dummy_device_pubkey(),
+        "iPhone",
+        &host,
+        &default_caps(),
+    )
+    .expect("first redeem");
 
     let err = p
-        .redeem(&token, &dummy_device_pubkey(), "iPhone", &host, &default_caps())
+        .redeem(
+            &token,
+            &dummy_device_pubkey(),
+            "iPhone",
+            &host,
+            &default_caps(),
+        )
         .expect_err("second redeem must fail");
     assert_eq!(err, RedeemError::TokenAlreadyUsed);
 }
@@ -98,7 +124,13 @@ fn redeem_with_bogus_token_is_unknown() {
 
     let bogus = PairToken([0xAB; 32]); // never issued
     let err = p
-        .redeem(&bogus, &dummy_device_pubkey(), "iPhone", &host, &default_caps())
+        .redeem(
+            &bogus,
+            &dummy_device_pubkey(),
+            "iPhone",
+            &host,
+            &default_caps(),
+        )
         .expect_err("bogus token must be rejected");
     assert_eq!(err, RedeemError::TokenUnknown);
 }
@@ -119,13 +151,21 @@ fn redeem_after_ttl_elapses_is_expired() {
     // Issue at "now" (the real clock), then move the clock forward via
     // `set_clock` and observe expiry.
     let mut p = Pairings::new(conn);
-    let token = p.issue(Duration::from_secs(60)).expect("issue with 60 s ttl");
+    let token = p
+        .issue(Duration::from_secs(60))
+        .expect("issue with 60 s ttl");
 
     p.set_clock(future_now);
 
     let host = fresh_host();
     let err = p
-        .redeem(&token, &dummy_device_pubkey(), "iPhone", &host, &default_caps())
+        .redeem(
+            &token,
+            &dummy_device_pubkey(),
+            "iPhone",
+            &host,
+            &default_caps(),
+        )
         .expect_err("expired token must be rejected");
     assert_eq!(err, RedeemError::TokenExpired);
 }

@@ -14,13 +14,7 @@ use omw_remote::ws::Frame;
 /// the wire `ts` string is used VERBATIM in the canonical JSON, no
 /// re-formatting. JS produces ts via `new Date().toISOString()` which always
 /// uses the `Z` suffix.
-fn js_canonical_bytes(
-    v: u8,
-    seq: u64,
-    ts: &str,
-    kind: &str,
-    payload: &[u8],
-) -> Vec<u8> {
+fn js_canonical_bytes(v: u8, seq: u64, ts: &str, kind: &str, payload: &[u8]) -> Vec<u8> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine as _;
     let payload_b64 = URL_SAFE_NO_PAD.encode(payload);

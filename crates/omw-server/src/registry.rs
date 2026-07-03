@@ -479,10 +479,7 @@ impl SessionRegistry {
         // broadcast::Sender::send returns Err only when there are zero
         // subscribers; that's not a failure for us — the parser already
         // captured the bytes for any future attacher's snapshot.
-        let count = match entry.output_tx.send(bytes) {
-            Ok(n) => n,
-            Err(_) => 0,
-        };
+        let count = entry.output_tx.send(bytes).unwrap_or_default();
         Ok(count)
     }
 

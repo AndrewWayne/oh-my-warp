@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use omw_remote::{
-    HostKey, NonceStore, Pairings, RevocationList, ServerConfig, ShellSpec, make_router, open_db,
+    make_router, open_db, HostKey, NonceStore, Pairings, RevocationList, ServerConfig, ShellSpec,
 };
 use omw_server::{SessionRegistry, SessionSpec};
 use serde_json::json;
@@ -183,10 +183,10 @@ fn qa_shell_spec(clean_shell: bool, work_dir: &std::path::Path) -> ShellSpec {
         } else {
             vec!["-i".into(), "-c".into(), command.into()]
         };
-        return ShellSpec {
+        ShellSpec {
             program: "/bin/zsh".into(),
             args,
-        };
+        }
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -220,11 +220,9 @@ mod tests {
         assert_eq!(spec.program, OsStr::new("/bin/zsh"));
         assert_eq!(spec.args[0], OsStr::new("-i"));
         assert_eq!(spec.args[1], OsStr::new("-c"));
-        assert!(
-            spec.args[2]
-                .to_string_lossy()
-                .contains("cd '/tmp/omw qa' && exec /bin/zsh -i")
-        );
+        assert!(spec.args[2]
+            .to_string_lossy()
+            .contains("cd '/tmp/omw qa' && exec /bin/zsh -i"));
     }
 
     #[test]
@@ -236,10 +234,8 @@ mod tests {
         assert_eq!(spec.args[0], OsStr::new("-f"));
         assert_eq!(spec.args[1], OsStr::new("-i"));
         assert_eq!(spec.args[2], OsStr::new("-c"));
-        assert!(
-            spec.args[3]
-                .to_string_lossy()
-                .contains("cd '/tmp/omw qa' && exec /bin/zsh -f -i")
-        );
+        assert!(spec.args[3]
+            .to_string_lossy()
+            .contains("cd '/tmp/omw qa' && exec /bin/zsh -f -i"));
     }
 }

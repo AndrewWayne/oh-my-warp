@@ -134,7 +134,11 @@ pub fn classify(cmd: &str, cfg: &PolicyConfig) -> Decision {
     if cfg.deny.iter().any(|p| p.eq_ignore_ascii_case(&head_lower)) {
         return Decision::Deny;
     }
-    if cfg.allow.iter().any(|p| p.eq_ignore_ascii_case(&head_lower)) {
+    if cfg
+        .allow
+        .iter()
+        .any(|p| p.eq_ignore_ascii_case(&head_lower))
+    {
         return Decision::Allow;
     }
 

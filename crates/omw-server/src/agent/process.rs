@@ -257,20 +257,19 @@ impl AgentProcess {
             "method": method,
             "params": params,
         });
-        let line = serde_json::to_string(&frame).map_err(|e| {
-            AgentProcessError::Malformed(format!("serialize request: {e}"))
-        })?;
+        let line = serde_json::to_string(&frame)
+            .map_err(|e| AgentProcessError::Malformed(format!("serialize request: {e}")))?;
 
         // Acquire the stdin lock for the whole write so two concurrent
         // requests don't interleave bytes on the wire.
         {
             let mut sink = self.stdin.lock().await;
-            sink.write_all(line.as_bytes()).await.map_err(|e| {
-                AgentProcessError::Malformed(format!("write request: {e}"))
-            })?;
-            sink.write_all(b"\n").await.map_err(|e| {
-                AgentProcessError::Malformed(format!("write request newline: {e}"))
-            })?;
+            sink.write_all(line.as_bytes())
+                .await
+                .map_err(|e| AgentProcessError::Malformed(format!("write request: {e}")))?;
+            sink.write_all(b"\n")
+                .await
+                .map_err(|e| AgentProcessError::Malformed(format!("write request newline: {e}")))?;
             sink.flush().await.ok();
         }
 
@@ -300,13 +299,12 @@ impl AgentProcess {
             "method": method,
             "params": params,
         });
-        let line = serde_json::to_string(&frame).map_err(|e| {
-            AgentProcessError::Malformed(format!("serialize notification: {e}"))
-        })?;
+        let line = serde_json::to_string(&frame)
+            .map_err(|e| AgentProcessError::Malformed(format!("serialize notification: {e}")))?;
         let mut sink = self.stdin.lock().await;
-        sink.write_all(line.as_bytes()).await.map_err(|e| {
-            AgentProcessError::Malformed(format!("write notification: {e}"))
-        })?;
+        sink.write_all(line.as_bytes())
+            .await
+            .map_err(|e| AgentProcessError::Malformed(format!("write notification: {e}")))?;
         sink.write_all(b"\n").await.map_err(|e| {
             AgentProcessError::Malformed(format!("write notification newline: {e}"))
         })?;
@@ -320,12 +318,10 @@ impl AgentProcess {
     /// subscribe before the first notification arrives.
     pub fn subscribe(&self, session_id: &str) -> broadcast::Receiver<Value> {
         let mut map = self.sessions.lock().expect("sessions poisoned");
-        let sender = map
-            .entry(session_id.to_string())
-            .or_insert_with(|| {
-                let (tx, _rx) = broadcast::channel(NOTIFICATION_CAPACITY);
-                tx
-            });
+        let sender = map.entry(session_id.to_string()).or_insert_with(|| {
+            let (tx, _rx) = broadcast::channel(NOTIFICATION_CAPACITY);
+            tx
+        });
         sender.subscribe()
     }
 
@@ -437,10 +433,7 @@ async fn route_frame(
     // the broker (which translates to a `kind: "exec_command"` frame on
     // the matching session bus, or a snapshot reply when no GUI is live).
     if frame.get("method").and_then(|m| m.as_str()) == Some("bash/exec") {
-        let params = frame
-            .get("params")
-            .cloned()
-            .unwrap_or(Value::Null);
+        let params = frame.get("params").cloned().unwrap_or(Value::Null);
         bash_broker.handle_kernel_bash_exec(&params).await;
         return;
     }
@@ -505,14 +498,20 @@ mod tests {
     async fn spawn_send_create_and_prompt() {
         let agent = AgentProcess::spawn(echo_config()).await.unwrap();
         let create = agent
-            .send_method("session/create", json!({"providerConfig":{"kind":"openai-compatible","base_url":"x"},"model":"x"}))
+            .send_method(
+                "session/create",
+                json!({"providerConfig":{"kind":"openai-compatible","base_url":"x"},"model":"x"}),
+            )
             .await
             .unwrap();
         assert_eq!(create["sessionId"], "s-test");
 
         let mut rx = agent.subscribe("s-test");
         let prompt_resp = agent
-            .send_method("session/prompt", json!({"sessionId":"s-test","prompt":"hi"}))
+            .send_method(
+                "session/prompt",
+                json!({"sessionId":"s-test","prompt":"hi"}),
+            )
             .await
             .unwrap();
         assert_eq!(prompt_resp["ok"], true);

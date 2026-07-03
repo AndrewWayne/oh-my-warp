@@ -188,10 +188,13 @@ impl WsClient {
 
 async fn connect_ws(server: &Server, session_id: &str) -> WsClient {
     let url = server.ws_url(&format!("/ws/v1/agent/{session_id}"));
-    let (inner, _resp) = timeout(Duration::from_secs(5), tokio_tungstenite::connect_async(&url))
-        .await
-        .expect("WS connect timeout")
-        .expect("WS connect failed");
+    let (inner, _resp) = timeout(
+        Duration::from_secs(5),
+        tokio_tungstenite::connect_async(&url),
+    )
+    .await
+    .expect("WS connect timeout")
+    .expect("WS connect failed");
     WsClient { inner }
 }
 
@@ -232,7 +235,10 @@ async fn round_trip_prompt() {
     }
     assert!(!deltas.is_empty(), "should have at least one delta");
     let joined: String = deltas.concat();
-    assert!(joined.contains("Hello"), "deltas should contain 'Hello': {joined}");
+    assert!(
+        joined.contains("Hello"),
+        "deltas should contain 'Hello': {joined}"
+    );
     ws.close().await;
 }
 

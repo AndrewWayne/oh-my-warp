@@ -22,9 +22,7 @@ pub mod registry;
 
 pub use agent::{AgentProcess, AgentProcessConfig, AgentProcessError};
 pub use error::{Error, Result};
-pub use registry::{
-    ExternalSessionSpec, SessionId, SessionMeta, SessionRegistry, SessionSpec,
-};
+pub use registry::{ExternalSessionSpec, SessionId, SessionMeta, SessionRegistry, SessionSpec};
 
 use std::sync::Arc;
 

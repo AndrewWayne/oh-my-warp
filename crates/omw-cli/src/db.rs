@@ -46,9 +46,9 @@ pub struct RollupRow {
 ///   2. `XDG_DATA_HOME/omw` (honored on every platform — keeps dev/test
 ///      environments cross-platform)
 ///   3. Platform-conventional fallback:
-///        macOS  → `$HOME/Library/Application Support/omw`
-///        Windows → `%APPDATA%\omw` (else `$USERPROFILE\AppData\Roaming\omw`)
-///        Linux  → `$HOME/.local/share/omw`
+///      - macOS  → `$HOME/Library/Application Support/omw`
+///      - Windows → `%APPDATA%\omw` (else `$USERPROFILE\AppData\Roaming\omw`)
+///      - Linux  → `$HOME/.local/share/omw`
 pub fn data_dir() -> Result<PathBuf> {
     if let Some(p) = std::env::var_os("OMW_DATA_DIR") {
         if !p.is_empty() {

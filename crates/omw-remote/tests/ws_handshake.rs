@@ -122,7 +122,10 @@ async fn handshake_with_bad_signature_rejects() {
     let bogus_priv = bogus_signer.to_bytes();
     let now = Utc::now();
     let req = build_handshake_canonical(&f, now, "nonce-bad-sig");
-    let bogus_sig = Signer { device_priv: &bogus_priv }.sign(&req);
+    let bogus_sig = Signer {
+        device_priv: &bogus_priv,
+    }
+    .sign(&req);
 
     let http_req = build_signed_request(
         f.addr,

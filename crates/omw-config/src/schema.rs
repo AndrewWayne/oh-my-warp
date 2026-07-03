@@ -274,18 +274,13 @@ impl ProviderConfig {
 
 /// Mirrors `omw_policy::ApprovalMode` and `apps/omw-agent/src/policy.ts:11`.
 /// The snake_case wire form is what the kernel sees in `session/create.policy.mode`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalMode {
     ReadOnly,
+    #[default]
     AskBeforeWrite,
     Trusted,
-}
-
-impl Default for ApprovalMode {
-    fn default() -> Self {
-        Self::AskBeforeWrite
-    }
 }
 
 /// `[approval]` block. Reserved as a forward-compat block in v0.1; first-class in v0.2.

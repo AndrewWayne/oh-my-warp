@@ -26,8 +26,8 @@ mod writer;
 pub use error::{ConfigError, ValidationError, ValidationIssue};
 pub use key_ref::{KeyRef, KeyRefParseError};
 pub use schema::{
-    AgentConfig, ApprovalConfig, ApprovalMode, BaseUrl, BaseUrlParseError, Config,
-    ProviderConfig, ProviderId, ProviderIdParseError, SchemaVersion,
+    AgentConfig, ApprovalConfig, ApprovalMode, BaseUrl, BaseUrlParseError, Config, ProviderConfig,
+    ProviderId, ProviderIdParseError, SchemaVersion,
 };
 pub use watcher::{watch, ConfigUpdate, WatchHandle};
 pub use writer::save_atomic;

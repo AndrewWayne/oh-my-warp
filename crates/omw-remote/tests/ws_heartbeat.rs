@@ -27,9 +27,7 @@ use ws_common::{
 
 async fn open_ws(
     f: &WsFixture,
-) -> tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-> {
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
     let url = format!("ws://{}/ws/v1/pty/{}", f.addr, f.session_id);
     let mut req = url.into_client_request().expect("valid ws URL");
 
@@ -57,10 +55,13 @@ async fn open_ws(
     h.insert("X-Omw-Ts", now.to_rfc3339().parse().unwrap());
     h.insert("Origin", f.pinned_origin.parse().unwrap());
 
-    let (ws, _resp) = timeout(Duration::from_secs(5), tokio_tungstenite::connect_async(req))
-        .await
-        .expect("WS connect must not hang")
-        .expect("WS upgrade must succeed");
+    let (ws, _resp) = timeout(
+        Duration::from_secs(5),
+        tokio_tungstenite::connect_async(req),
+    )
+    .await
+    .expect("WS connect must not hang")
+    .expect("WS upgrade must succeed");
     ws
 }
 
@@ -80,7 +81,9 @@ async fn ping_gets_pong() {
         sig: [0u8; 64],
     };
     let priv_seed = f.device.to_bytes();
-    ping.sign(&Signer { device_priv: &priv_seed });
+    ping.sign(&Signer {
+        device_priv: &priv_seed,
+    });
     ws.send(Message::Text(ping.to_json()))
         .await
         .expect("send signed ping");
@@ -170,5 +173,8 @@ async fn inactivity_timeout_closes() {
     .await
     .expect("server must close WS within 6s on 2s inactivity");
 
-    assert!(close, "server must tear down idle WS after inactivity_timeout");
+    assert!(
+        close,
+        "server must tear down idle WS after inactivity_timeout"
+    );
 }

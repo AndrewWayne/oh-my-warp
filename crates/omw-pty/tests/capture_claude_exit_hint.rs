@@ -122,7 +122,11 @@ async fn capture_claude_exit_hint_keystrokes() {
     // Dump everything to the fixture file.
     let final_bytes = collected.lock().unwrap().clone();
     out_file.write_all(&final_bytes).expect("write fixture");
-    eprintln!("[capture] wrote {} bytes to {:?}", final_bytes.len(), out_path);
+    eprintln!(
+        "[capture] wrote {} bytes to {:?}",
+        final_bytes.len(),
+        out_path
+    );
 
     // Cleanup. Kill claude; await reader task to finish.
     let _ = pty.kill();

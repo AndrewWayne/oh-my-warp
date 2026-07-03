@@ -33,7 +33,16 @@ fn real_kernel_path() -> Option<PathBuf> {
             .join("omw-agent")
             .join("bin")
             .join("omw-agent.mjs");
-        if candidate.exists() {
+        // The .mjs launcher imports the compiled TS at dist/src/cli.js;
+        // without the npm build the kernel exits immediately. Treat an
+        // unbuilt agent as "kernel missing", same as missing node.
+        let dist_entry = current
+            .join("apps")
+            .join("omw-agent")
+            .join("dist")
+            .join("src")
+            .join("cli.js");
+        if candidate.exists() && dist_entry.exists() {
             return Some(candidate);
         }
         if !current.pop() {

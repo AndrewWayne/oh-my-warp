@@ -34,7 +34,16 @@ fn real_kernel_path() -> Option<PathBuf> {
             .join("omw-agent")
             .join("bin")
             .join("omw-agent.mjs");
-        if candidate.exists() {
+        // The .mjs launcher imports the compiled TS at dist/src/cli.js;
+        // without the npm build the kernel exits immediately. Treat an
+        // unbuilt agent as "kernel missing", same as missing node.
+        let dist_entry = current
+            .join("apps")
+            .join("omw-agent")
+            .join("dist")
+            .join("src")
+            .join("cli.js");
+        if candidate.exists() && dist_entry.exists() {
             return Some(candidate);
         }
         if !current.pop() {
@@ -198,9 +207,7 @@ async fn cancel_mid_flight_then_retry() {
 
     // Issue and immediately abort. We use a tokio task so we can `abort()`
     // it before its body finishes.
-    let task = tokio::spawn(async move {
-        post_session(addr, gui_body()).await
-    });
+    let task = tokio::spawn(async move { post_session(addr, gui_body()).await });
     // Yield very briefly so the request has time to actually go on the
     // wire and reach the kernel's stdin.
     tokio::time::sleep(Duration::from_millis(5)).await;
@@ -233,10 +240,8 @@ async fn many_cancel_retry_cycles() {
     }
     let (addr, _agent) = spawn_real_kernel_server().await;
 
-    for cycle in 0..10 {
-        let task = tokio::spawn(async move {
-            post_session(addr, gui_body()).await
-        });
+    for _cycle in 0..10 {
+        let task = tokio::spawn(async move { post_session(addr, gui_body()).await });
         tokio::time::sleep(Duration::from_millis(2)).await;
         task.abort();
         let _ = task.await;
@@ -366,7 +371,10 @@ async fn second_attempt_with_helper_env_passes() {
             }
         }
     };
-    println!("[repro:fixed] OMW_KEYCHAIN_HELPER -> {}", helper_path.display());
+    println!(
+        "[repro:fixed] OMW_KEYCHAIN_HELPER -> {}",
+        helper_path.display()
+    );
 
     let kernel = real_kernel_path().expect("kernel not found");
     let cfg = AgentProcessConfig {
@@ -465,9 +473,7 @@ async fn full_start_cycle_repeated() {
         let (status, body) = post_session(addr, gui_body()).await;
         println!("[repro:full {cycle}] POST status={status} body={body}");
         if status != 201 {
-            panic!(
-                "REPRODUCED at cycle {cycle} — POST returned status={status} body={body}"
-            );
+            panic!("REPRODUCED at cycle {cycle} — POST returned status={status} body={body}");
         }
         let parsed: Value = serde_json::from_str(&body).unwrap();
         let session_id = parsed["sessionId"].as_str().unwrap().to_string();

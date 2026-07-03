@@ -175,6 +175,14 @@ fn fresh_db(prefix: &str) -> (tempfile::TempDir, Connection) {
     (dir, conn)
 }
 
+/// Yesterday as ISO-8601 — always inside the default 30-day window,
+/// regardless of when the tests run.
+fn recent_date() -> String {
+    (chrono::Utc::now() - chrono::Duration::days(1))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}
+
 /// Insert a usage row with a SPECIFIC `created_at` value. The public
 /// `record_usage` API stamps "now"; tests that need historical rows
 /// (date filtering, day grouping) write directly via SQL after seeding.
@@ -277,7 +285,7 @@ fn costs_with_seed_data_groups_by_provider() {
 
     // Three rows, three providers. Use a recent date so the default
     // 30-day window includes them.
-    let recent = "2026-04-20T10:00:00Z";
+    let recent = recent_date();
     insert_dated_usage(
         &conn,
         "openai-prod",
@@ -286,7 +294,7 @@ fn costs_with_seed_data_groups_by_provider() {
         1_000_000,
         1_000_000,
         100,
-        recent,
+        &recent,
         Some(1250),
     );
     insert_dated_usage(
@@ -297,7 +305,7 @@ fn costs_with_seed_data_groups_by_provider() {
         1_000_000,
         1_000_000,
         100,
-        recent,
+        &recent,
         Some(1800),
     );
     insert_dated_usage(
@@ -308,7 +316,7 @@ fn costs_with_seed_data_groups_by_provider() {
         1_000_000,
         1_000_000,
         100,
-        recent,
+        &recent,
         Some(0),
     );
     drop(conn);
@@ -509,7 +517,7 @@ fn costs_groups_by_model() {
     let conn = omw_cli::db::open_at(&db).expect("open_at");
     omw_cli::db::seed_pricing(&conn).expect("seed_pricing");
 
-    let recent = "2026-04-20T10:00:00Z";
+    let recent = recent_date();
     // Two rows on gpt-4o (different provider ids), one on
     // claude-sonnet-4-6. By-model should yield two rows total.
     insert_dated_usage(
@@ -520,7 +528,7 @@ fn costs_groups_by_model() {
         1_000_000,
         1_000_000,
         100,
-        recent,
+        &recent,
         Some(1250),
     );
     insert_dated_usage(
@@ -531,7 +539,7 @@ fn costs_groups_by_model() {
         1_000_000,
         1_000_000,
         100,
-        recent,
+        &recent,
         Some(1250),
     );
     insert_dated_usage(
@@ -542,7 +550,7 @@ fn costs_groups_by_model() {
         1_000_000,
         1_000_000,
         100,
-        recent,
+        &recent,
         Some(1800),
     );
     drop(conn);
@@ -592,7 +600,7 @@ fn costs_total_row_sums_correctly() {
     let conn = omw_cli::db::open_at(&db).expect("open_at");
     omw_cli::db::seed_pricing(&conn).expect("seed_pricing");
 
-    let recent = "2026-04-20T10:00:00Z";
+    let recent = recent_date();
     // Three rows; cost_cents column sums to 100 + 250 + 50 = 400.
     insert_dated_usage(
         &conn,
@@ -602,7 +610,7 @@ fn costs_total_row_sums_correctly() {
         100_000,
         100_000,
         50,
-        recent,
+        &recent,
         Some(100),
     );
     insert_dated_usage(
@@ -613,7 +621,7 @@ fn costs_total_row_sums_correctly() {
         100_000,
         100_000,
         50,
-        recent,
+        &recent,
         Some(250),
     );
     insert_dated_usage(
@@ -624,7 +632,7 @@ fn costs_total_row_sums_correctly() {
         100_000,
         100_000,
         50,
-        recent,
+        &recent,
         Some(50),
     );
     drop(conn);

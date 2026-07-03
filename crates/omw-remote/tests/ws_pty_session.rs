@@ -28,9 +28,7 @@ use ws_common::{build_handshake_canonical, sign_canonical, spawn_server, WsFixtu
 /// Open an upgraded WS connection by performing a valid signed handshake.
 async fn open_ws(
     f: &WsFixture,
-) -> tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-> {
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
     let url = format!("ws://{}/ws/v1/pty/{}", f.addr, f.session_id);
     let mut req = url.into_client_request().expect("valid ws URL");
 
@@ -79,7 +77,9 @@ fn signed_input_frame(f: &WsFixture, seq: u64, payload: &[u8]) -> Frame {
         sig: [0u8; 64],
     };
     let priv_seed = f.device.to_bytes();
-    frame.sign(&Signer { device_priv: &priv_seed });
+    frame.sign(&Signer {
+        device_priv: &priv_seed,
+    });
     frame
 }
 
@@ -92,7 +92,11 @@ async fn input_frame_writes_to_shell() {
     // Give the child a moment to apply `stty -echo` (Unix) before we send.
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let line: &[u8] = if cfg!(windows) { b"hello\r\n" } else { b"hello\n" };
+    let line: &[u8] = if cfg!(windows) {
+        b"hello\r\n"
+    } else {
+        b"hello\n"
+    };
     let frame = signed_input_frame(&f, 0, line);
     ws.send(Message::Text(frame.to_json()))
         .await
@@ -123,7 +127,10 @@ async fn input_frame_writes_to_shell() {
     .await
     .expect("did not see 'hello' on the WS output stream within 5s");
 
-    assert!(saw, "expected to see 'hello' echoed back through PTY output");
+    assert!(
+        saw,
+        "expected to see 'hello' echoed back through PTY output"
+    );
     let _ = ws.close(None).await;
 }
 
@@ -219,18 +226,21 @@ async fn ts_skew_inbound_rejects() {
     let mut ws = open_ws(&f).await;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Build a frame whose ts is 60 s in the past and sign it (so the seq+sig
-    // pass; only the ts check fires).
+    // Build a frame whose ts is 10 min in the past — beyond the per-frame
+    // skew window (currently 300 s in code; spec default 30 s, see issue
+    // #90) — and sign it (so the seq+sig pass; only the ts check fires).
     let mut frame = Frame {
         v: 1,
         seq: 0,
-        ts: Utc::now() - ChronoDuration::seconds(60),
+        ts: Utc::now() - ChronoDuration::seconds(600),
         kind: FrameKind::Input,
         payload: Bytes::from_static(b"x\n"),
         sig: [0u8; 64],
     };
     let priv_seed = f.device.to_bytes();
-    frame.sign(&Signer { device_priv: &priv_seed });
+    frame.sign(&Signer {
+        device_priv: &priv_seed,
+    });
 
     ws.send(Message::Text(frame.to_json()))
         .await

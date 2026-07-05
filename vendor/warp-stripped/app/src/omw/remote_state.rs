@@ -28,14 +28,6 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use warpui::EntityId;
 
-/// Default bind for the embedded daemon. We listen on all interfaces so a
-/// phone on the same tailnet can reach us by either the tailnet hostname
-/// (`https://<host>.<tailnet>.ts.net` via `tailscale serve`, when enabled) or
-/// the tailnet IPv4 directly (`http://100.x.x.x:8787` fallback). LAN exposure
-/// is gated by per-route auth: HTTP endpoints require a signed pair/capability
-/// token; WS upgrades require Origin to match `pinned_origins`.
-const DEFAULT_BIND: &str = "0.0.0.0:8787";
-
 /// Pinned origin for loopback access (the auto-copied URL when no Tailscale
 /// is detected). Always present in `pinned_origins`. Tailnet-derived origins
 /// are appended at runtime in [`bring_up_daemon`].
@@ -549,33 +541,32 @@ async fn bring_up_daemon(
         .issue(PAIR_TTL)
         .map_err(|e| format!("issuing pair token: {e}"))?;
 
-    let bind = DEFAULT_BIND
-        .parse()
-        .map_err(|e| format!("parsing bind addr {DEFAULT_BIND}: {e}"))?;
+    // Bind loopback by default (threat-model I-15 / PRD §4.2). Exposing on the
+    // tailnet or LAN is an explicit operator opt-in via `OMW_REMOTE_BIND`
+    // (e.g. `OMW_REMOTE_BIND=0.0.0.0:8787`, or a specific tailnet IP). The
+    // default resolves in `omw_remote::resolve_bind_addr`, which the CLI
+    // daemon shares.
+    let bind = omw_remote::resolve_bind_addr(std::env::var("OMW_REMOTE_BIND").ok().as_deref())
+        .map_err(|e| format!("resolving daemon bind: {e}"))?;
+    let exposed = !bind.ip().is_loopback();
 
-    // Probe Tailscale and prefer the tailnet IPv4 origin when available.
-    // We deliberately do NOT call `tailscale serve` here:
-    //   - Serve requires the user to enable it on their tailnet first
-    //     (https://login.tailscale.com/f/serve). Extra friction.
-    //   - Plain HTTP over the tailnet IP works for the primary pairing flow
-    //     (phone OS camera -> browser -> /pair?t=...) and for xterm.js +
-    //     signed WS. The only thing we'd gain from HTTPS is browser
-    //     `getUserMedia` for the camera-paste-fallback flow, which is not
-    //     v0.4-thin's primary path.
-    //   - The daemon binds on 0.0.0.0:8787, so any tailnet peer can reach
-    //     us directly. WS Origin pinning still gates the upgrade.
-    // If you want HTTPS later, see `super::tailscale::serve_https` (kept
-    // available behind that helper) and re-enable here gated behind an env
-    // var like `OMW_TAILSCALE_SERVE=1`.
+    // Prefer the tailnet IPv4 origin ONLY when the daemon is actually exposed;
+    // in the default loopback mode the pair URL must stay loopback (a tailnet
+    // URL would be unreachable). We deliberately do NOT call `tailscale serve`
+    // here — plain HTTP over the tailnet IP works for the primary pairing flow
+    // (phone camera -> browser -> /pair?t=...) and signed WS. For HTTPS later,
+    // see `super::tailscale::serve_https`, gated behind e.g. `OMW_TAILSCALE_SERVE=1`.
     let mut pinned_origins = vec![DEFAULT_PINNED_ORIGIN.to_string()];
     let mut pair_origin = DEFAULT_PINNED_ORIGIN.to_string();
     let tailscale_serving = false;
-    let ts = super::tailscale::detect_status();
-    if ts.installed && ts.running {
-        if let Some(ipv4) = ts.tailnet_ipv4.as_deref() {
-            let ip_origin = format!("http://{ipv4}:{DAEMON_PORT}");
-            pinned_origins.push(ip_origin.clone());
-            pair_origin = ip_origin;
+    if exposed {
+        let ts = super::tailscale::detect_status();
+        if ts.installed && ts.running {
+            if let Some(ipv4) = ts.tailnet_ipv4.as_deref() {
+                let ip_origin = format!("http://{ipv4}:{DAEMON_PORT}");
+                pinned_origins.push(ip_origin.clone());
+                pair_origin = ip_origin;
+            }
         }
     }
     let pair_url = format!("{pair_origin}/pair?t={}", token.to_base32());
@@ -590,6 +581,10 @@ async fn bring_up_daemon(
         revocations: omw_remote::RevocationList::new(),
         nonce_store: omw_remote::NonceStore::new(NONCE_WINDOW),
         pairings: Some(pairings),
+        request_log: None,
+        // Read-only default (invariant I-6); the embedded daemon has no
+        // write-opt-in surface yet.
+        default_pair_write: false,
         shell: omw_remote::ShellSpec::default_for_host(),
         pty_registry,
         host_id: "warp-host".to_string(),

@@ -163,6 +163,7 @@ pub async fn spawn_server_with_inactivity(inactivity_timeout: Duration) -> WsFix
         nonce_store: nonce_store.clone(),
         pairings: None,
         request_log: Some(request_log.clone()),
+        default_pair_write: false,
         shell,
         pty_registry: registry.clone(),
         host_id: "omw-host".to_string(),

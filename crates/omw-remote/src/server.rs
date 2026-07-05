@@ -62,6 +62,10 @@ pub struct ServerConfig {
     /// redeem and every authenticated request appends one accept/reject row.
     /// `None` disables logging — the request path is unaffected either way.
     pub request_log: Option<Arc<RequestLog>>,
+    /// Whether a newly-paired device is granted `pty:write` at pair time.
+    /// Spec §5.3 / invariant I-6 mandate a read-only default, so this is
+    /// `false` unless the host operator opted in (`--allow-default-write`).
+    pub default_pair_write: bool,
     /// Default shell spec for newly-spawned PTY sessions (HTTP-created).
     pub shell: ShellSpec,
     /// Live PTY-session registry. WS attach + HTTP CRUD share this.
@@ -85,6 +89,7 @@ pub(crate) struct AppState {
     pub pty_registry: Arc<omw_server::SessionRegistry>,
     pub pairings: Option<Arc<Pairings>>,
     pub request_log: Option<Arc<RequestLog>>,
+    pub default_pair_write: bool,
     pub host_id: String,
 }
 
@@ -131,6 +136,7 @@ pub fn make_router(config: ServerConfig) -> axum::Router {
         pty_registry: config.pty_registry,
         pairings: config.pairings,
         request_log: config.request_log,
+        default_pair_write: config.default_pair_write,
         host_id: config.host_id,
     };
     axum::Router::new()

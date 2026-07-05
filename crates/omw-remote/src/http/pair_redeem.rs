@@ -120,14 +120,18 @@ pub(crate) async fn handler(
         }
     };
 
-    // Default capabilities for v0.4-thin: read-only set + pty:write so the
-    // terminal works.
-    let caps = [
+    // Default scopes at pair time (spec §5.3 / invariant I-6): read-only.
+    // `pty:write` is only added when the host operator opted in with
+    // `omw remote start --allow-default-write`. The per-device
+    // `omw pair upgrade` path is deferred to the #23 protocol revision.
+    let mut caps = vec![
         Capability::PtyRead,
-        Capability::PtyWrite,
         Capability::AgentRead,
         Capability::AuditRead,
     ];
+    if state.default_pair_write {
+        caps.push(Capability::PtyWrite);
+    }
 
     let resp = match pairings.redeem(
         &token,

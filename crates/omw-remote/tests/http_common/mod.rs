@@ -17,7 +17,7 @@ use hyper::Request;
 use hyper_util::rt::TokioIo;
 use omw_remote::{
     make_router, open_db, CanonicalRequest, Capability, HostKey, NonceStore, PairToken, Pairings,
-    RevocationList, ServerConfig, ShellSpec, Signer,
+    RequestLog, RevocationList, ServerConfig, ShellSpec, Signer,
 };
 use omw_server::{SessionRegistry, SessionSpec};
 use sha2::{Digest, Sha256};
@@ -29,6 +29,7 @@ pub struct HttpFixture {
     pub host: Arc<HostKey>,
     pub host_pubkey: [u8; 32],
     pub pairings: Arc<Pairings>,
+    pub request_log: Arc<RequestLog>,
     pub registry: Arc<SessionRegistry>,
     pub nonce_store: Arc<NonceStore>,
     pub revocations: Arc<RevocationList>,
@@ -81,6 +82,9 @@ pub async fn spawn_server() -> HttpFixture {
     let db_path = tempdir.path().join("omw.sqlite");
     let conn = open_db(&db_path).expect("open db");
     let pairings = Arc::new(Pairings::new(conn));
+    let request_log = Arc::new(RequestLog::new(
+        open_db(&db_path).expect("open request-log db"),
+    ));
 
     let registry = SessionRegistry::new();
     let nonce_store = NonceStore::new(Duration::from_secs(60));
@@ -96,6 +100,7 @@ pub async fn spawn_server() -> HttpFixture {
         revocations: revocations.clone(),
         nonce_store: nonce_store.clone(),
         pairings: Some(pairings.clone()),
+        request_log: Some(request_log.clone()),
         shell: echo_shell(),
         pty_registry: registry.clone(),
         host_id: host_id.clone(),
@@ -116,6 +121,7 @@ pub async fn spawn_server() -> HttpFixture {
         host,
         host_pubkey,
         pairings,
+        request_log,
         registry,
         nonce_store,
         revocations,

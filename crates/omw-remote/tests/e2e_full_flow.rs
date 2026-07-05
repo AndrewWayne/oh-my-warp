@@ -111,6 +111,7 @@ async fn spawn_e2e_server() -> E2eFixture {
         revocations,
         nonce_store,
         pairings: Some(pairings.clone()),
+        request_log: None,
         shell: real_shell(),
         pty_registry: registry,
         host_id: "omw-host".to_string(),

@@ -129,6 +129,7 @@ async fn pair_redeem_expired_410() {
         revocations,
         nonce_store,
         pairings: Some(pairings),
+        request_log: None,
         shell: ShellSpec {
             program: "/bin/sh".into(),
             args: vec![],

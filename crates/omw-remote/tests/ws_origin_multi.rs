@@ -17,8 +17,8 @@ use base64::Engine as _;
 use chrono::Utc;
 use ed25519_dalek::SigningKey;
 use omw_remote::{
-    make_router, Capability, CapabilityToken, HostKey, NonceStore, RevocationList, ServerConfig,
-    ShellSpec,
+    make_router, open_db, Capability, CapabilityToken, HostKey, NonceStore, RequestLog,
+    RevocationList, ServerConfig, ShellSpec,
 };
 use omw_server::{SessionRegistry, SessionSpec};
 use std::collections::HashMap;
@@ -69,6 +69,11 @@ async fn spawn_server_with_origins(origins: Vec<String>) -> WsFixture {
         .cloned()
         .unwrap_or_else(|| "https://omw.test".to_string());
 
+    let log_dir = tempfile::tempdir().expect("tempdir");
+    let log_conn = open_db(&log_dir.path().join("rl.sqlite")).expect("open request-log db");
+    Box::leak(Box::new(log_dir));
+    let request_log = Arc::new(RequestLog::new(log_conn));
+
     let cfg = ServerConfig {
         bind: "127.0.0.1:0".parse().unwrap(),
         host_key: host.clone(),
@@ -77,6 +82,7 @@ async fn spawn_server_with_origins(origins: Vec<String>) -> WsFixture {
         revocations: revocations.clone(),
         nonce_store: nonce_store.clone(),
         pairings: None,
+        request_log: Some(request_log.clone()),
         shell,
         pty_registry: registry.clone(),
         host_id: "omw-host".to_string(),
@@ -117,6 +123,7 @@ async fn spawn_server_with_origins(origins: Vec<String>) -> WsFixture {
         pinned_origin: pinned_origin_first,
         session_id,
         registry,
+        request_log,
     }
 }
 

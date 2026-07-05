@@ -236,7 +236,7 @@ The invariants are the load-bearing properties. Every one has an enforcement mec
 | I-12 | Audit hash chain. Tamper / reorder / truncation detected by `omw audit verify`. | SHA over each line including the previous SHA; per-day file pointer chain. | Audit-chain property tests (test-plan §2.1). |
 | I-13 | Default redaction rules strip API keys, `.env` values, and known-secret patterns before audit write. | `omw-audit` redaction layer applied to every entry. | Redaction property tests (test-plan §2.3). |
 | I-14 | No outbound telemetry to any omw-controlled endpoint. Period. | No omw-controlled endpoints exist. CI grep for any URL referencing telemetry-like hostnames. | Code review + grep test. |
-| I-15 | Public-internet exposure is opt-in. `omw-remote` listens on loopback by default; tailnet exposure requires explicit `tailscale serve` invocation by the user. | Default config; `omw remote start` does not invoke `tailscale serve`. | Contract test on default-listen address. |
+| I-15 | Public-internet exposure is opt-in. `omw-remote` listens on loopback by default; tailnet/LAN exposure requires explicit operator action. | `omw_remote::resolve_bind_addr` defaults to `127.0.0.1:8787` for both daemons; exposure needs an explicit override (CLI `--listen`, or the embedded daemon's `OMW_REMOTE_BIND`). `omw remote start` does not invoke `tailscale serve`. | `bind_default` contract test on the default-listen address. |
 | I-16 | No silent destructive actions. Default approval mode is `ask_before_write`. | `omw-policy` default. Trusted mode requires explicit per-device upgrade. | Approval-policy property tests (test-plan §2.4). |
 
 ---

@@ -122,6 +122,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         nonce_store: NonceStore::new(Duration::from_secs(60)),
         pairings: Some(pairings),
         request_log: None,
+        // Interactive QA drives real phone typing, so pair grants pty:write.
+        default_pair_write: true,
         shell: shell_spec,
         pty_registry: registry,
         host_id,

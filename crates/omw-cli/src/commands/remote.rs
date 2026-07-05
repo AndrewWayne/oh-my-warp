@@ -30,6 +30,12 @@ pub struct StartArgs {
     /// Hidden test hook: when the named env var is set, the server shuts down.
     #[arg(long, hide = true)]
     pub shutdown_signal: Option<String>,
+    /// Grant `pty:write` to newly-paired devices at pair time. Off by default:
+    /// spec §5.3 / invariant I-6 mandate a read-only default. Enable for a
+    /// single-user preview so a paired phone can type. The per-device
+    /// `omw pair upgrade` path is deferred to issue #23.
+    #[arg(long, default_value_t = false)]
+    pub allow_default_write: bool,
 }
 
 #[derive(Args, Debug)]
@@ -147,6 +153,7 @@ pub(crate) fn start(
         nonce_store: NonceStore::new(Duration::from_secs(60)),
         pairings: Some(Arc::new(Pairings::new(db))),
         request_log: Some(request_log),
+        default_pair_write: args.allow_default_write,
         shell: ShellSpec::default_for_host(),
         pty_registry: omw_server::SessionRegistry::new(),
         host_id: "omw-host".to_string(),

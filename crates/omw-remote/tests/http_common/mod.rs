@@ -75,6 +75,12 @@ pub fn shell_to_session_spec(name: &str, shell: &ShellSpec) -> SessionSpec {
 }
 
 pub async fn spawn_server() -> HttpFixture {
+    spawn_server_with_default_write(false).await
+}
+
+/// Like `spawn_server`, but chooses whether newly-paired devices get
+/// `pty:write` at pair time (the `--allow-default-write` opt-in).
+pub async fn spawn_server_with_default_write(default_pair_write: bool) -> HttpFixture {
     let host = Arc::new(HostKey::generate());
     let host_pubkey = host.pubkey();
 
@@ -101,6 +107,7 @@ pub async fn spawn_server() -> HttpFixture {
         nonce_store: nonce_store.clone(),
         pairings: Some(pairings.clone()),
         request_log: Some(request_log.clone()),
+        default_pair_write,
         shell: echo_shell(),
         pty_registry: registry.clone(),
         host_id: host_id.clone(),

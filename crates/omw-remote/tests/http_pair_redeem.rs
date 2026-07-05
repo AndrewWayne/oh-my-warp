@@ -68,10 +68,45 @@ async fn pair_redeem_happy_path() {
         .expect("cap verifies under host pubkey");
     assert_eq!(cap.device_pubkey, device_pubkey);
 
+    // Default pairing is read-only (spec §5.3 / invariant I-6): no pty:write.
     let caps = v["capabilities"].as_array().expect("capabilities array");
     let cap_names: Vec<&str> = caps.iter().map(|c| c.as_str().unwrap()).collect();
     assert!(cap_names.contains(&"pty:read"));
-    assert!(cap_names.contains(&"pty:write"));
+    assert!(cap_names.contains(&"agent:read"));
+    assert!(cap_names.contains(&"audit:read"));
+    assert!(
+        !cap_names.contains(&"pty:write"),
+        "default pairing must be read-only; got {cap_names:?}"
+    );
+}
+
+#[tokio::test]
+async fn pair_redeem_grants_write_when_opted_in() {
+    use http_common::spawn_server_with_default_write;
+    let f = spawn_server_with_default_write(true).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let token = f.pairings.issue(Duration::from_secs(600)).expect("issue");
+    let device = SigningKey::from_bytes(&[21u8; 32]);
+    let pk_b64 = URL_SAFE_NO_PAD.encode(device.verifying_key().to_bytes());
+    let body = body_for(&token.to_base32(), &pk_b64, "writer-device");
+    let (status, body) = http_request(
+        f.addr,
+        "POST",
+        "/api/v1/pair/redeem",
+        body,
+        &[("content-type", "application/json".to_string())],
+    )
+    .await;
+    assert_eq!(status, 200, "expected 200; got {status}; body={body:?}");
+
+    let v: Value = serde_json::from_slice(&body).expect("valid JSON");
+    let caps = v["capabilities"].as_array().expect("capabilities array");
+    let cap_names: Vec<&str> = caps.iter().map(|c| c.as_str().unwrap()).collect();
+    assert!(
+        cap_names.contains(&"pty:write"),
+        "--allow-default-write must grant pty:write; got {cap_names:?}"
+    );
 }
 
 #[tokio::test]
@@ -130,6 +165,7 @@ async fn pair_redeem_expired_410() {
         nonce_store,
         pairings: Some(pairings),
         request_log: None,
+        default_pair_write: false,
         shell: ShellSpec {
             program: "/bin/sh".into(),
             args: vec![],

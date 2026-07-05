@@ -9,12 +9,37 @@ use axum::response::IntoResponse;
 use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::json;
 
 use crate::capability::Capability;
 use crate::pairing::{PairToken, RedeemError};
+use crate::request_log::RequestLogEntry;
 use crate::server::AppState;
+
+/// Append one `request_log` row for a pair-redeem attempt. Spec §5 requires
+/// every redeem — success and failure — to be logged. Pair redeem is
+/// unsigned and has no device id until it succeeds, so `signature` is always
+/// `None` and `actor_device_id` is `None` on every reject.
+fn log_redeem(
+    state: &AppState,
+    nonce: Option<String>,
+    device_id: Option<String>,
+    accepted: bool,
+    reason: Option<&str>,
+) {
+    state.log_request(RequestLogEntry {
+        route: "/api/v1/pair/redeem".to_string(),
+        actor_device_id: device_id,
+        nonce,
+        ts: Utc::now(),
+        signature: None,
+        body_hash: None,
+        accepted,
+        reason: reason.map(str::to_string),
+    });
+}
 
 #[derive(Deserialize)]
 pub struct PairRedeemRequest {
@@ -35,19 +60,47 @@ pub(crate) async fn handler(
 ) -> axum::response::Response {
     let req = match body {
         Ok(Json(r)) => r,
-        Err(_) => return error_response(StatusCode::BAD_REQUEST, "invalid_body"),
+        Err(_) => {
+            log_redeem(&state, None, None, false, Some("invalid_body"));
+            return error_response(StatusCode::BAD_REQUEST, "invalid_body");
+        }
     };
 
     let token = match PairToken::from_base32(&req.pairing_token) {
         Ok(t) => t,
-        Err(_) => return error_response(StatusCode::BAD_REQUEST, "invalid_body"),
+        Err(_) => {
+            log_redeem(
+                &state,
+                req.client_nonce.clone(),
+                None,
+                false,
+                Some("invalid_body"),
+            );
+            return error_response(StatusCode::BAD_REQUEST, "invalid_body");
+        }
     };
 
     let pubkey_bytes = match URL_SAFE_NO_PAD.decode(&req.device_pubkey) {
         Ok(b) => b,
-        Err(_) => return error_response(StatusCode::BAD_REQUEST, "invalid_pubkey"),
+        Err(_) => {
+            log_redeem(
+                &state,
+                req.client_nonce.clone(),
+                None,
+                false,
+                Some("invalid_pubkey"),
+            );
+            return error_response(StatusCode::BAD_REQUEST, "invalid_pubkey");
+        }
     };
     if pubkey_bytes.len() != 32 {
+        log_redeem(
+            &state,
+            req.client_nonce.clone(),
+            None,
+            false,
+            Some("invalid_pubkey"),
+        );
         return error_response(StatusCode::BAD_REQUEST, "invalid_pubkey");
     }
     let mut device_pubkey = [0u8; 32];
@@ -55,7 +108,16 @@ pub(crate) async fn handler(
 
     let pairings = match &state.pairings {
         Some(p) => p,
-        None => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+        None => {
+            log_redeem(
+                &state,
+                req.client_nonce.clone(),
+                None,
+                false,
+                Some("internal"),
+            );
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal");
+        }
     };
 
     // Default capabilities for v0.4-thin: read-only set + pty:write so the
@@ -84,9 +146,18 @@ pub(crate) async fn handler(
                 RedeemError::InvalidBody => (StatusCode::BAD_REQUEST, "invalid_body"),
                 RedeemError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
             };
+            log_redeem(&state, req.client_nonce.clone(), None, false, Some(code));
             return error_response(status, code);
         }
     };
+
+    log_redeem(
+        &state,
+        req.client_nonce.clone(),
+        Some(resp.device_id.clone()),
+        true,
+        None,
+    );
 
     // Build wire response per §3.2. Note: `PairRedeemResponse` does not
     // currently carry host_id/host_name/issued_at/expires_at; we synthesize

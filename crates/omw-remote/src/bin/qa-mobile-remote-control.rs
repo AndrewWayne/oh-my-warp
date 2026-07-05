@@ -121,6 +121,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         revocations: RevocationList::new(),
         nonce_store: NonceStore::new(Duration::from_secs(60)),
         pairings: Some(pairings),
+        request_log: None,
         shell: shell_spec,
         pty_registry: registry,
         host_id,

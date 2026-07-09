@@ -38,6 +38,7 @@ use tokio::sync::{broadcast, oneshot, Mutex as AsyncMutex};
 use tokio::task::JoinHandle;
 
 use super::bash_broker::BashBroker;
+use super::rpc_methods;
 
 /// Capacity of the per-session notification broadcast channel.
 const NOTIFICATION_CAPACITY: usize = 256;
@@ -194,7 +195,7 @@ impl AgentProcess {
                 }
             }
             // Notify every active session bus that the process is gone.
-            let crashed = json!({ "method": "agent/crashed", "params": {} });
+            let crashed = json!({ "method": rpc_methods::AGENT_CRASHED, "params": {} });
             let map = watcher_sessions.lock().expect("sessions poisoned");
             for (_, sender) in map.iter() {
                 let _ = sender.send(crashed.clone());
@@ -432,7 +433,7 @@ async fn route_frame(
     // it would otherwise fan out to every WS subscriber. Dispatch it via
     // the broker (which translates to a `kind: "exec_command"` frame on
     // the matching session bus, or a snapshot reply when no GUI is live).
-    if frame.get("method").and_then(|m| m.as_str()) == Some("bash/exec") {
+    if frame.get("method").and_then(|m| m.as_str()) == Some(rpc_methods::BASH_EXEC) {
         let params = frame.get("params").cloned().unwrap_or(Value::Null);
         bash_broker.handle_kernel_bash_exec(&params).await;
         return;

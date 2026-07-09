@@ -7,6 +7,7 @@
 
 pub mod bash_broker;
 pub mod process;
+pub mod rpc_methods;
 
 pub use bash_broker::BashBroker;
 pub use process::{AgentProcess, AgentProcessConfig, AgentProcessError};

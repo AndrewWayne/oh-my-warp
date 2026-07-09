@@ -28,6 +28,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
+
+use super::rpc_methods;
 use tokio::io::AsyncWriteExt;
 use tokio::process::ChildStdin;
 use tokio::sync::broadcast;
@@ -87,7 +89,7 @@ impl BashBroker {
                     }
                     let exec_frame = json!({
                         "jsonrpc": "2.0",
-                        "method": "bash/exec",
+                        "method": rpc_methods::BASH_EXEC,
                         "params": forwarded_params,
                     });
                     let _ = sender.send(exec_frame);
@@ -99,7 +101,7 @@ impl BashBroker {
         // No live GUI for this terminal — synthesise a snapshot bash/finished
         // back to the kernel so the in-flight tool call resolves promptly.
         self.send_kernel_notification(
-            "bash/finished",
+            rpc_methods::BASH_FINISHED,
             json!({
                 "commandId": command_id,
                 "snapshot": true,

@@ -1,0 +1,25 @@
+# omw agent JSON-RPC control-contract method vocabulary.
+#
+# Single source of truth for the omw-agent <-> omw-server boundary.
+#   Rust constants: crates/omw-server/src/agent/rpc_methods.rs
+#   TS constants:   apps/omw-agent/src/rpc-methods.ts
+#
+# Golden tests on both sides assert their declared method constants are a
+# subset of this list. Introducing a method on either side without listing
+# it here fails CI. Lines starting with '#' and blank lines are ignored;
+# every other line is one method name. Keep the list sorted and unique.
+#
+# SCOPE: omw's control contract only. Kernel observability events relayed
+# from pi-mono (assistant/delta, tool/call_started, tool/call_finished,
+# turn/finished, error) are the kernel's vocabulary and are intentionally
+# NOT listed here. Adding them later is purely additive (see issue #13).
+agent/crashed
+approval/decide
+approval/request
+bash/cancel
+bash/data
+bash/exec
+bash/finished
+session/cancel
+session/create
+session/prompt

@@ -17,6 +17,7 @@
 import { Type, type Static } from "typebox";
 
 import type { AgentTool } from "../vendor/pi-agent-core/index.js";
+import { AgentRpcMethod } from "./rpc-methods.js";
 
 /** Result returned by exec(). */
 export interface ExecResult {
@@ -102,10 +103,10 @@ export function createWarpSessionBashOperations(
                 };
 
                 deps.rpc.registerCommandSubscriber(commandId, (frame) => {
-                    if (frame.method === "bash/data") {
+                    if (frame.method === AgentRpcMethod.BASH_DATA) {
                         const bytes = (frame.params?.bytes as string) ?? "";
                         opts.onData?.(bytes);
-                    } else if (frame.method === "bash/finished") {
+                    } else if (frame.method === AgentRpcMethod.BASH_FINISHED) {
                         const exitCode =
                             typeof frame.params?.exitCode === "number"
                                 ? (frame.params.exitCode as number)
@@ -115,7 +116,7 @@ export function createWarpSessionBashOperations(
                     }
                 });
 
-                deps.rpc.notify("bash/exec", {
+                deps.rpc.notify(AgentRpcMethod.BASH_EXEC, {
                     commandId,
                     command,
                     cwd,
@@ -126,7 +127,7 @@ export function createWarpSessionBashOperations(
 
                 if (opts.signal) {
                     abortHandler = (): void => {
-                        deps.rpc.notify("bash/cancel", { commandId });
+                        deps.rpc.notify(AgentRpcMethod.BASH_CANCEL, { commandId });
                         finish({ exitCode: null, snapshot: true });
                     };
                     if (opts.signal.aborted) {
@@ -138,7 +139,7 @@ export function createWarpSessionBashOperations(
 
                 if (opts.timeout !== undefined && opts.timeout > 0) {
                     timer = setTimeout(() => {
-                        deps.rpc.notify("bash/cancel", { commandId });
+                        deps.rpc.notify(AgentRpcMethod.BASH_CANCEL, { commandId });
                         finish({ exitCode: null, snapshot: true });
                     }, opts.timeout);
                 }

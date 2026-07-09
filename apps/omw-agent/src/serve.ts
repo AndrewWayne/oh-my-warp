@@ -41,6 +41,7 @@ import type { AgentEvent } from "../vendor/pi-agent-core/index.js";
 
 import type { ApprovalDecision } from "./policy-hook.js";
 import type { PolicyConfig } from "./policy.js";
+import { AgentRpcMethod } from "./rpc-methods.js";
 import { Session, type GetApiKey, type ProviderConfig, type SessionSpec } from "./session.js";
 import type { RpcBridge } from "./warp-session-bash.js";
 
@@ -132,13 +133,13 @@ export async function runStdioServer(opts: RunStdioServerOptions): Promise<void>
 		const id = req.id ?? null;
 		try {
 			switch (req.method) {
-				case "session/create":
+				case AgentRpcMethod.SESSION_CREATE:
 					return handleSessionCreate(req, id, sessions, opts.getApiKey, rpcBridge, notify, reply, replyError);
-				case "session/prompt":
+				case AgentRpcMethod.SESSION_PROMPT:
 					return handleSessionPrompt(req, id, sessions, reply, replyError, notify);
-				case "session/cancel":
+				case AgentRpcMethod.SESSION_CANCEL:
 					return handleSessionCancel(req, id, sessions, reply, replyError);
-				case "approval/decide":
+				case AgentRpcMethod.APPROVAL_DECIDE:
 					return handleApprovalDecide(req, id, sessions, reply, replyError);
 				default:
 					return replyError(id, -32601, `unknown method: ${req.method}`);
@@ -183,9 +184,9 @@ export async function runStdioServer(opts: RunStdioServerOptions): Promise<void>
 		// mis-emit one with id:null.
 		if (req.id === undefined) {
 			if (
-				req.method === "bash/data" ||
-				req.method === "bash/finished" ||
-				req.method === "bash/cancel"
+				req.method === AgentRpcMethod.BASH_DATA ||
+				req.method === AgentRpcMethod.BASH_FINISHED ||
+				req.method === AgentRpcMethod.BASH_CANCEL
 			) {
 				dispatchBashNotification(req.method, req.params);
 			}
@@ -250,7 +251,7 @@ function handleSessionCreate(
 			getApiKey,
 			rpcBridge,
 			notifyApprovalRequest: ({ approvalId, toolCall }) => {
-				notify("approval/request", { sessionId, approvalId, toolCall });
+				notify(AgentRpcMethod.APPROVAL_REQUEST, { sessionId, approvalId, toolCall });
 			},
 		});
 	} catch (e) {

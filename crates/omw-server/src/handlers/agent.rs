@@ -25,6 +25,7 @@ use axum::response::IntoResponse;
 use axum::Json;
 use serde_json::{json, Value};
 
+use crate::agent::rpc_methods;
 use crate::agent::AgentProcess;
 
 /// `POST /api/v1/agent/sessions` — forwards to the kernel's `session/create`
@@ -37,7 +38,7 @@ pub async fn create_session(
     log::error!("omw# server: POST /agent/sessions body={body_str}");
     crate::omw_debug(format!("omw# server: POST /agent/sessions body={body_str}"));
     let result = agent
-        .send_method("session/create", body)
+        .send_method(rpc_methods::SESSION_CREATE, body)
         .await
         .map_err(|e| {
             log::error!("omw# server: agent.send_method FAILED: {e}");
@@ -142,7 +143,7 @@ async fn handle_socket(socket: WebSocket, agent: Arc<AgentProcess>, session_id: 
                     let prompt = parsed.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
                     let _ = agent_for_inbound
                         .send_method(
-                            "session/prompt",
+                            rpc_methods::SESSION_PROMPT,
                             json!({ "sessionId": session_id_for_inbound, "prompt": prompt }),
                         )
                         .await;
@@ -150,7 +151,7 @@ async fn handle_socket(socket: WebSocket, agent: Arc<AgentProcess>, session_id: 
                 "cancel" => {
                     let _ = agent_for_inbound
                         .send_method(
-                            "session/cancel",
+                            rpc_methods::SESSION_CANCEL,
                             json!({ "sessionId": session_id_for_inbound }),
                         )
                         .await;
@@ -166,7 +167,7 @@ async fn handle_socket(socket: WebSocket, agent: Arc<AgentProcess>, session_id: 
                         .unwrap_or("");
                     let _ = agent_for_inbound
                         .send_method(
-                            "approval/decide",
+                            rpc_methods::APPROVAL_DECIDE,
                             json!({
                                 "sessionId": session_id_for_inbound,
                                 "approvalId": approval_id,
@@ -183,7 +184,7 @@ async fn handle_socket(socket: WebSocket, agent: Arc<AgentProcess>, session_id: 
                     let bytes = parsed.get("bytes").and_then(|v| v.as_str()).unwrap_or("");
                     let _ = agent_for_inbound
                         .send_notification(
-                            "bash/data",
+                            rpc_methods::BASH_DATA,
                             json!({ "commandId": command_id, "bytes": bytes }),
                         )
                         .await;
@@ -201,7 +202,7 @@ async fn handle_socket(socket: WebSocket, agent: Arc<AgentProcess>, session_id: 
                         params["snapshot"] = serde_json::Value::Bool(true);
                     }
                     let _ = agent_for_inbound
-                        .send_notification("bash/finished", params)
+                        .send_notification(rpc_methods::BASH_FINISHED, params)
                         .await;
                 }
                 _ => {

@@ -41,6 +41,7 @@ import type { AgentEvent } from "../vendor/pi-agent-core/index.js";
 
 import type { ApprovalDecision } from "./policy-hook.js";
 import type { PolicyConfig } from "./policy.js";
+import { isProviderKind } from "./provider-kinds.js";
 import { AgentRpcMethod } from "./rpc-methods.js";
 import { Session, type GetApiKey, type ProviderConfig, type SessionSpec } from "./session.js";
 import type { RpcBridge } from "./warp-session-bash.js";
@@ -420,12 +421,7 @@ function parseProviderConfig(raw: unknown): ProviderConfig | null {
 	if (!raw || typeof raw !== "object") return null;
 	const obj = raw as Record<string, unknown>;
 	const kind = obj.kind;
-	if (
-		kind !== "openai" &&
-		kind !== "anthropic" &&
-		kind !== "openai-compatible" &&
-		kind !== "ollama"
-	) {
+	if (!isProviderKind(kind)) {
 		return null;
 	}
 	const cfg: ProviderConfig = { kind };

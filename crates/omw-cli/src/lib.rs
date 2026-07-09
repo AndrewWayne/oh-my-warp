@@ -193,3 +193,23 @@ impl ProviderKindArg {
         }
     }
 }
+
+#[cfg(test)]
+mod provider_kind_arg_tests {
+    use super::ProviderKindArg;
+    use clap::ValueEnum;
+
+    /// The CLI's `--kind` vocabulary must not drift from the canonical
+    /// provider-kind list (which a golden test in omw-config anchors to
+    /// specs/provider-kinds.txt).
+    #[test]
+    fn every_cli_kind_is_in_the_canonical_vocabulary() {
+        for v in ProviderKindArg::value_variants() {
+            assert!(
+                omw_config::PROVIDER_KINDS.contains(&v.as_kebab()),
+                "CLI provider kind {:?} not in omw_config::PROVIDER_KINDS",
+                v.as_kebab(),
+            );
+        }
+    }
+}

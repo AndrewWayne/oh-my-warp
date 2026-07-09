@@ -1,0 +1,19 @@
+# omw LLM provider-kind vocabulary.
+#
+# Single source of truth for the `kind = ...` discriminator used across
+# omw-config, omw-cli, omw-agent, and keychain service ids.
+#   Rust canonical: crates/omw-config (ProviderConfig::kind_str + PROVIDER_KINDS)
+#   TS list:        apps/omw-agent/src/provider-kinds.ts
+#
+# Golden tests on both sides assert their vocabulary matches this list.
+# Adding a provider kind anywhere without listing it here fails CI. Lines
+# starting with '#' and blank lines are ignored; every other line is one
+# kind string. Keep the list sorted and unique.
+#
+# NOTE: the vendor Settings UI (warp-stripped) also repeats these strings +
+# display labels; deriving those from this list is a follow-up (see #12) —
+# that fork is a separate workspace not built by root CI.
+anthropic
+ollama
+openai
+openai-compatible

@@ -197,7 +197,7 @@ impl AgentProcess {
             // Notify every active session bus that the process is gone.
             let crashed = json!({ "method": rpc_methods::AGENT_CRASHED, "params": {} });
             let map = watcher_sessions.lock().expect("sessions poisoned");
-            for (_, sender) in map.iter() {
+            for sender in map.values() {
                 let _ = sender.send(crashed.clone());
             }
         });
@@ -452,7 +452,7 @@ async fn route_frame(
         // hasn't subscribed yet.
     } else {
         // Non-scoped frame (e.g. agent/crashed). Fan out to everyone.
-        for (_, sender) in map.iter() {
+        for sender in map.values() {
             let _ = sender.send(frame.clone());
         }
     }

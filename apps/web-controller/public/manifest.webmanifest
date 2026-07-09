@@ -1,5 +1,5 @@
 {
-  "name": "omw Web Controller",
+  "name": "omw remote",
   "short_name": "omw",
   "description": "BYORC client for omw — paired terminal + agent control over Tailscale",
   "start_url": "/",

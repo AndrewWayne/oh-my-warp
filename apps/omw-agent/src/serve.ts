@@ -44,7 +44,7 @@ import type { PolicyConfig } from "./policy.js";
 import { isProviderKind } from "./provider-kinds.js";
 import { AgentRpcMethod } from "./rpc-methods.js";
 import { Session, type GetApiKey, type ProviderConfig, type SessionSpec } from "./session.js";
-import type { RpcBridge } from "./warp-session-bash.js";
+import { parseBashFrame, type BashFrame, type RpcBridge } from "./warp-session-bash.js";
 
 export interface RunStdioServerOptions {
 	stdin: NodeJS.ReadableStream;
@@ -92,10 +92,7 @@ export async function runStdioServer(opts: RunStdioServerOptions): Promise<void>
 	// adapter (warp-session-bash.ts) registers a subscriber for each
 	// in-flight exec; inbound bash/data, bash/finished, bash/cancel
 	// notifications from the broker are dispatched here by commandId.
-	const bashSubscribers = new Map<
-		string,
-		(frame: { method: string; params: unknown }) => void
-	>();
+	const bashSubscribers = new Map<string, (frame: BashFrame) => void>();
 
 	const writeFrame = (frame: JsonRpcFrame): void => {
 		// JSON.stringify + "\n" is sufficient framing because no JSON value
@@ -154,14 +151,12 @@ export async function runStdioServer(opts: RunStdioServerOptions): Promise<void>
 		method: string,
 		params: unknown,
 	): boolean => {
-		const commandId =
-			params && typeof params === "object"
-				? (params as Record<string, unknown>).commandId
-				: undefined;
-		if (typeof commandId !== "string") return false;
-		const sub = bashSubscribers.get(commandId);
+		// Validate once here; subscribers receive a typed BashFrame.
+		const frame = parseBashFrame(method, params);
+		if (!frame) return false;
+		const sub = bashSubscribers.get(frame.params.commandId);
 		if (!sub) return false;
-		sub({ method, params });
+		sub(frame);
 		return true;
 	};
 

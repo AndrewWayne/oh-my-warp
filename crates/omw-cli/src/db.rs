@@ -92,7 +92,14 @@ pub fn db_path() -> Result<PathBuf> {
 /// Open the default db, creating parent directories and applying migrations.
 pub fn open() -> Result<Connection> {
     let path = db_path()?;
-    open_at(&path)
+    let conn = open_at(&path)?;
+    // Seed the canonical pricing schedule on the production open path. Without
+    // this, real usage records get cost_cents = NULL because compute_cost_cents
+    // finds no matching provider_pricing row — seed_pricing was previously only
+    // called from tests (issue #17). INSERT OR IGNORE makes this idempotent.
+    // `open_at` deliberately stays unseeded so tests can control pricing.
+    seed_pricing(&conn)?;
+    Ok(conn)
 }
 
 /// Open a connection at `path`, creating parent directories and applying
@@ -274,4 +281,51 @@ pub fn cost_rollup(
         out.push(row.context("reading cost_rollup row")?);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression for #17: the production `open()` path must seed pricing so a
+    /// seeded model's usage is priced. Before the fix, `seed_pricing` was only
+    /// called from tests, so real usage recorded through `open()` stored
+    /// `cost_cents = NULL`. (`open_at` stays unseeded by design — the cost
+    /// integration tests rely on controlling pricing themselves.)
+    #[test]
+    fn open_seeds_pricing_so_usage_gets_cost() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // `open()` resolves its path from OMW_DATA_DIR (see data_dir()). This is
+        // the only unit test in this crate's lib test binary that touches env,
+        // so no cross-test races.
+        std::env::set_var("OMW_DATA_DIR", dir.path());
+        let conn = open().expect("open");
+        std::env::remove_var("OMW_DATA_DIR");
+
+        // openai/gpt-4o is seeded at 250 prompt / 1000 completion cents per
+        // million tokens; 1M prompt + 0 completion => 250 cents.
+        let rec = UsageRecord {
+            provider_id: "acct-1".to_string(),
+            provider_kind: "openai".to_string(),
+            model: "gpt-4o".to_string(),
+            prompt_tokens: 1_000_000,
+            completion_tokens: 0,
+            total_tokens: 1_000_000,
+            duration_ms: 10,
+        };
+        let id = record_usage(&conn, &rec).expect("record_usage");
+
+        let cost: Option<i64> = conn
+            .query_row(
+                "SELECT cost_cents FROM usage_records WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .expect("select cost_cents");
+        assert_eq!(
+            cost,
+            Some(250),
+            "open() must seed pricing so a seeded model's usage is priced; got {cost:?}"
+        );
+    }
 }

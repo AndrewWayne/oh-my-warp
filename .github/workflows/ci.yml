@@ -52,7 +52,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@1.85
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --all-targets
+      # --locked: check the SHIPPED Cargo.lock, not a fresh resolution. Without
+      # it, a transitive dep can resolve to a version requiring rustc > 1.85 and
+      # fail the MSRV lane even though the lockfile pins a 1.85-compatible one
+      # (this happened with icu 2.2.0 — see the icu -> 2.1.x downgrade in git log).
+      - run: cargo check --workspace --all-targets --locked
 
   clippy-and-test:
     name: ${{ matrix.os }} / clippy + test

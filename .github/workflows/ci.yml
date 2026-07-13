@@ -37,6 +37,14 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash .github/workflows/scripts/grep-secrets.sh
 
+  vendor-omw-headers:
+    name: vendor omw AGPL headers
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/workflows/scripts/check-vendor-omw-headers.sh
+
   msrv:
     name: MSRV check (1.85) / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

@@ -3,7 +3,7 @@ import {
   canonicalBytes,
   bodyHashHex,
   type CanonicalRequest,
-} from "../src/lib/crypto/canonical";
+} from "@oh-my-warp/byorc-client/crypto/canonical";
 
 const sample: CanonicalRequest = {
   method: "GET",

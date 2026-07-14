@@ -132,3 +132,21 @@ jobs:
       - name: test
         working-directory: apps/web-controller
         run: npm test
+
+  ts-byorc-client:
+    name: byorc-client (TS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: npm install
+        run: npm install
+      # Typecheck the shared BYORC client on its own tsconfig. This proves it
+      # stays decoupled from the Web Controller (no React/xterm/IndexedDB/DOM
+      # app imports), so Node clients such as omw-mcp can consume it.
+      - name: typecheck
+        working-directory: packages/byorc-client
+        run: npm run typecheck

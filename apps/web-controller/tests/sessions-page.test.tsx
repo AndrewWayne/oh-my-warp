@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import Sessions from "../src/pages/Sessions";
 import { getPairing } from "../src/lib/storage/idb";
-import { listSessions } from "../src/lib/sessions";
+import { listSessions } from "@oh-my-warp/byorc-client/sessions";
 import type { PairingRecord } from "../src/lib/storage/idb";
 
 vi.mock("../src/lib/storage/idb", () => ({
@@ -11,7 +11,7 @@ vi.mock("../src/lib/storage/idb", () => ({
   deletePairing: vi.fn(),
 }));
 
-vi.mock("../src/lib/sessions", () => ({
+vi.mock("@oh-my-warp/byorc-client/sessions", () => ({
   createDefaultSession: vi.fn(),
   deleteSession: vi.fn(),
   listSessions: vi.fn(),

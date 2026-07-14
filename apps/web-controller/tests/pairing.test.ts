@@ -3,8 +3,8 @@ import {
   parsePairUrl,
   redeemPairing,
   PairError,
-} from "../src/lib/pairing";
-import { _b64u } from "../src/lib/crypto/ed25519";
+} from "@oh-my-warp/byorc-client/pairing";
+import { _b64u } from "@oh-my-warp/byorc-client/crypto/ed25519";
 
 describe("parsePairUrl", () => {
   it("accepts a valid https pair URL", () => {

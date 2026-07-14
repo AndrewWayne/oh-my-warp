@@ -26,7 +26,7 @@ import {
   _b64u,
 } from "./crypto/ed25519";
 import { canonicalBytes, bodyHashHex } from "./crypto/canonical";
-import type { PairingRecord } from "./storage/idb";
+import type { PairingRecord } from "./pairing";
 
 export type FrameKind = "input" | "output" | "control" | "ping" | "pong";
 

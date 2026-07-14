@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ApiClient } from "../src/lib/api/client";
+import { ApiClient } from "@oh-my-warp/byorc-client/api/client";
 import {
   generateKeypair,
   verify,
   _b64u,
-} from "../src/lib/crypto/ed25519";
-import { canonicalBytes, bodyHashHex } from "../src/lib/crypto/canonical";
+} from "@oh-my-warp/byorc-client/crypto/ed25519";
+import { canonicalBytes, bodyHashHex } from "@oh-my-warp/byorc-client/crypto/canonical";
 
 describe("ApiClient", () => {
   beforeEach(() => {

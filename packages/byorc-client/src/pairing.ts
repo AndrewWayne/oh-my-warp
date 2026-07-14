@@ -24,6 +24,23 @@ export interface RedeemResult {
   privateKeyJwk: JsonWebKey;
 }
 
+/**
+ * A persisted pairing credential — the durable form of a {@link RedeemResult}
+ * (JWK private key instead of the live {@link CryptoPrivateKey}, plus the
+ * `pairedAt` timestamp). Persistence itself is the caller's concern; the Web
+ * Controller stores these in IndexedDB, a daemon client in its own config.
+ */
+export interface PairingRecord {
+  hostId: string;
+  hostUrl: string;
+  hostPubkey: Uint8Array;
+  deviceId: string;
+  privateKeyJwk: JsonWebKey;
+  capabilityTokenB64: string;
+  pairedAt: string;
+  capabilities: string[];
+}
+
 export class PairError extends Error {
   public readonly code: string;
   public readonly httpStatus?: number;

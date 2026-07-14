@@ -5,7 +5,7 @@ import {
   redeemPairing,
   PairError,
   type PairUrl,
-} from "../lib/pairing";
+} from "@oh-my-warp/byorc-client/pairing";
 import { startQrScan, type QrScanner } from "../lib/qr-scan";
 import { savePairing } from "../lib/storage/idb";
 

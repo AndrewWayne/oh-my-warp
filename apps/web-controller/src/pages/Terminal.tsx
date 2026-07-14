@@ -8,7 +8,7 @@ import {
   connectPtyResilient,
   type ResilientPtyConnection,
 } from "../lib/pty-resilient";
-import { listSessions } from "../lib/sessions";
+import { listSessions } from "@oh-my-warp/byorc-client/sessions";
 import TerminalShortcutStrip from "../components/TerminalShortcutStrip";
 import { useVisualViewportSize } from "../hooks/useVisualViewportSize";
 import {

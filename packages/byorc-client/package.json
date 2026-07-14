@@ -1,0 +1,27 @@
+{
+  "name": "@oh-my-warp/byorc-client",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "Environment-agnostic BYORC protocol client (signing, signed HTTP API, sessions, PTY WebSocket) shared by the Web Controller and future daemon clients (e.g. omw-mcp).",
+  "exports": {
+    ".": "./src/index.ts",
+    "./crypto/ed25519": "./src/crypto/ed25519.ts",
+    "./crypto/canonical": "./src/crypto/canonical.ts",
+    "./api/client": "./src/api/client.ts",
+    "./api/types": "./src/api/types.ts",
+    "./pairing": "./src/pairing.ts",
+    "./sessions": "./src/sessions.ts",
+    "./pty-ws": "./src/pty-ws.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@noble/ed25519": "^2.1.0",
+    "@noble/hashes": "^1.5.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

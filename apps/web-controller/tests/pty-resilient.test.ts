@@ -4,7 +4,7 @@ import {
   type ConnState,
   type ResilientDeps,
 } from "../src/lib/pty-resilient";
-import type { ConnectOptions, PtyConnection } from "../src/lib/pty-ws";
+import type { ConnectOptions, PtyConnection } from "@oh-my-warp/byorc-client/pty-ws";
 
 const OPTS = { sessionId: "s1" } as unknown as ConnectOptions;
 const flush = () => new Promise((r) => setTimeout(r, 0));

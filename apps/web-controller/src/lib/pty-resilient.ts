@@ -17,7 +17,7 @@
 // caller's existing error / dead-session / Retry handling still runs
 // (avoids reconnect loops against a dead session).
 
-import { connectPty, type ConnectOptions, type PtyConnection } from "./pty-ws";
+import { connectPty, type ConnectOptions, type PtyConnection } from "@oh-my-warp/byorc-client/pty-ws";
 
 export type ConnState = "connecting" | "connected" | "reconnecting" | "closed";
 

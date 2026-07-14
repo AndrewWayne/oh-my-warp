@@ -11,6 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@oh-my-warp/byorc-client": "*",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "react": "^18.3.0",
@@ -18,8 +19,6 @@
     "react-router-dom": "^6.26.0"
   },
   "devDependencies": {
-    "@noble/ed25519": "^2.1.0",
-    "@noble/hashes": "^1.5.0",
     "@testing-library/jest-dom": "^6.5.0",
     "@testing-library/react": "^16.0.0",
     "@testing-library/user-event": "^14.6.1",

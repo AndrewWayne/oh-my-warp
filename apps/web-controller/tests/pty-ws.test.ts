@@ -6,7 +6,7 @@ import {
   frameCanonicalBytes,
   buildConnectToken,
   type Frame,
-} from "../src/lib/pty-ws";
+} from "@oh-my-warp/byorc-client/pty-ws";
 import {
   generateKeypair,
   exportPrivateKeyJwk,
@@ -14,7 +14,7 @@ import {
   sign,
   verify,
   _b64u,
-} from "../src/lib/crypto/ed25519";
+} from "@oh-my-warp/byorc-client/crypto/ed25519";
 import type { PairingRecord } from "../src/lib/storage/idb";
 
 // Hand-rolled WebSocket mock. The browser-native WebSocket can't be
@@ -178,8 +178,8 @@ describe("pty-ws", () => {
       expect(typeof obj.sig).toBe("string");
       // sig must verify against the canonical-request bytes for the
       // implied GET /ws/v1/pty/sess-1.
-      const { canonicalBytes } = await import("../src/lib/crypto/canonical");
-      const { bodyHashHex } = await import("../src/lib/crypto/canonical");
+      const { canonicalBytes } = await import("@oh-my-warp/byorc-client/crypto/canonical");
+      const { bodyHashHex } = await import("@oh-my-warp/byorc-client/crypto/canonical");
       const empty = await bodyHashHex(new Uint8Array(0));
       const canonical = canonicalBytes({
         method: "GET",

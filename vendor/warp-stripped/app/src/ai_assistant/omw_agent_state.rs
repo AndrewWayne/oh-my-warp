@@ -83,6 +83,96 @@ pub struct OmwAgentSessionParams {
     pub approval_mode: Option<String>,
 }
 
+impl OmwAgentSessionParams {
+    /// Resolve params from the on-disk omw-config, including the AGENTS.md
+    /// system prompt.
+    ///
+    /// Single source of truth for both agent entry points: the mounted panel
+    /// ([`OmwAgentState::start_with_config`]) and the inline `# ` path in
+    /// `terminal::input`. Both previously duplicated this preamble, and the
+    /// panel's copy hard-coded `system_prompt: None` — so panel sessions
+    /// silently ignored the global AGENTS.md prompt that inline sessions
+    /// honoured (issue #37). Keep this the only place that builds params from
+    /// config so the two paths cannot drift again.
+    pub fn from_config() -> Result<Self, String> {
+        let path = omw_config::config_path().map_err(|e| e.to_string())?;
+        let cfg = omw_config::Config::load_or_create_default(&path).map_err(|e| e.to_string())?;
+        log::info!(
+            "omw# config: loaded; agent.enabled={} default_provider={:?} providers_n={}",
+            cfg.agent.enabled,
+            cfg.default_provider,
+            cfg.providers.len()
+        );
+        if !cfg.agent.enabled {
+            return Err("Agent is disabled in settings".into());
+        }
+        let provider_id = cfg
+            .default_provider
+            .as_ref()
+            .ok_or_else(|| "No default provider configured".to_string())?;
+        let provider = cfg
+            .providers
+            .get(provider_id)
+            .ok_or_else(|| format!("default_provider `{provider_id}` not found"))?;
+        log::info!(
+            "omw# config: selected provider={} kind={}",
+            provider_id,
+            provider.kind_str()
+        );
+
+        let approval_mode = match cfg.approval.mode {
+            omw_config::ApprovalMode::ReadOnly => Some("read_only".into()),
+            omw_config::ApprovalMode::AskBeforeWrite => Some("ask_before_write".into()),
+            omw_config::ApprovalMode::Trusted => Some("trusted".into()),
+        };
+
+        // Best-effort: ensure the canonical AGENTS.md exists (writes the
+        // bundled baseline on first run), re-sync the user-managed source
+        // path → canonical path if set, then load the canonical contents
+        // as the session's system prompt. Any failure (path resolution,
+        // missing source, oversize file, write perms) is logged and
+        // treated as "no system prompt" so a broken AGENTS.md never blocks
+        // session creation.
+        if let Err(e) = omw_config::bootstrap_agents_md_if_missing() {
+            log::warn!("omw# config: AGENTS.md bootstrap failed: {e}");
+        }
+        if let Err(e) = omw_config::sync_agents_md(cfg.agent.agents_md_path.as_deref()) {
+            log::warn!("omw# config: AGENTS.md sync failed: {e}");
+        }
+        let system_prompt = match omw_config::read_agents_md() {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("omw# config: AGENTS.md read failed: {e}");
+                None
+            }
+        };
+
+        Ok(Self {
+            provider_kind: provider.kind_str().to_string(),
+            key_ref: provider.key_ref().map(|k| k.to_string()),
+            base_url: match provider {
+                omw_config::ProviderConfig::OpenAiCompatible { base_url, .. } => {
+                    Some(base_url.as_str().to_string())
+                }
+                omw_config::ProviderConfig::Ollama { base_url, .. } => {
+                    base_url.as_ref().map(|u| u.as_str().to_string())
+                }
+                omw_config::ProviderConfig::OpenAi { base_url, .. } => {
+                    base_url.as_ref().map(|u| u.as_str().to_string())
+                }
+                _ => None,
+            },
+            model: provider
+                .default_model()
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
+            system_prompt,
+            cwd: None,
+            approval_mode,
+        })
+    }
+}
+
 /// Opaque handle to the currently-focused terminal pane. Stored by the
 /// broker so it can route `ExecCommand` to the right PTY.
 ///
@@ -670,67 +760,14 @@ impl OmwAgentState {
         Ok(())
     }
 
-    /// Convenience wrapper around [`start`] that loads `omw-config` and
-    /// resolves the default provider into [`OmwAgentSessionParams`]. Returns
-    /// `Err` if no provider is configured, the agent is disabled, or the
-    /// default provider points to a missing entry.
+    /// Convenience wrapper around [`start`] that resolves the default provider
+    /// and the AGENTS.md system prompt from `omw-config` via
+    /// [`OmwAgentSessionParams::from_config`]. Returns `Err` if no provider is
+    /// configured, the agent is disabled, or the default provider points to a
+    /// missing entry.
     pub fn start_with_config(self: &Arc<Self>) -> Result<(), String> {
         log::info!("omw# state: start_with_config entry");
-        let path = omw_config::config_path().map_err(|e| e.to_string())?;
-        let cfg = omw_config::Config::load_or_create_default(&path).map_err(|e| e.to_string())?;
-        log::info!(
-            "omw# state: config loaded; agent.enabled={} default_provider={:?} providers_n={}",
-            cfg.agent.enabled,
-            cfg.default_provider,
-            cfg.providers.len()
-        );
-        if !cfg.agent.enabled {
-            return Err("Agent is disabled in settings".into());
-        }
-        let provider_id = cfg
-            .default_provider
-            .as_ref()
-            .ok_or_else(|| "No default provider configured".to_string())?;
-        let provider = cfg
-            .providers
-            .get(provider_id)
-            .ok_or_else(|| format!("default_provider `{provider_id}` not found"))?;
-        log::info!(
-            "omw# state: selected provider={} kind={}",
-            provider_id,
-            provider.kind_str()
-        );
-
-        let approval_mode = match cfg.approval.mode {
-            omw_config::ApprovalMode::ReadOnly => Some("read_only".into()),
-            omw_config::ApprovalMode::AskBeforeWrite => Some("ask_before_write".into()),
-            omw_config::ApprovalMode::Trusted => Some("trusted".into()),
-        };
-
-        let params = OmwAgentSessionParams {
-            provider_kind: provider.kind_str().to_string(),
-            key_ref: provider.key_ref().map(|k| k.to_string()),
-            base_url: match provider {
-                omw_config::ProviderConfig::OpenAiCompatible { base_url, .. } => {
-                    Some(base_url.as_str().to_string())
-                }
-                omw_config::ProviderConfig::Ollama { base_url, .. } => {
-                    base_url.as_ref().map(|u| u.as_str().to_string())
-                }
-                omw_config::ProviderConfig::OpenAi { base_url, .. } => {
-                    base_url.as_ref().map(|u| u.as_str().to_string())
-                }
-                _ => None,
-            },
-            model: provider
-                .default_model()
-                .map(|s| s.to_string())
-                .unwrap_or_default(),
-            system_prompt: None,
-            cwd: None,
-            approval_mode,
-        };
-
+        let params = OmwAgentSessionParams::from_config()?;
         self.start(params)
     }
 

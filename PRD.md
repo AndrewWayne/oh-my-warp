@@ -747,9 +747,9 @@ Bridges v0.4-thin's "shipped components" to "real demo." Tracked in detail at [`
 - **Gap 1: phone attaches to the Warp pane, not a sibling shell.** Extend `omw-server::SessionRegistry` with an external-source variant; tap `PtyController` I/O channels in warp-stripped; per-pane "Share this pane" control.
 - **Gap 2: pair URL surfaces in a modal with QR.** Replace stderr `eprintln!` with a Warp dialog containing the URL, a QR rendering, Copy button, paired-device count, Tailscale status line.
 - **Gap 3: button label tracks daemon state reactively.** `tokio::sync::watch::Sender` on `OmwRemoteState`; render-time state read; subscribe-to-change.
-- **Gap 4: Tailscale Serve auto-bootstrap.** New `omw/tailscale.rs` module: detect via `tailscale status --json`, auto `serve_https`/`unserve`; `pinned_origin: String` → `Vec<String>` for loopback + tailnet origins; bind address configurable.
+- **Gap 4: Tailscale detection + tailnet origin.** New `omw/tailscale.rs` module: detect via `tailscale status --json`; `pinned_origin: String` → `Vec<String>` for loopback + tailnet origins; bind address configurable. **As shipped, the preview pairs over the direct tailnet IPv4 origin (`http://100.x.y.z:8787`) and does not run `tailscale serve`** — plain HTTP over the tailnet carries the pairing flow and the signed WS, while `tailscale serve --bg` can block on first-use cert provisioning and previously hung the UI thread. `serve_https`/`unserve` are retained, uncalled, for a future HTTPS path gated behind an explicit opt-in (e.g. `OMW_TAILSCALE_SERVE=1`). See TODO.md v0.4-thin-polish Gap 4 and issue #9.
 
-**Exit:** the v0.4-thin exit criterion is *seamlessly* demonstrable — click button in warp-oss, pair phone via QR scanned from a modal, phone sees the active Warp terminal pane in real time. Tailscale Serve auto-runs. No manual stderr fishing, no manual `tailscale serve` command, no fresh-shell confusion.
+**Exit:** the v0.4-thin exit criterion is *seamlessly* demonstrable — click button in warp-oss, pair phone via QR scanned from a modal, phone sees the active Warp terminal pane in real time. Pairing uses the direct tailnet origin (no manual `tailscale serve` step). No manual stderr fishing, no fresh-shell confusion.
 
 ### v0.4-cleanup — Agent integration + audit + approvals (post-v0.3)
 

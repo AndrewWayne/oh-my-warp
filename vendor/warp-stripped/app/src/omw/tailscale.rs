@@ -11,14 +11,23 @@
 // published by the Free Software Foundation. See the LICENSE file at the
 // repository root for the full text.
 
-//! Detect a local Tailscale install + bootstrap `tailscale serve --https`.
+//! Detect a local Tailscale install; `tailscale serve --https` bootstrap kept
+//! available but NOT currently wired.
 //!
-//! Wired by Gap 4 of v0.4-thin-polish (Tailscale Serve auto-bootstrap +
-//! multi-origin pinning). When the embedded omw-remote daemon comes up on
-//! `127.0.0.1:8787`, [`OmwRemoteState::start`] calls [`detect_status`] then
-//! (if the node is running) [`serve_https`] to expose the loopback bind under
-//! a real `https://<hostname>.<tailnet>.ts.net` URL — so the phone's WS
-//! upgrade gets a TLS-terminated path and a stable origin.
+//! Added by Gap 4 of v0.4-thin-polish (Tailscale detection + multi-origin
+//! pinning). **Current preview behaviour:** when the daemon is exposed on the
+//! tailnet (explicit `OMW_REMOTE_BIND` opt-in), [`OmwRemoteState::start`] calls
+//! [`detect_status`] and pairs over the **direct tailnet IPv4 origin**
+//! (`http://100.x.y.z:8787`). It deliberately does NOT call [`serve_https`]:
+//! plain HTTP over the tailnet carries the pairing flow (phone camera ->
+//! browser -> `/pair?t=...`) and the signed WS, while `tailscale serve --bg`
+//! can block for seconds on first-use cert provisioning (see the timeout note
+//! below) — which previously hung the Warp UI thread.
+//!
+//! [`serve_https`] / [`unserve`] are retained for a future HTTPS path, intended
+//! to be gated behind an explicit opt-in (e.g. `OMW_TAILSCALE_SERVE=1`); the
+//! `stop`-time [`unserve`] call must be restored together with it. See TODO.md
+//! (v0.4-thin-polish Gap 4) and issue #9.
 //!
 //! All shell-out commands use [`std::process::Command`] with explicit args.
 //! No string interpolation, no `sh -c`, no shell injection surface.

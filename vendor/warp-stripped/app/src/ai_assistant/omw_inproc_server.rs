@@ -1,3 +1,16 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// omw-authored file in the in-tree Warp fork (warpdotdev/warp), part of the
+// AGPL-3.0 derivative work. See specs/fork-strategy.md §3.
+//
+// Copyright (C) 2026 Shenhao Miao and the omw contributors
+// Copyright (C) 2020-2026 Denver Technologies, Inc.
+//
+// This program is free software: you can redistribute it and/or modify it
+// under the terms of the GNU Affero General Public License, version 3, as
+// published by the Free Software Foundation. See the LICENSE file at the
+// repository root for the full text.
+
 //! In-process omw-server. Bundles the agent surface inside warp-oss so the
 //! end user only launches one binary.
 //!

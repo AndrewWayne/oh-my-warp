@@ -347,8 +347,8 @@ impl OmwRemoteState {
     }
 
     /// Returns the daemon's tokio runtime handle, when one has been spun up.
-    /// Used by `pane_auto_share::share_all_local_panes` so it can `spawn`
-    /// each `share_pane` future on the same runtime that owns the registry.
+    /// Used by `pane_auto_share::share_self_pane` so it can `spawn` the
+    /// `share_pane` future on the same runtime that owns the registry.
     #[allow(dead_code)]
     pub fn runtime_handle(&self) -> Option<tokio::runtime::Handle> {
         self.inner.lock().runtime_handle.clone()

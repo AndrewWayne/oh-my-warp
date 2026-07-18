@@ -3,8 +3,8 @@
 # Warp fork carries the AGPL-3.0 incremental-authorship header. omw's fork files
 # live under an `omw/` module directory (e.g. vendor/warp-stripped/app/src/omw/)
 # or are named `omw_*.rs`; upstream Warp files keep their own provenance and are
-# out of scope. A few omw-authored files predate that convention or aren't Rust
-# and are listed by path below.
+# out of scope. The omw-authored non-Rust files can't follow the `omw_*.rs`
+# naming and are listed by path below.
 #
 # Backstop for the High-severity finding in issue #6: new omw fork files must not
 # ship without the header.
@@ -15,13 +15,6 @@ spdx="SPDX-License-Identifier: AGPL-3.0-only"
 expected="// $spdx"
 missing=0
 count=0
-
-# omw-authored .rs files that predate the naming convention above and so match
-# neither find pattern. Keep this list short: new fork files should live under
-# an `omw/` directory or be named `omw_*.rs` instead of being added here.
-extra_paths=(
-  vendor/warp-stripped/app/src/autoupdate/oss.rs
-)
 
 # .rs files carry the header block as the very first thing, so line 1 is the
 # SPDX identifier.
@@ -35,7 +28,6 @@ done < <(
   {
     find vendor/warp-stripped -path '*/omw/*' -name '*.rs' -print0
     find vendor/warp-stripped -name 'omw_*.rs' -print0
-    printf '%s\0' "${extra_paths[@]}"
   } | sort -z -u
 )
 

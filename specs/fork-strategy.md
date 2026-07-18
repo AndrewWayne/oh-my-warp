@@ -100,7 +100,7 @@ Manual, at maintainer discretion. Recommended cadence: monthly during active v0.
 The umbrella repo is AGPL-3.0 (see [PRD §12.2](../PRD.md#122-licensing)). Compliance posture:
 
 - The umbrella `LICENSE` file contains the verbatim GNU AGPL-3.0 text.
-- Files in `vendor/warp-stripped/` retain their upstream AGPL headers verbatim. New files added by omw inside `vendor/warp-stripped/` get an AGPL-3.0 header attributing original authorship to upstream Warp maintainers and incremental authorship to omw contributors. omw's Rust fork files live under `omw/` module directories (e.g. `app/src/omw/`) or are named `omw_*.rs`; a few Rust files predate that convention, and the omw-authored non-Rust files (a build script, a launcher, a build doc) carry the header in their native comment syntax (`#`, `<!-- -->`) below any required first line — both are listed by path in the check. The `vendor-omw-headers` CI job (`.github/workflows/scripts/check-vendor-omw-headers.sh`) fails the build if any is missing that header.
+- Files in `vendor/warp-stripped/` retain their upstream AGPL headers verbatim. New files added by omw inside `vendor/warp-stripped/` get an AGPL-3.0 header attributing original authorship to upstream Warp maintainers and incremental authorship to omw contributors. omw's Rust fork files live under `omw/` module directories (e.g. `app/src/omw/`) or are named `omw_*.rs`; the omw-authored non-Rust files (a build script, a launcher, a build doc) can't follow that naming, so they carry the header in their native comment syntax (`#`, `<!-- -->`) below any required first line and are listed by path in the check. The `vendor-omw-headers` CI job (`.github/workflows/scripts/check-vendor-omw-headers.sh`) fails the build if any is missing that header.
 - Original `omw-*` files (in `crates/`, `apps/`) carry an AGPL-3.0 header attributing authorship to omw contributors.
 - Source for any released binary is the umbrella repo at the corresponding tag. Anyone exercising AGPL "Corresponding Source" rights gets the entire umbrella, including `vendor/warp-stripped/` at that tag.
 
@@ -152,7 +152,7 @@ The first three items are partially complete as of branch `omw/strip-built-in-ai
 ## 6. Open Questions
 
 1. **Sync cadence policy.** Monthly during v0.3, then quarterly? Decided ad-hoc by maintainer for now.
-2. **AGPL header enforcement** — resolved 2026-07-13 (issue #6). The `vendor-omw-headers` CI check enforces the header on every omw file under `vendor/warp-stripped/**/omw/`, every `omw_*.rs`, and the non-convention paths it lists explicitly (including the omw-authored shell, PowerShell, and Markdown files); its failure message prints the exact preamble to prepend. A generator was deemed unnecessary given the check.
+2. **AGPL header enforcement** — resolved 2026-07-13 (issue #6). The `vendor-omw-headers` CI check enforces the header on every omw file under `vendor/warp-stripped/**/omw/`, every `omw_*.rs`, and the three non-Rust paths it lists explicitly (the shell, PowerShell, and Markdown files); its failure message prints the exact preamble to prepend. A generator was deemed unnecessary given the check.
 3. **Upstream-PR-friendly bug fixes.** When we discover an upstream bug while working in `vendor/warp-stripped/`, we should fix it upstream first and pull the fix down on the next sync. No formal pipeline; just discipline.
 
 ---

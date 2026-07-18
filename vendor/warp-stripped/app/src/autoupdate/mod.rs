@@ -5,7 +5,7 @@ pub mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(feature = "omw_local")]
-mod oss;
+mod omw_oss;
 #[cfg(windows)]
 mod windows;
 
@@ -362,8 +362,8 @@ impl AutoupdateState {
         // case where omw tag malformed enough to bypass the regex above).
         #[cfg(feature = "omw_local")]
         if let (Some(curr), Some(new)) = (
-            oss::parse_omw_semver(current_version),
-            oss::parse_omw_semver(new_version.version.as_str()),
+            omw_oss::parse_omw_semver(current_version),
+            omw_oss::parse_omw_semver(new_version.version.as_str()),
         ) {
             return Ok(curr > new);
         }
@@ -773,9 +773,9 @@ async fn fetch_version(
         let releases_base = ChannelState::releases_base_url();
         let current_tag = ChannelState::app_version().unwrap_or_default();
         let (version_info, urls) =
-            oss::omw_fetch_latest_release(server_api.http_client(), &releases_base, &current_tag)
+            omw_oss::omw_fetch_latest_release(server_api.http_client(), &releases_base, &current_tag)
                 .await?;
-        oss::set_pending_assets(urls);
+        omw_oss::set_pending_assets(urls);
         return Ok(version_info);
     }
 
@@ -1159,7 +1159,7 @@ fn release_assets_directory_url(channel: Channel, version: &str) -> String {
         #[cfg(feature = "omw_local")]
         Channel::Oss => {
             // Fallback path only — `mac::update_url` short-circuits Oss via
-            // `oss::current_dmg_url()` whenever fetch_version has stashed
+            // `omw_oss::current_dmg_url()` whenever fetch_version has stashed
             // URLs. This arm exists so that pre-fetch code paths (e.g. a
             // manual download triggered before the first poll completes)
             // produce a valid GitHub release URL instead of panicking.

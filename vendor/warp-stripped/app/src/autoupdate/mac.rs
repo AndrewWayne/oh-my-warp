@@ -700,8 +700,8 @@ async fn download_dmg(
     // before mounting, so a tampered DMG is rejected before it can run code.
     #[cfg(feature = "omw_local")]
     if matches!(channel, Channel::Oss) {
-        if let Some(sha_url) = super::oss::current_sha_url() {
-            super::oss::verify_sha256(&dmg_file, &sha_url, client).await?;
+        if let Some(sha_url) = super::omw_oss::current_sha_url() {
+            super::omw_oss::verify_sha256(&dmg_file, &sha_url, client).await?;
         } else {
             bail!("omw autoupdate: SHA-256 sidecar URL missing — refusing to apply unverified DMG");
         }
@@ -754,7 +754,7 @@ fn update_url(channel: Channel, version: &str) -> String {
     // GitHub redirects to a short-lived signed JWT in production.
     #[cfg(feature = "omw_local")]
     if matches!(channel, Channel::Oss) {
-        if let Some(url) = super::oss::current_dmg_url() {
+        if let Some(url) = super::omw_oss::current_dmg_url() {
             return url;
         }
     }

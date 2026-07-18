@@ -68,7 +68,7 @@ impl AppExecutionMode {
 
     /// Whether the app can *automatically* update. This does not prevent manual updates.
     ///
-    /// omw_local builds autoupdate against GitHub Releases (see `autoupdate::oss`), not the
+    /// omw_local builds autoupdate against GitHub Releases (see `autoupdate::omw_oss`), not the
     /// official cloud services — so they bypass the cloud-services gate here.
     pub fn can_autoupdate(&self) -> bool {
         self.is_app()
@@ -135,7 +135,7 @@ mod tests {
     /// intentionally false (that's what strips cloud surfaces). Before PR #63
     /// `can_autoupdate()` required it to be true, so the gate at
     /// `autoupdate/mod.rs::AutoupdateState::register` never fired. omw builds
-    /// have their own GitHub-Releases autoupdate path (`autoupdate::oss`) that
+    /// have their own GitHub-Releases autoupdate path (`autoupdate::omw_oss`) that
     /// doesn't go through the cloud, so the gate has to bypass for omw.
     #[cfg(feature = "omw_local")]
     #[test]

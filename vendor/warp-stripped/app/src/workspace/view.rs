@@ -13035,7 +13035,22 @@ impl Workspace {
                     pane_id,
                 };
 
-                if let Ok(notification_data_str) = serde_json::to_string(&notification_data) {
+                // Per-pane coalescing identifier: repeated notifications from the
+                // same pane replace each other; distinct panes never clobber one
+                // another (see design R4).
+                let identifier = format!("omw-notif-{window_id:?}-{pane_id:?}");
+                // MS4: rate-limit identical bursts from the same pane.
+                let throttle_window_secs =
+                    SessionSettings::as_ref(ctx).notifications.throttle_window_secs;
+                let throttled = notification_throttled(
+                    &identifier,
+                    &notification.title,
+                    &notification.body,
+                    throttle_window_secs,
+                );
+
+                if !throttled {
+                  if let Ok(notification_data_str) = serde_json::to_string(&notification_data) {
                     // Read the notification sound settings from SessionSettings
                     let play_sound = SessionSettings::as_ref(ctx)
                         .notifications
@@ -13053,10 +13068,7 @@ impl Workspace {
                             Some(notification_data_str),
                             play_sound,
                         )
-                        // Per-pane coalescing identifier: repeated notifications
-                        // from the same pane replace each other; distinct panes
-                        // never clobber one another (see design R4).
-                        .with_identifier(format!("omw-notif-{window_id:?}-{pane_id:?}"))
+                        .with_identifier(identifier.clone())
                         .with_sound_name(Some(sound_name)),
                         move |workspace, notification_error, ctx| {
                             // Log to sentry if unknown error
@@ -13083,6 +13095,7 @@ impl Workspace {
                             );
                         },
                     )
+                  }
                 }
             }
             pane_group::Event::OpenSettings(section) => {
@@ -23301,4 +23314,46 @@ fn set_opencode_warp_plugin(new_entry: &str) -> String {
         },
         Err(e) => format!("Failed to serialize opencode.json: {e}"),
     }
+}
+
+/// MS4 pane-focus notification throttle: returns `true` if an identical
+/// notification (same per-pane identifier + title + body) fired within
+/// `window_secs`, otherwise records the fire time and returns `false`.
+///
+/// Backed by a process-global table. A pane lives in exactly one window, so the
+/// per-pane identifier keys never collide across windows (design R6). MS2's
+/// per-pane OS notification identifier already replaces the banner in place;
+/// this additionally rate-limits bursts of identical notifications.
+pub(crate) fn notification_throttled(
+    identifier: &str,
+    title: &str,
+    body: &str,
+    window_secs: u64,
+) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+
+    if window_secs == 0 {
+        return false;
+    }
+
+    static TABLE: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+    let table = TABLE.get_or_init(|| Mutex::new(HashMap::new()));
+    let Ok(mut map) = table.lock() else {
+        return false;
+    };
+
+    let now = Instant::now();
+    // Bound growth: drop entries older than an hour.
+    map.retain(|_, seen| now.duration_since(*seen) < Duration::from_secs(3600));
+
+    let key = format!("{identifier}|{title}|{body}");
+    if let Some(seen) = map.get(&key) {
+        if now.duration_since(*seen) < Duration::from_secs(window_secs) {
+            return true;
+        }
+    }
+    map.insert(key, now);
+    false
 }

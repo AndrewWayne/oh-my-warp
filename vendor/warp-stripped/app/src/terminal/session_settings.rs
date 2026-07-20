@@ -165,6 +165,19 @@ pub struct NotificationsSettings {
                        Variables: {title}, {body}. Empty = use the program-provided body."
     )]
     pub body_template: String,
+
+    // ── Pane-focus notifications (MS4): dedup / throttle / DND ───────────────
+    #[schemars(
+        description = "Respect the system Do-Not-Disturb / Focus state. On macOS the \
+                       notification center already honours Focus; this additionally \
+                       silences the sound. Default: on."
+    )]
+    pub respect_system_dnd: bool,
+    #[schemars(
+        description = "Coalesce identical notifications from the same pane fired within \
+                       this many seconds (0 = no throttling). Default: 5."
+    )]
+    pub throttle_window_secs: u64,
 }
 
 impl Default for NotificationsSettings {
@@ -188,6 +201,9 @@ impl Default for NotificationsSettings {
             // MS3: no custom text templates by default (use program-provided text).
             title_template: String::new(),
             body_template: String::new(),
+            // MS4: respect DND, coalesce identical same-pane notifications within 5s.
+            respect_system_dnd: true,
+            throttle_window_secs: 5,
         }
     }
 }

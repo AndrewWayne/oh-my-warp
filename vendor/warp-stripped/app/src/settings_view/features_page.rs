@@ -613,6 +613,11 @@ pub enum FeaturesPageAction {
     ToggleAgentTaskCompletedNotifications,
     ToggleNeedsAttentionNotifications,
     ToggleNotificationSound,
+    // Pane-focus notifications (MS5)
+    ToggleEscapeSequenceNotifications,
+    ToggleAlwaysNotify,
+    ToggleSuppressWhenPaneForeground,
+    ToggleFocusOnClick,
     SetNotificationToastDuration,
     ToggleShowWarningBeforeQuitting,
     ToggleLoginItem,
@@ -964,6 +969,30 @@ impl FeaturesPageAction {
                         .play_notification_sound,
                 ),
             },
+            Self::ToggleEscapeSequenceNotifications => TelemetryEvent::FeaturesPageAction {
+                action: "ToggleEscapeSequenceNotifications".to_string(),
+                value: to_string(
+                    SessionSettings::as_ref(ctx)
+                        .notifications
+                        .is_escape_sequence_enabled,
+                ),
+            },
+            Self::ToggleAlwaysNotify => TelemetryEvent::FeaturesPageAction {
+                action: "ToggleAlwaysNotify".to_string(),
+                value: to_string(SessionSettings::as_ref(ctx).notifications.always_notify),
+            },
+            Self::ToggleSuppressWhenPaneForeground => TelemetryEvent::FeaturesPageAction {
+                action: "ToggleSuppressWhenPaneForeground".to_string(),
+                value: to_string(
+                    SessionSettings::as_ref(ctx)
+                        .notifications
+                        .suppress_when_pane_foreground,
+                ),
+            },
+            Self::ToggleFocusOnClick => TelemetryEvent::FeaturesPageAction {
+                action: "ToggleFocusOnClick".to_string(),
+                value: to_string(SessionSettings::as_ref(ctx).notifications.focus_on_click),
+            },
             Self::ToggleShowWarningBeforeQuitting => TelemetryEvent::FeaturesPageAction {
                 action: "ToggleShowWarningBeforeQuitting".to_string(),
                 value: to_string(
@@ -1171,6 +1200,11 @@ struct MouseStateHandles {
     long_running_notifications_checkbox: MouseStateHandle,
     agent_task_completed_notifications_checkbox: MouseStateHandle,
     agent_needs_attention_notifications_checkbox: MouseStateHandle,
+    // Pane-focus notifications (MS5)
+    escape_sequence_notifications_checkbox: MouseStateHandle,
+    always_notify_checkbox: MouseStateHandle,
+    suppress_when_pane_foreground_checkbox: MouseStateHandle,
+    focus_on_click_checkbox: MouseStateHandle,
     agent_in_app_notifications_switch: SwitchStateHandle,
     #[cfg(target_os = "macos")]
     notification_sound_checkbox: MouseStateHandle,
@@ -1606,6 +1640,62 @@ impl TypedActionView for FeaturesPageView {
                     };
                     if let Err(e) = settings.notifications.set_value(new_settings, ctx) {
                         log::error!("Error persisting notification sound setting: {e}");
+                    }
+                });
+                ctx.notify();
+            }
+            ToggleEscapeSequenceNotifications => {
+                let current_settings = SessionSettings::as_ref(ctx).notifications.value().clone();
+                let is_escape_sequence_enabled = !current_settings.is_escape_sequence_enabled;
+                SessionSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    let new_settings = NotificationsSettings {
+                        is_escape_sequence_enabled,
+                        ..current_settings
+                    };
+                    if let Err(e) = settings.notifications.set_value(new_settings, ctx) {
+                        log::error!("Error persisting escape-sequence notification setting: {e}");
+                    }
+                });
+                ctx.notify();
+            }
+            ToggleAlwaysNotify => {
+                let current_settings = SessionSettings::as_ref(ctx).notifications.value().clone();
+                let always_notify = !current_settings.always_notify;
+                SessionSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    let new_settings = NotificationsSettings {
+                        always_notify,
+                        ..current_settings
+                    };
+                    if let Err(e) = settings.notifications.set_value(new_settings, ctx) {
+                        log::error!("Error persisting always_notify setting: {e}");
+                    }
+                });
+                ctx.notify();
+            }
+            ToggleSuppressWhenPaneForeground => {
+                let current_settings = SessionSettings::as_ref(ctx).notifications.value().clone();
+                let suppress_when_pane_foreground = !current_settings.suppress_when_pane_foreground;
+                SessionSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    let new_settings = NotificationsSettings {
+                        suppress_when_pane_foreground,
+                        ..current_settings
+                    };
+                    if let Err(e) = settings.notifications.set_value(new_settings, ctx) {
+                        log::error!("Error persisting suppress_when_pane_foreground setting: {e}");
+                    }
+                });
+                ctx.notify();
+            }
+            ToggleFocusOnClick => {
+                let current_settings = SessionSettings::as_ref(ctx).notifications.value().clone();
+                let focus_on_click = !current_settings.focus_on_click;
+                SessionSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    let new_settings = NotificationsSettings {
+                        focus_on_click,
+                        ..current_settings
+                    };
+                    if let Err(e) = settings.notifications.set_value(new_settings, ctx) {
+                        log::error!("Error persisting focus_on_click setting: {e}");
                     }
                 });
                 ctx.notify();
@@ -5027,6 +5117,39 @@ impl SettingsWidget for DesktopNotificationsWidget {
                         appearance,
                     )
                 },
+                // Pane-focus notifications (MS5)
+                view.render_notification_toggle(
+                    session_settings.notifications.is_escape_sequence_enabled,
+                    "Enable pane-focus notifications (OSC 9/777 escape sequences)",
+                    FeaturesPageAction::ToggleEscapeSequenceNotifications,
+                    view.button_mouse_states
+                        .escape_sequence_notifications_checkbox
+                        .clone(),
+                    appearance,
+                ),
+                view.render_notification_toggle(
+                    session_settings.notifications.always_notify,
+                    "Always notify (even when you are looking at that pane)",
+                    FeaturesPageAction::ToggleAlwaysNotify,
+                    view.button_mouse_states.always_notify_checkbox.clone(),
+                    appearance,
+                ),
+                view.render_notification_toggle(
+                    session_settings.notifications.suppress_when_pane_foreground,
+                    "Suppress when the notifying pane is in the foreground",
+                    FeaturesPageAction::ToggleSuppressWhenPaneForeground,
+                    view.button_mouse_states
+                        .suppress_when_pane_foreground_checkbox
+                        .clone(),
+                    appearance,
+                ),
+                view.render_notification_toggle(
+                    session_settings.notifications.focus_on_click,
+                    "Focus the origin pane when a notification is clicked",
+                    FeaturesPageAction::ToggleFocusOnClick,
+                    view.button_mouse_states.focus_on_click_checkbox.clone(),
+                    appearance,
+                ),
             ];
 
             column.add_child(render_group(toggles, appearance));

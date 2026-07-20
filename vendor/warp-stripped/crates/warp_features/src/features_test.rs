@@ -29,3 +29,22 @@ fn omw_local_flags_enables_autoupdate() {
          ChannelState::additional_features and the poll loop never starts."
     );
 }
+
+/// Pane-focus notifications contract (MS0 ungate).
+///
+/// `OMW_LOCAL_FLAGS` MUST contain `FeatureFlag::PluggableNotifications` so the
+/// omw_local build receives the OSC 9/777 -> desktop notification ->
+/// click-to-focus-origin-pane pipeline (which Warp ships but omw ships gated
+/// off). Adding it here also bypasses the `#[cfg(feature = "pluggable_notifications")]`
+/// cargo gate in `app/src/lib.rs::enabled_features`. Only effective when paired
+/// with removing `PluggableNotifications` from `OMW_LOCAL_DISABLED_FLAGS`
+/// (guarded on the app-crate side).
+#[test]
+fn omw_local_flags_enable_pluggable_notifications() {
+    assert!(
+        OMW_LOCAL_FLAGS.contains(&FeatureFlag::PluggableNotifications),
+        "OMW_LOCAL_FLAGS must enable PluggableNotifications so omw_local builds \
+         receive the pane-focus notification pipeline. If you removed it, the \
+         additional_features path no longer adds the flag and the feature is dead."
+    );
+}

@@ -2484,7 +2484,10 @@ const OMW_LOCAL_DISABLED_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::AmbientAgentsRTC,
     FeatureFlag::AgentViewConversationListView,
     FeatureFlag::SummarizationViaMessageReplacement,
-    FeatureFlag::PluggableNotifications,
+    // PluggableNotifications is intentionally NOT disabled for omw: it powers the
+    // pane-focus notification feature (OSC 9/777 -> desktop notification ->
+    // click-to-focus origin pane). Enabled via `OMW_LOCAL_FLAGS` in
+    // `warp_features`. See features_test.rs regression guards.
     FeatureFlag::SimulateGithubUnauthed,
     FeatureFlag::InlineProfileSelector,
     FeatureFlag::ListSkills,
@@ -2529,6 +2532,27 @@ const OMW_LOCAL_DISABLED_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::CloudModeSetupV2,
     FeatureFlag::CloudModeInputV2,
 ];
+
+#[cfg(all(test, feature = "omw_local"))]
+mod omw_pane_focus_notifications_flag_tests {
+    use super::{FeatureFlag, OMW_LOCAL_DISABLED_FLAGS};
+
+    /// Pane-focus notifications contract (MS0 ungate), app-crate side.
+    ///
+    /// `PluggableNotifications` must NOT appear in `OMW_LOCAL_DISABLED_FLAGS`, or the
+    /// removal pass at the end of `enabled_features()` strips the flag that
+    /// `OMW_LOCAL_FLAGS` adds via `additional_features()` — silently killing the
+    /// pane-focus notification pipeline. Paired guard:
+    /// `warp_features::features_test::omw_local_flags_enable_pluggable_notifications`.
+    #[test]
+    fn pluggable_notifications_not_disabled_for_omw() {
+        assert!(
+            !OMW_LOCAL_DISABLED_FLAGS.contains(&FeatureFlag::PluggableNotifications),
+            "PluggableNotifications must stay OUT of OMW_LOCAL_DISABLED_FLAGS so the \
+             pane-focus notification feature survives the omw_local removal pass."
+        );
+    }
+}
 
 /// Returns all feature flags which should be enabled in the current channel.
 pub fn enabled_features() -> HashSet<FeatureFlag> {

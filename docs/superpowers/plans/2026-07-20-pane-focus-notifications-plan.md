@@ -3,7 +3,16 @@
 - 日期:2026-07-20
 - 关联设计:`docs/superpowers/specs/2026-07-20-pane-focus-notifications-design.md`
 - 代码根:`vendor/warp-stripped`(所有 file:line 相对此根)
-- 分支:`feat/codex-formula-rendering-v1`(建议在其上开 `feat/pane-focus-notifications`)
+- 分支:`feat/pane-focus-notifications`(独立 worktree,基于 main,与公式 WIP 隔离)
+
+## 进度(2026-07-20)
+
+- ✅ **MS0 解门控**(commit `18eb465`):`OMW_LOCAL_FLAGS` 加入 + `OMW_LOCAL_DISABLED_FLAGS` 删除 + 2 条回归测试。`warp_features` 测试通过;app crate `cargo check --lib` 通过。**解门控后 OSC 9 → 通知 → 点击聚焦发起 pane 的链路已可用(限窗口非激活时弹)。**
+- ✅ **MS1 默认始终弹 + 前台抑制**(commit `c259ba0`):`NotificationsSettings` +3 字段;view.rs 处理块改造;`is_pane_in_foreground`(窗口级近似);3 条单测。`cargo check --lib` 通过。⚠️ 单测因本机 crates.io 对 test-target 跨平台依赖(windows/wgpu)下载失败**暂未执行**;GUI smoke 待做。
+- ⏳ **待 smoke**:构建 omw_local .app,发 `printf '\033]9;hi\007'` 验证弹通知 + 切窗口后点击回到发起 pane。**这是第一个可演示里程碑,建议在推进 MS2(FFI/objc,风险高)前先 smoke 验证方向。**
+- ⬜ MS2–MS7 未开始。
+
+**环境备忘**:Metal Toolchain 已装(`xcodebuild -downloadComponent MetalToolchain`);rustc 1.92(pin);热编译约 1–2 分钟增量。`cargo test` 需 crates.io 下 windows/wgpu 等,本机网络不稳,跑测试套件前需先把 crates.io 网络弄通(Clash/代理)。
 
 ## 阅读顺序与总原则
 

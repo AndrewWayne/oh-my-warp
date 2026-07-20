@@ -453,6 +453,25 @@ NSUInteger activeScreenId() {
     }
 }
 
+// Present notifications even while omw is the foreground/active app. Without this
+// delegate, macOS silently suppresses banner AND sound for notifications posted by
+// the frontmost app — which defeats the pane-focus "always notify" behaviour (you
+// would only ever see/hear a notification after switching away). Returning the
+// banner + sound + list options makes it surface (and play its sound) regardless
+// of focus.
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+       willPresentNotification:(UNNotification *)notification
+         withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
+    if (@available(macOS 11.0, *)) {
+        completionHandler(UNNotificationPresentationOptionBanner |
+                          UNNotificationPresentationOptionSound |
+                          UNNotificationPresentationOptionList);
+    } else {
+        completionHandler(UNNotificationPresentationOptionAlert |
+                          UNNotificationPresentationOptionSound);
+    }
+}
+
 @end
 
 @implementation WarpApplication {

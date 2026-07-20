@@ -30,8 +30,12 @@ This PR delivers the **P1 core**: any program that writes an OSC 9/777 notificat
 - `cargo check -p warp --lib` — green after every milestone (includes cc-compiling the objc).
 - `cargo test -p warpui_core pane_focus_notification` — 4/4 (UserNotification builders + template rendering).
 - `cargo test -p warp_features omw_local_flags` — green (flag contracts).
-- ⚠️ **App-crate test suite not executed**: `cargo test -p warp` needs to download cross-platform test-only deps (windows/wgpu) and crates.io is unreliable in this environment. The MS1 settings round-trip tests compile-clean (serde_json is a direct dep) but were not run here.
-- ⚠️ **No GUI smoke yet.** Needs a built omw_local app: `printf '\033]9;hello\007'` → banner; switch window/tab → click → focus origin pane; two panes → each click returns to its own pane; set `[notifications] notification_sound_name`/`title_template`/`throttle_window_secs` and observe.
+- `cargo test -p warp --lib pane_focus_notifications_settings` (default build) — 3/3 (defaults, backward-compat, serde round-trip).
+- ✅ **P1 real-machine smoke PASSED**: built `warp-oss` (omw_local), swapped into a copy of the installed `.app`; `printf '\033]9;…\007'` pops a native notification and clicking it focuses the origin pane. Confirmed on-device.
+- **Auth fix found via smoke**: default `mode=Unset` never requested macOS notification authorization (it was gated on `mode==Enabled`), so default-on escape notifications were emitted but silently dropped. Fixed: `request_notification_permissions_if_needed` also fires for `is_escape_sequence_enabled`, and is invoked before delivery (idempotent).
+- **Sound**: the code sets `UNNotificationSound defaultSound` whenever `play_notification_sound` (default on); if a notification appears silently, it's the per-app "Play sound for notifications" toggle in macOS System Settings (or Focus/DND), not a code path — a custom sound can be set via `[notifications] notification_sound_name`.
+- ⚠️ **Test-target caveat**: `cargo test -p warp` under `--features omw_local` does not compile (157 pre-existing `SettingsSection` stripped-variant errors, unrelated); settings tests were therefore run under the default build.
+- ⏳ **P2 smoke pending**: run codex/claude in the app with notifications enabled (`mode==Enabled`) → observe completed/needs-you notifications. (P2 desktop path reuses P1 delivery; the classification is already live.)
 
 ## Remaining (not in this PR)
 

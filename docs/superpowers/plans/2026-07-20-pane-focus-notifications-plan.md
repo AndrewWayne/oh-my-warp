@@ -9,8 +9,13 @@
 
 - ✅ **MS0 解门控**(commit `18eb465`):`OMW_LOCAL_FLAGS` 加入 + `OMW_LOCAL_DISABLED_FLAGS` 删除 + 2 条回归测试。`warp_features` 测试通过;app crate `cargo check --lib` 通过。**解门控后 OSC 9 → 通知 → 点击聚焦发起 pane 的链路已可用(限窗口非激活时弹)。**
 - ✅ **MS1 默认始终弹 + 前台抑制**(commit `c259ba0`):`NotificationsSettings` +3 字段;view.rs 处理块改造;`is_pane_in_foreground`(窗口级近似);3 条单测。`cargo check --lib` 通过。⚠️ 单测因本机 crates.io 对 test-target 跨平台依赖(windows/wgpu)下载失败**暂未执行**;GUI smoke 待做。
-- ⏳ **待 smoke**:构建 omw_local .app,发 `printf '\033]9;hi\007'` 验证弹通知 + 切窗口后点击回到发起 pane。**这是第一个可演示里程碑,建议在推进 MS2(FFI/objc,风险高)前先 smoke 验证方向。**
-- ⬜ MS2–MS7 未开始。
+- ✅ **MS2 per-pane identifier + 命名声音 + focus 设置**(commit `75b8e17`):UserNotification 加 sound_name/identifier(加字段式,不破坏 6 平台);mac objc/FFI 用 soundNamed: + per-pane identifier;`FocusBehavior`/`focus_on_click`/`notification_sound_name` 设置。`cargo test -p warpui_core` 3/3;`cargo check --lib` 通过。
+- ✅ **MS3 文案模板**(commit `468d47f`):`render_notification_template`(warpui_core,含测试)+ `title_template`/`body_template` + handler 接线。`warpui_core` 测试 4/4。
+- ✅ **MS4 突发节流 + DND/合并设置**(commit `f2ea521`):`respect_system_dnd`/`throttle_window_secs` + 进程级 `notification_throttled()`。`cargo check --lib` 通过。
+- 📝 **PR 草稿**:`docs/superpowers/specs/2026-07-20-pane-focus-notifications-PR.md`(面向维护者)。
+- ⏳ **待 smoke**(第一个可演示里程碑):构建 omw_local .app,发 `printf '\033]9;hi\007'` → 弹通知 → 切窗口/标签后点击回到发起 pane;多 pane 各点各回;设 `[notifications] notification_sound_name/title_template/throttle_window_secs` 观察。
+- ⬜ **MS5 设置 UI**(设置已可经 TOML 用,UI 为可发现性)、**MS6 P2 原生 agent turn 识别**、**MS7 渠道 trait/Linux 留口** 未开始。
+- ⚠️ **测试套件限制**:`cargo test -p warp`(app crate)需下 windows/wgpu 等跨平台 dev 依赖,本机 crates.io 不稳,未跑;纯逻辑测试已放 warpui_core(可跑)。GUI smoke 需真机。
 
 **环境备忘**:Metal Toolchain 已装(`xcodebuild -downloadComponent MetalToolchain`);rustc 1.92(pin);热编译约 1–2 分钟增量。`cargo test` 需 crates.io 下 windows/wgpu 等,本机网络不稳,跑测试套件前需先把 crates.io 网络弄通(Clash/代理)。
 

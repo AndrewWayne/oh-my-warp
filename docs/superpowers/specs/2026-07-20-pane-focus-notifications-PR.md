@@ -16,6 +16,7 @@ This PR delivers the **P1 core**: any program that writes an OSC 9/777 notificat
 - **MS2 identifier + sound** (`75b8e17`): `UserNotification` gains optional `sound_name` + `identifier` (additive; the other 5 platform senders are untouched and keep default behavior). macOS objc/FFI (`notifications.m`/`.h` + `delegate.rs`) use `UNNotificationSound soundNamed:` and a **per-pane request identifier** (fixes cross-pane clobbering, design R4). Settings gain `FocusBehavior`, `focus_on_click`, `notification_sound_name`.
 - **MS3 templates** (`468d47f`): `render_notification_template` (pure, in warpui_core, unit-tested) + `title_template`/`body_template` settings applied in the handler.
 - **MS4 throttle/DND** (`f2ea521`): `respect_system_dnd` + `throttle_window_secs` settings; process-global `notification_throttled()` rate-limits identical same-pane bursts before delivery.
+- **MS6 P2 agent-turn** (`7148f51`): the native agent-turn desktop path already exists and is *live* in omw (the per-view `StatusChanged` handler in `terminal/view.rs`, unlike the `agent_management_model` path which is gated on the omw-disabled `HOANotifications`). It already classifies Success→`AgentTaskCompleted` / Blocked→`NeedsAttention` and reuses the P1 delivery/click-focus. This applies the same MS1 gate treatment (default always-notify + optional foreground suppression), respecting the existing `mode` gate + per-event toggles. **This satisfies acceptance criterion ③ (completed vs needs-you) without ungating HOA.**
 
 ## Design decisions (see design doc for rationale)
 
@@ -34,9 +35,13 @@ This PR delivers the **P1 core**: any program that writes an OSC 9/777 notificat
 
 ## Remaining (not in this PR)
 
-- **MS5 settings UI**: the settings all work via `settings.toml [notifications]` today; a dedicated Notifications settings page (mirroring `omw_agent_page.rs`, `#[cfg(feature="omw_local")]`) is still to do for discoverability.
-- **MS6 P2 native agent-turn detection**: raise "completed / needs-approval" notifications from `cli_agent_sessions` (`agent_management_model.rs`) reusing this P1 delivery/focus/config base, with the `CLIAgentEventType` classification. Cross-check the `terminal_view_id → PaneViewLocator` mapping vs. `FocusTerminalViewInWorkspace` (design §3).
-- **MS7 NotificationChannel trait** + Linux abstraction hook (macOS is full-featured; Linux delivers but click routing is a follow-up).
+- **MS5 settings UI**: every setting works via `settings.toml [notifications]` today (criterion ④ is functionally met); a dedicated Notifications settings *page* (mirroring `omw_agent_page.rs`, `#[cfg(feature="omw_local")]`) is deferred as discoverability polish.
+- **MS7 NotificationChannel trait**: intentionally *not* added this phase — with no consumer it would be dead code, and phone/Tailscale forwarding is explicitly out of scope. The extension points are the additive `UserNotification` (`sound_name`/`identifier` + builders) and the settings enums (`FocusBehavior`, …). The existing winit delivery layer is already the platform abstraction; Linux click-routing is a follow-up.
+- **Per-event custom sounds**: P1 uses a single `notification_sound_name`; a per-event `event_sounds` map lands with richer P2 kinds (deferred to avoid `SettingsValue`-on-nested-enum risk).
+
+## Verification note (test target)
+
+The app crate's **test target does not compile under `--features omw_local`** — 157 pre-existing `no variant … for enum SettingsSection` errors from stripped cloud/HOA sections (BillingAndUsage/Account/WarpAgent/Knowledge/…), unrelated to this PR. So app-crate TDD can't run in the omw_local configuration; pure-logic tests live in `warpui_core` (pass), and `cargo check -p warp --lib` is green throughout. GUI behavior needs real-machine smoke.
 
 ## Open items for maintainers
 

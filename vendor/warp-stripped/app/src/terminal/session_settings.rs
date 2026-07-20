@@ -94,6 +94,24 @@ pub struct NotificationsSettings {
 
     #[schemars(description = "Whether to play a sound with notifications.")]
     pub play_notification_sound: bool,
+
+    // ── Pane-focus notifications (MS1) ──────────────────────────────────────
+    #[schemars(
+        description = "Master switch for OSC 9/777 escape-sequence desktop \
+                       notifications (pane-focus notifications). Default: on."
+    )]
+    pub is_escape_sequence_enabled: bool,
+    #[schemars(
+        description = "Notify whenever the triggering event fires, regardless of \
+                       whether you are looking at that pane. Default: on."
+    )]
+    pub always_notify: bool,
+    #[schemars(
+        description = "When `always_notify` is on, still skip the desktop \
+                       notification if the pane that raised it is in the \
+                       foreground. Default: off."
+    )]
+    pub suppress_when_pane_foreground: bool,
 }
 
 impl Default for NotificationsSettings {
@@ -106,6 +124,10 @@ impl Default for NotificationsSettings {
             is_agent_task_completed_enabled: true,
             is_needs_attention_enabled: true,
             play_notification_sound: true,
+            // Pane-focus notifications default on + always-notify (event-driven).
+            is_escape_sequence_enabled: true,
+            always_notify: true,
+            suppress_when_pane_foreground: false,
         }
     }
 }
@@ -418,3 +440,45 @@ settings::macros::implement_setting_for_enum!(
     max_table_depth: 1,
     description: "Controls the working directory used when opening new sessions.",
 );
+
+#[cfg(test)]
+mod pane_focus_notifications_settings_tests {
+    use super::NotificationsSettings;
+
+    /// MS1: pane-focus notification fields default to on / on / off.
+    #[test]
+    fn defaults_escape_on_always_on_suppress_off() {
+        let d = NotificationsSettings::default();
+        assert!(d.is_escape_sequence_enabled, "escape sequence notifications default on");
+        assert!(d.always_notify, "always_notify defaults on (event-driven)");
+        assert!(
+            !d.suppress_when_pane_foreground,
+            "foreground suppression defaults off"
+        );
+    }
+
+    /// MS1: serde round-trip preserves the new fields (non-default values).
+    #[test]
+    fn serde_round_trip_preserves_new_fields() {
+        let mut s = NotificationsSettings::default();
+        s.is_escape_sequence_enabled = false;
+        s.always_notify = false;
+        s.suppress_when_pane_foreground = true;
+        let json = serde_json::to_string(&s).expect("serialize NotificationsSettings");
+        let back: NotificationsSettings =
+            serde_json::from_str(&json).expect("deserialize NotificationsSettings");
+        assert_eq!(back, s);
+    }
+
+    /// MS1: settings persisted before these fields existed still deserialize
+    /// (backwards compat via `#[serde(default)]`), filling in the new defaults.
+    /// Regression guard for the historical notification-settings deser incident.
+    #[test]
+    fn legacy_settings_without_new_fields_use_defaults() {
+        let parsed: NotificationsSettings =
+            serde_json::from_str("{}").expect("empty object deserializes via serde(default)");
+        assert!(parsed.is_escape_sequence_enabled);
+        assert!(parsed.always_notify);
+        assert!(!parsed.suppress_when_pane_foreground);
+    }
+}

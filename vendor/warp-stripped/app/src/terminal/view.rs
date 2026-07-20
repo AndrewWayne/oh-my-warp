@@ -11312,7 +11312,28 @@ impl TerminalView {
                     }
                 }
 
-                if self.is_navigated_away_from_window(ctx) {
+                // Pane-focus notifications (MS1): default is "always notify"
+                // (event-driven), not the legacy "only when you left the window".
+                let notif_settings = SessionSettings::as_ref(ctx).notifications.value().clone();
+                if !notif_settings.is_escape_sequence_enabled {
+                    // Master switch for OSC 9/777 desktop notifications is off:
+                    // fall back to the in-app toast only.
+                    ctx.emit(Event::PluggableNotification {
+                        title: title.clone(),
+                        body: body.clone(),
+                    });
+                    return;
+                }
+
+                let navigated_away = self.is_navigated_away_from_window(ctx);
+                let suppressed_in_foreground =
+                    notif_settings.suppress_when_pane_foreground && self.is_pane_in_foreground(ctx);
+                // Raise a desktop notification when: not suppressed AND
+                // (always_notify OR we already left the window).
+                let should_send_desktop =
+                    !suppressed_in_foreground && (notif_settings.always_notify || navigated_away);
+
+                if should_send_desktop {
                     let notification_title =
                         title.clone().unwrap_or_else(|| "Notification".to_string());
                     let notification = BlockNotification {
@@ -19632,6 +19653,17 @@ impl TerminalView {
     fn is_navigated_away_from_window(&self, ctx: &mut ViewContext<Self>) -> bool {
         let active_window = ctx.windows().active_window();
         Some(ctx.window_id()) != active_window
+    }
+
+    /// Whether the pane that owns this view is currently in the foreground.
+    ///
+    /// MS1 uses a conservative window-level approximation (the pane is "in the
+    /// foreground" iff its window is active). Precise tab/pane-level foreground
+    /// detection is deferred (see design §2.8); this only gates the opt-in,
+    /// default-off `suppress_when_pane_foreground` setting, so a window-level
+    /// approximation is safe for the default (always-notify) behavior.
+    fn is_pane_in_foreground(&self, ctx: &mut ViewContext<Self>) -> bool {
+        !self.is_navigated_away_from_window(ctx)
     }
 
     fn is_block_active_and_running(&self, model: &TerminalModel, block_index: BlockIndex) -> bool {

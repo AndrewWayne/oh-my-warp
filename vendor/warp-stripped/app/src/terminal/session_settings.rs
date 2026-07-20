@@ -55,6 +55,35 @@ pub enum NotificationsMode {
     Disabled,
 }
 
+/// How clicking a pane-focus notification focuses its origin pane (MS2).
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    schemars::JsonSchema,
+    settings_value::SettingsValue,
+)]
+#[schemars(
+    description = "How clicking a notification focuses the pane that raised it.",
+    rename_all = "snake_case"
+)]
+pub enum FocusBehavior {
+    /// Do not change focus on click.
+    None,
+    /// Only raise the window.
+    RaiseWindowOnly,
+    /// Raise the window and select the origin tab.
+    RaiseAndSelectTab,
+    /// Raise the window, select the tab, and focus the pane (full, default).
+    #[default]
+    RaiseSelectTabAndPane,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, settings_value::SettingsValue)]
 /**
  * Added [serde(default)] to ensure that new notification settings are backwards compatible with old clients.
@@ -112,6 +141,18 @@ pub struct NotificationsSettings {
                        foreground. Default: off."
     )]
     pub suppress_when_pane_foreground: bool,
+
+    // ── Pane-focus notifications (MS2) ──────────────────────────────────────
+    #[schemars(description = "Whether clicking a notification focuses its origin pane. Default: on.")]
+    pub focus_on_click: bool,
+    #[schemars(description = "How clicking a notification focuses its origin pane.")]
+    pub focus_behavior: FocusBehavior,
+    #[schemars(
+        description = "Named sound for escape-sequence notifications: a macOS system \
+                       sound name, or the name of an audio file placed in \
+                       ~/Library/Sounds. Empty = default notification sound."
+    )]
+    pub notification_sound_name: String,
 }
 
 impl Default for NotificationsSettings {
@@ -128,6 +169,10 @@ impl Default for NotificationsSettings {
             is_escape_sequence_enabled: true,
             always_notify: true,
             suppress_when_pane_foreground: false,
+            // MS2: click focuses origin pane (full), no custom sound by default.
+            focus_on_click: true,
+            focus_behavior: FocusBehavior::RaiseSelectTabAndPane,
+            notification_sound_name: String::new(),
         }
     }
 }

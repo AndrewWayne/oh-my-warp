@@ -13036,10 +13036,15 @@ impl Workspace {
                 };
 
                 if let Ok(notification_data_str) = serde_json::to_string(&notification_data) {
-                    // Read the notification sound setting from SessionSettings
+                    // Read the notification sound settings from SessionSettings
                     let play_sound = SessionSettings::as_ref(ctx)
                         .notifications
                         .play_notification_sound;
+                    // Optional named sound (empty = platform default sound).
+                    let sound_name = SessionSettings::as_ref(ctx)
+                        .notifications
+                        .notification_sound_name
+                        .clone();
 
                     ctx.send_desktop_notification(
                         UserNotification::new_with_sound(
@@ -13047,7 +13052,12 @@ impl Workspace {
                             notification.body.to_string(),
                             Some(notification_data_str),
                             play_sound,
-                        ),
+                        )
+                        // Per-pane coalescing identifier: repeated notifications
+                        // from the same pane replace each other; distinct panes
+                        // never clobber one another (see design R4).
+                        .with_identifier(format!("omw-notif-{window_id:?}-{pane_id:?}"))
+                        .with_sound_name(Some(sound_name)),
                         move |workspace, notification_error, ctx| {
                             // Log to sentry if unknown error
                             if let NotificationSendError::Other { error_message } =

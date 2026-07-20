@@ -9,7 +9,8 @@ void warp_on_request_notification_permissions_completed(NSUInteger outcome_type,
                                                         void* callback);
 
 // Sends a desktop notification.
-void sendNotification(id, id, id, void*, BOOL);
+// Params: title, body, data, on_error_callback, playSound, soundName, identifier.
+void sendNotification(id, id, id, void*, BOOL, id, id);
 
 // This method, implemented in Rust, invokes the callback to allow the App to
 // take action when a notification fails to send.

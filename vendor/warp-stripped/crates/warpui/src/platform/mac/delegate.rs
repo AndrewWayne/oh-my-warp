@@ -37,6 +37,8 @@ extern "C" {
         data: id,
         on_error_callback: *const c_void,
         play_sound: BOOL,
+        sound_name: id,
+        identifier: id,
     );
     fn isDarkMode() -> BOOL;
     fn registerGlobalHotkey(key_code: NSUInteger, modifiers_key: NSUInteger);
@@ -348,6 +350,8 @@ impl platform::Delegate for AppDelegate {
                 } else {
                     NO
                 },
+                make_nsstring(notification_content.sound_name().unwrap_or_default()),
+                make_nsstring(notification_content.identifier().unwrap_or_default()),
             );
         };
     }

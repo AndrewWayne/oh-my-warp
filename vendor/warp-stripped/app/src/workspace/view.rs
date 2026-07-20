@@ -12112,9 +12112,15 @@ impl Workspace {
 
     fn request_notification_permissions_if_needed(&mut self, ctx: &mut ViewContext<Self>) {
         // Request permissions any time notifications are currently enabled.
-        let current_mode = SessionSettings::as_ref(ctx).notifications.value().mode;
+        let notif = SessionSettings::as_ref(ctx).notifications.value();
+        let current_mode = notif.mode;
+        // Pane-focus (escape-sequence) notifications are default-on and bypass the
+        // `mode` gate — but macOS still needs authorization, which used to be
+        // requested only when mode==Enabled. Also request it for the default-on
+        // escape path so those notifications actually surface out of the box.
+        let escape_default_on = notif.is_escape_sequence_enabled;
 
-        if current_mode == NotificationsMode::Enabled {
+        if current_mode == NotificationsMode::Enabled || escape_default_on {
             ctx.request_desktop_notification_permissions(move |view, outcome, ctx| {
                 match &outcome {
                     RequestPermissionsOutcome::Accepted => (),
@@ -13029,6 +13035,11 @@ impl Workspace {
                 let window_id = ctx.window_id();
                 let pane_group_id = pane_group.id();
                 let pane_id = *pane_id;
+                // Ensure macOS has been asked for notification authorization before we
+                // try to deliver. Default-on escape-sequence notifications fire even
+                // when `mode == Unset`, but macOS silently drops them until authorized;
+                // this requests authorization once (idempotent) so they surface.
+                self.request_notification_permissions_if_needed(ctx);
                 let notification_data = NotificationContext::BlockOrigin {
                     window_id,
                     pane_group_id,

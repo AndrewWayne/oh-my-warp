@@ -15,7 +15,8 @@
 - 📝 **PR 草稿**:`docs/superpowers/specs/2026-07-20-pane-focus-notifications-PR.md`(面向维护者)。
 - ✅ **MS6 P2 原生 agent-turn 通知默认始终弹**(commit `7148f51`):**重大发现——P2 桌面通知路径本就存在且在 omw 生效**(terminal-view 的 per-view `StatusChanged` 处理块,未被 `HOANotifications` gate;而 `agent_management_model` 那条被 gate、且 `HOANotifications` 在 omw 属 DISABLED)。它已把 Success→`AgentTaskCompleted`/Blocked→`NeedsAttention` 分类(**criterion ③ 现成**),经 `send_agent_desktop_notification_or_show_banner` 走通知(尊重 mode + 逐事件开关)+ 复用 P1 点击聚焦。本步只把门控改成与 MS1 一致的默认始终弹 + 前台抑制。`cargo check --lib` 通过。
 - 🧪 **已打包 smoke app**:`~/Desktop/omw-pane-focus-smoke.app`(独立 bundle id `omw.local.paneFocusSmoke`)。**P1 真机 smoke 进行中**。
-- ⬜ **MS5 设置 UI**:全部设置**已可经 `settings.toml [notifications]` 使用**(criterion ④ 功能满足);独立设置页(镜像 `omw_agent_page.rs`)为可发现性 polish,未做。
+- ✅ **MS5 设置 UI**(commit `MS5`):在 Features 设置页的通知分组加了 4 个核心开关(启用 pane-focus 通知 / 始终弹 / 前台抑制 / 点击聚焦),复用 `render_notification_toggle`。**维护者确认"Features 组内开关"即足够**(不做独立页,避免与现有通知设置重复);细粒度项(声音名/模板/节流秒数)走 `settings.toml [notifications]`。`cargo check --lib` 通过。
+- ✅ **授权修复**(commit `fix: request macOS auth for default-on escape notifications`):**真机 smoke 发现的真 bug**——默认 `mode=Unset` 下 P1 逃逸通知虽发出,但 macOS 从未被申请授权而静默丢弃(原 `request_notification_permissions_if_needed` 只在 `mode==Enabled` 申请)。改为 `is_escape_sequence_enabled` 也触发申请 + 在 SendNotification 送达前调用一次(幂等)。这样"默认开"的通知才真能出现。`cargo check --lib` 通过。
 - ⏸️ **MS7 渠道 trait**:决定**本期不加**正式 `NotificationChannel` trait——无消费者即 dead code,且手机/Tailscale 转发明确 Out。扩展点由加字段式 `UserNotification`(sound_name/identifier + builder)+ 设置枚举(`FocusBehavior` 等)提供;现有 winit 投递层已是平台抽象,Linux 点击回路作后续项。
 - ⚠️ **测试限制**:app crate **测试 target 在 omw_local 下预先就编不过**(157 处引用被 strip 的 `SettingsSection` 变体如 BillingAndUsage/Account/WarpAgent,非本特性引入),故 app 级 TDD 无法在 omw_local 跑;纯逻辑测试放 `warpui_core`(4/4 通过),production `cargo check --lib` 全程绿。GUI 行为需真机 smoke。
 

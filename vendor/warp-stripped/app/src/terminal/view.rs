@@ -11334,11 +11334,29 @@ impl TerminalView {
                     !suppressed_in_foreground && (notif_settings.always_notify || navigated_away);
 
                 if should_send_desktop {
-                    let notification_title =
-                        title.clone().unwrap_or_else(|| "Notification".to_string());
+                    let raw_title = title.clone().unwrap_or_else(|| "Notification".to_string());
+                    let raw_body = body.clone();
+                    // MS3: apply optional title/body templates ({title}/{body}).
+                    let vars = [("title", raw_title.as_str()), ("body", raw_body.as_str())];
+                    let final_title = if notif_settings.title_template.is_empty() {
+                        raw_title.clone()
+                    } else {
+                        warpui::notification::render_notification_template(
+                            &notif_settings.title_template,
+                            &vars,
+                        )
+                    };
+                    let final_body = if notif_settings.body_template.is_empty() {
+                        raw_body.clone()
+                    } else {
+                        warpui::notification::render_notification_template(
+                            &notif_settings.body_template,
+                            &vars,
+                        )
+                    };
                     let notification = BlockNotification {
-                        title: notification_title,
-                        body: body.clone(),
+                        title: final_title,
+                        body: final_body,
                     };
                     ctx.emit(Event::SendNotification(notification));
                 } else {

@@ -153,6 +153,18 @@ pub struct NotificationsSettings {
                        ~/Library/Sounds. Empty = default notification sound."
     )]
     pub notification_sound_name: String,
+
+    // ── Pane-focus notifications (MS3): text templates ──────────────────────
+    #[schemars(
+        description = "Optional title template for escape-sequence notifications. \
+                       Variables: {title}, {body}. Empty = use the program-provided title."
+    )]
+    pub title_template: String,
+    #[schemars(
+        description = "Optional body template for escape-sequence notifications. \
+                       Variables: {title}, {body}. Empty = use the program-provided body."
+    )]
+    pub body_template: String,
 }
 
 impl Default for NotificationsSettings {
@@ -173,6 +185,9 @@ impl Default for NotificationsSettings {
             focus_on_click: true,
             focus_behavior: FocusBehavior::RaiseSelectTabAndPane,
             notification_sound_name: String::new(),
+            // MS3: no custom text templates by default (use program-provided text).
+            title_template: String::new(),
+            body_template: String::new(),
         }
     }
 }

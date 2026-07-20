@@ -11855,11 +11855,25 @@ impl TerminalView {
             }
         }
 
-        // Desktop notifications — only when navigated away and not in-progress.
-        if !self.is_navigated_away_from_window(ctx)
-            || matches!(status, CLIAgentSessionStatus::InProgress)
-        {
+        // Desktop notifications (MS6 P2): default always-notify (event-driven),
+        // mirroring the escape-sequence handler (MS1) — no longer "only when you
+        // left the window". Never notify while the agent is still working. The
+        // per-event toggles and the notifications `mode` gate are still enforced
+        // downstream by `send_agent_desktop_notification_or_show_banner`.
+        if matches!(status, CLIAgentSessionStatus::InProgress) {
             return;
+        }
+        {
+            let notif_settings = SessionSettings::as_ref(ctx).notifications.value().clone();
+            let suppressed_in_foreground =
+                notif_settings.suppress_when_pane_foreground && self.is_pane_in_foreground(ctx);
+            // always_notify (default on) → notify regardless of focus. When it is
+            // off, fall back to the legacy "only when navigated away" behavior.
+            if suppressed_in_foreground
+                || (!notif_settings.always_notify && !self.is_navigated_away_from_window(ctx))
+            {
+                return;
+            }
         }
 
         let title = session_context

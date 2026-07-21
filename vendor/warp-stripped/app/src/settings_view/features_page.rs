@@ -667,6 +667,11 @@ const NOTIFICATION_EDITOR_MARGIN: f32 = 5.;
 
 const NOTIFICATIONS_DOCS_URL: &str = "";
 
+// Setup docs for wiring interactive agents (Claude Code / Codex) into pane-focus
+// notifications via the optional bridge scripts shipped under contrib/.
+const AGENT_NOTIFICATIONS_DOCS_URL: &str =
+    "https://github.com/AndrewWayne/oh-my-warp/tree/main/contrib/agent-notifications";
+
 /// WARNING: this constant was computed manually by determining the pixel width
 /// of the quake mode dropdowns based on the number of expanded items in the flex row.
 /// This should be adjusted if the flex row is changed in any way!
@@ -1200,11 +1205,9 @@ struct MouseStateHandles {
     long_running_notifications_checkbox: MouseStateHandle,
     agent_task_completed_notifications_checkbox: MouseStateHandle,
     agent_needs_attention_notifications_checkbox: MouseStateHandle,
-    // Pane-focus notifications (MS5)
-    escape_sequence_notifications_checkbox: MouseStateHandle,
-    always_notify_checkbox: MouseStateHandle,
+    // Pane-focus notifications: the master on/off lives on DesktopNotificationsWidget
+    // (a switch, not a checkbox); this is the one remaining checkbox toggle.
     suppress_when_pane_foreground_checkbox: MouseStateHandle,
-    focus_on_click_checkbox: MouseStateHandle,
     agent_in_app_notifications_switch: SwitchStateHandle,
     #[cfg(target_os = "macos")]
     notification_sound_checkbox: MouseStateHandle,
@@ -5026,6 +5029,10 @@ impl SettingsWidget for SSHWrapperWidget {
 struct DesktopNotificationsWidget {
     additional_info_link: MouseStateHandle,
     switch_state: SwitchStateHandle,
+    // Pane-focus (OSC 9/777) notifications header: its own switch + a link that
+    // opens the agent-bridge setup docs (Claude Code / Codex completion).
+    pane_focus_switch: SwitchStateHandle,
+    agent_setup_link: MouseStateHandle,
 }
 
 impl SettingsWidget for DesktopNotificationsWidget {
@@ -5126,41 +5133,58 @@ impl SettingsWidget for DesktopNotificationsWidget {
         // gate so it is always visible: these fire independent of the desktop
         // notifications master switch (gated on `is_escape_sequence_enabled`,
         // default on), so users must always be able to see and turn them off.
+        //
+        // Only the two settings with a real trade-off are exposed: the master
+        // on/off, and whether to suppress notifications for the pane you're
+        // already looking at. Clicking a notification always focuses its origin
+        // pane (no downside, so not a toggle). The header links to the optional
+        // agent-bridge setup that wires Claude Code / Codex completion in.
+        column.add_child(render_body_item::<FeaturesPageAction>(
+            "Pane-focus notifications (OSC 9/777)".into(),
+            Some(AdditionalInfo {
+                mouse_state: self.agent_setup_link.clone(),
+                on_click_action: Some(FeaturesPageAction::OpenUrl(
+                    AGENT_NOTIFICATIONS_DOCS_URL.into(),
+                )),
+                secondary_text: Some("Set up Claude Code / Codex".to_string()),
+                tooltip_override_text: Some(
+                    "Interactive agents (Claude Code, Codex) need the optional \
+                     bridge scripts under contrib/agent-notifications to notify \
+                     on completion. Click to open setup."
+                        .to_string(),
+                ),
+            }),
+            LocalOnlyIconState::Hidden,
+            ToggleState::Enabled,
+            appearance,
+            ui_builder
+                .switch(self.pane_focus_switch.clone())
+                .check(session_settings.notifications.is_escape_sequence_enabled)
+                .build()
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(
+                        FeaturesPageAction::ToggleEscapeSequenceNotifications,
+                    );
+                })
+                .finish(),
+            Some(
+                "Programs and agents can pop a native notification that focuses \
+                 its origin pane when clicked. Works out of the box for programs \
+                 that emit OSC 9 / OSC 777; interactive agents need the setup above."
+                    .to_string(),
+            ),
+        ));
+
         column.add_child(render_group(
-            vec![
-                view.render_notification_toggle(
-                    session_settings.notifications.is_escape_sequence_enabled,
-                    "Enable pane-focus notifications (OSC 9/777 escape sequences)",
-                    FeaturesPageAction::ToggleEscapeSequenceNotifications,
-                    view.button_mouse_states
-                        .escape_sequence_notifications_checkbox
-                        .clone(),
-                    appearance,
-                ),
-                view.render_notification_toggle(
-                    session_settings.notifications.always_notify,
-                    "Always notify (even when you are looking at that pane)",
-                    FeaturesPageAction::ToggleAlwaysNotify,
-                    view.button_mouse_states.always_notify_checkbox.clone(),
-                    appearance,
-                ),
-                view.render_notification_toggle(
-                    session_settings.notifications.suppress_when_pane_foreground,
-                    "Suppress when the notifying pane is in the foreground",
-                    FeaturesPageAction::ToggleSuppressWhenPaneForeground,
-                    view.button_mouse_states
-                        .suppress_when_pane_foreground_checkbox
-                        .clone(),
-                    appearance,
-                ),
-                view.render_notification_toggle(
-                    session_settings.notifications.focus_on_click,
-                    "Focus the origin pane when a notification is clicked",
-                    FeaturesPageAction::ToggleFocusOnClick,
-                    view.button_mouse_states.focus_on_click_checkbox.clone(),
-                    appearance,
-                ),
-            ],
+            vec![view.render_notification_toggle(
+                session_settings.notifications.suppress_when_pane_foreground,
+                "Don't notify for the pane you're currently viewing",
+                FeaturesPageAction::ToggleSuppressWhenPaneForeground,
+                view.button_mouse_states
+                    .suppress_when_pane_foreground_checkbox
+                    .clone(),
+                appearance,
+            )],
             appearance,
         ));
 

@@ -14,7 +14,14 @@
 - ✅ **MS4 突发节流 + DND/合并设置**(commit `f2ea521`):`respect_system_dnd`/`throttle_window_secs` + 进程级 `notification_throttled()`。`cargo check --lib` 通过。
 - 📝 **PR 草稿**:`docs/superpowers/specs/2026-07-20-pane-focus-notifications-PR.md`(面向维护者)。
 - ✅ **MS6 P2 原生 agent-turn 通知默认始终弹**(commit `7148f51`):**重大发现——P2 桌面通知路径本就存在且在 omw 生效**(terminal-view 的 per-view `StatusChanged` 处理块,未被 `HOANotifications` gate;而 `agent_management_model` 那条被 gate、且 `HOANotifications` 在 omw 属 DISABLED)。它已把 Success→`AgentTaskCompleted`/Blocked→`NeedsAttention` 分类(**criterion ③ 现成**),经 `send_agent_desktop_notification_or_show_banner` 走通知(尊重 mode + 逐事件开关)+ 复用 P1 点击聚焦。本步只把门控改成与 MS1 一致的默认始终弹 + 前台抑制。`cargo check --lib` 通过。
-- 🧪 **已打包 smoke app**:`~/Desktop/omw-pane-focus-smoke.app`(独立 bundle id `omw.local.paneFocusSmoke`)。**P1 真机 smoke 进行中**。
+- 🧪 **真机 smoke 通过**(`~/Desktop/omw-pane-focus-smoke.app`,独立 bundle id `omw.local.paneFocusSmoke`):
+  - **P1** ✅:任一 pane `printf '\033]9;…\007'` → 弹原生通知(前台也弹、有声音)→ 切走后点击 → 聚焦回发起 pane。
+  - **P2** ✅:`codex exec` 跑完 → 弹"完成"通知(复用 P1 投递)→ 点击 → 聚焦回 codex 的 pane。("等你/Blocked" 仅 Claude+Warp CLI 插件有,Codex 无此信号,故 P2 smoke 覆盖"完成"粒度。)
+  - **默认始终弹**:用户确认保留(即使正看着该 pane 也弹);`suppress_when_pane_foreground` 仍为可选默认关。
+  - smoke 中发现并修复两个真机 bug(见下)。
+- 🐞 **smoke 发现并修复的两个真机 bug**:
+  1. **授权**(commit `fix: request macOS auth…`):默认 `mode=Unset` 从不申请通知授权,P1 默认开的通知被 macOS 静默丢弃。改为 `is_escape_sequence_enabled` 也触发申请 + 送达前调用(幂等)。
+  2. **前台呈现**(commit `fix: present notifications when omw is foreground`):omw 未实现 `willPresentNotification`,前台时系统抑制横幅+声音。补该委托返回 banner+sound+list,使"默认始终弹(即使你在看该 pane)"真正兑现。
 - ✅ **MS5 设置 UI**(commit `MS5`):在 Features 设置页的通知分组加了 4 个核心开关(启用 pane-focus 通知 / 始终弹 / 前台抑制 / 点击聚焦),复用 `render_notification_toggle`。**维护者确认"Features 组内开关"即足够**(不做独立页,避免与现有通知设置重复);细粒度项(声音名/模板/节流秒数)走 `settings.toml [notifications]`。`cargo check --lib` 通过。
 - ✅ **授权修复**(commit `fix: request macOS auth for default-on escape notifications`):**真机 smoke 发现的真 bug**——默认 `mode=Unset` 下 P1 逃逸通知虽发出,但 macOS 从未被申请授权而静默丢弃(原 `request_notification_permissions_if_needed` 只在 `mode==Enabled` 申请)。改为 `is_escape_sequence_enabled` 也触发申请 + 在 SendNotification 送达前调用一次(幂等)。这样"默认开"的通知才真能出现。`cargo check --lib` 通过。
 - ⏸️ **MS7 渠道 trait**:决定**本期不加**正式 `NotificationChannel` trait——无消费者即 dead code,且手机/Tailscale 转发明确 Out。扩展点由加字段式 `UserNotification`(sound_name/identifier + builder)+ 设置枚举(`FocusBehavior` 等)提供;现有 winit 投递层已是平台抽象,Linux 点击回路作后续项。

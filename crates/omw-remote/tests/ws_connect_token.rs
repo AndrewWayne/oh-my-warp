@@ -129,8 +129,10 @@ async fn expired_ts_in_ct_rejects_401() {
     let f = spawn_server().await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // ts is 60 s in the past (skew window is 30 s) -> ts_skew failure.
-    let stale_ts = Utc::now() - chrono::Duration::seconds(60);
+    // ts is 10 min in the past — beyond the WS-handshake skew window
+    // (currently 300 s in code; the spec default is 30 s, see issue #90)
+    // -> ts_skew failure regardless of how #90 resolves.
+    let stale_ts = Utc::now() - chrono::Duration::seconds(600);
     let ct = make_connect_token(
         &f.device,
         &f.cap_token_b64,

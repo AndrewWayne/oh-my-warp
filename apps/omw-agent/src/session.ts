@@ -33,9 +33,10 @@ import {
 	type ApprovalRequestNotification,
 	type PendingApprovalMap,
 } from "./policy-hook.js";
+import { type ProviderKind } from "./provider-kinds.js";
 import { createBashTool, type RpcBridge } from "./warp-session-bash.js";
 
-export type ProviderKind = "openai" | "anthropic" | "openai-compatible" | "ollama";
+export type { ProviderKind };
 
 export interface ProviderConfig {
 	kind: ProviderKind;

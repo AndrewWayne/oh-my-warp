@@ -10,7 +10,7 @@
 
 import { ApiClient } from "./api/client";
 import { importPrivateKeyJwk } from "./crypto/ed25519";
-import type { PairingRecord } from "./storage/idb";
+import type { PairingRecord } from "./pairing";
 
 export interface SessionMeta {
   id: string;

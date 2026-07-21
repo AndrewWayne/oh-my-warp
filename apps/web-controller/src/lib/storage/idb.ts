@@ -1,19 +1,12 @@
 import { openDB, type IDBPDatabase } from "idb";
 
+import type { PairingRecord } from "@oh-my-warp/byorc-client/pairing";
+
+export type { PairingRecord };
+
 const DB_NAME = "omw-web-controller";
 const DB_VERSION = 1;
 const STORE_PAIRINGS = "pairings";
-
-export interface PairingRecord {
-  hostId: string;
-  hostUrl: string;
-  hostPubkey: Uint8Array;
-  deviceId: string;
-  privateKeyJwk: JsonWebKey;
-  capabilityTokenB64: string;
-  pairedAt: string;
-  capabilities: string[];
-}
 
 let dbPromise: Promise<IDBPDatabase> | undefined;
 

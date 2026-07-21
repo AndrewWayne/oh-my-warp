@@ -52,7 +52,16 @@ fn real_kernel_path() -> Option<PathBuf> {
             .join("omw-agent")
             .join("bin")
             .join("omw-agent.mjs");
-        if candidate.exists() {
+        // The .mjs launcher imports the compiled TS at dist/src/cli.js;
+        // without the npm build the kernel exits immediately. Treat an
+        // unbuilt agent as "kernel missing", same as missing node.
+        let dist_entry = current
+            .join("apps")
+            .join("omw-agent")
+            .join("dist")
+            .join("src")
+            .join("cli.js");
+        if candidate.exists() && dist_entry.exists() {
             return Some(candidate);
         }
         if !current.pop() {
@@ -171,8 +180,7 @@ async fn inline_prompt_round_trip_real_kernel() {
     println!("[reducer-test] status={status}");
     println!("[reducer-test] body  ={body_text}");
     if status == 201 {
-        let parsed: Value =
-            serde_json::from_str(&body_text).expect("201 response should be JSON");
+        let parsed: Value = serde_json::from_str(&body_text).expect("201 response should be JSON");
         println!(
             "[reducer-test] sessionId = {:?}",
             parsed.get("sessionId").and_then(|v| v.as_str())

@@ -19,8 +19,8 @@ use base64::Engine as _;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::SigningKey;
 use omw_remote::{
-    make_router, CanonicalRequest, Capability, CapabilityToken, HostKey, NonceStore,
-    RevocationList, ServerConfig, ShellSpec, Signer,
+    make_router, open_db, CanonicalRequest, Capability, CapabilityToken, HostKey, NonceStore,
+    RequestLog, RevocationList, ServerConfig, ShellSpec, Signer,
 };
 use omw_server::{SessionRegistry, SessionSpec};
 use sha2::{Digest, Sha256};
@@ -41,6 +41,8 @@ pub struct WsFixture {
     /// Registered session id (UUID string) — pre-spawned by `spawn_server`.
     pub session_id: String,
     pub registry: Arc<SessionRegistry>,
+    /// Auth audit trail wired into the server; tests assert rows via `.tail()`.
+    pub request_log: Arc<RequestLog>,
 }
 
 pub fn hex_lower(bytes: &[u8]) -> String {
@@ -145,6 +147,13 @@ pub async fn spawn_server_with_inactivity(inactivity_timeout: Duration) -> WsFix
         .expect("register echo session");
     let session_id = session_uuid.to_string();
 
+    // Request log backed by a temp file; leak the dir so it outlives the test
+    // (same pattern as the request_log unit test).
+    let log_dir = tempfile::tempdir().expect("tempdir");
+    let log_conn = open_db(&log_dir.path().join("rl.sqlite")).expect("open request-log db");
+    Box::leak(Box::new(log_dir));
+    let request_log = Arc::new(RequestLog::new(log_conn));
+
     let cfg = ServerConfig {
         bind: "127.0.0.1:0".parse().unwrap(),
         host_key: host.clone(),
@@ -153,6 +162,8 @@ pub async fn spawn_server_with_inactivity(inactivity_timeout: Duration) -> WsFix
         revocations: revocations.clone(),
         nonce_store: nonce_store.clone(),
         pairings: None,
+        request_log: Some(request_log.clone()),
+        default_pair_write: false,
         shell,
         pty_registry: registry.clone(),
         host_id: "omw-host".to_string(),
@@ -181,6 +192,7 @@ pub async fn spawn_server_with_inactivity(inactivity_timeout: Duration) -> WsFix
         pinned_origin,
         session_id,
         registry,
+        request_log,
     }
 }
 

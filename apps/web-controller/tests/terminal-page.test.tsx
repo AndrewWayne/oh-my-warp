@@ -13,7 +13,7 @@ import {
   generateKeypair,
   exportPrivateKeyJwk,
   exportPublicKeyRaw,
-} from "../src/lib/crypto/ed25519";
+} from "@oh-my-warp/byorc-client/crypto/ed25519";
 
 const navigateMock = vi.fn();
 vi.mock("react-router-dom", async () => {
@@ -33,7 +33,7 @@ const stubConnection = {
   close: vi.fn(),
 };
 
-vi.mock("../src/lib/pty-ws", () => {
+vi.mock("@oh-my-warp/byorc-client/pty-ws", () => {
   return {
     connectPty: vi.fn(async () => stubConnection),
   };
@@ -342,7 +342,7 @@ describe("Terminal page", () => {
 
   it("connects via connectPty and registers an onOutput handler", async () => {
     await seedPairing("h1");
-    const { connectPty } = await import("../src/lib/pty-ws");
+    const { connectPty } = await import("@oh-my-warp/byorc-client/pty-ws");
     renderAt("/terminal/h1/sess-7");
 
     await waitFor(() => {

@@ -154,10 +154,22 @@ async fn ws_attach_ships_serialized_screen_state_as_first_frame() {
     let screen = replay.screen();
 
     let row0: String = (0..3)
-        .map(|c| screen.cell(0, c).map(|cell| cell.contents()).unwrap_or_default().to_string())
+        .map(|c| {
+            screen
+                .cell(0, c)
+                .map(|cell| cell.contents())
+                .unwrap_or_default()
+                .to_string()
+        })
         .collect();
     let row1: String = (0..3)
-        .map(|c| screen.cell(1, c).map(|cell| cell.contents()).unwrap_or_default().to_string())
+        .map(|c| {
+            screen
+                .cell(1, c)
+                .map(|cell| cell.contents())
+                .unwrap_or_default()
+                .to_string()
+        })
         .collect();
     assert_eq!(row0, "abc", "row 0 of replayed snapshot should be 'abc'");
     assert_eq!(row1, "xyz", "row 1 of replayed snapshot should be 'xyz'");
@@ -188,7 +200,10 @@ async fn ws_attach_ships_serialized_screen_state_as_first_frame() {
     })
     .await
     .expect("live frame timeout");
-    assert!(saw_live, "expected post-attach record_output to surface as a live Output frame");
+    assert!(
+        saw_live,
+        "expected post-attach record_output to surface as a live Output frame"
+    );
 
     let _ = ws.close(None).await;
     f.registry.kill(session_id).await.expect("kill ok");

@@ -17,6 +17,7 @@
 import { Type, type Static } from "typebox";
 
 import type { AgentTool } from "../vendor/pi-agent-core/index.js";
+import { AgentRpcMethod } from "./rpc-methods.js";
 
 /** Result returned by exec(). */
 export interface ExecResult {
@@ -49,11 +50,61 @@ export interface BashOperations {
  * the serve.ts dispatcher invokes whenever a matching `bash/data`,
  * `bash/finished`, or `bash/cancel` notification arrives from the broker.
  */
+/**
+ * Validated params of a broker->agent bash notification. Concrete typed
+ * fields replace the former `params: any`; per-method fields are optional
+ * because a single frame only carries the ones its method uses.
+ */
+export interface BashFrameParams {
+    commandId: string;
+    /** `bash/data` payload. */
+    bytes?: string;
+    /** `bash/finished` exit code (null for snapshot/cancel results). */
+    exitCode?: number | null;
+    /** `bash/finished` snapshot flag (timeout / cancel). */
+    snapshot?: boolean;
+}
+
+/** A validated bash notification: one of `bash/{data,finished,cancel}`. */
+export interface BashFrame {
+    method: string;
+    params: BashFrameParams;
+}
+
+/**
+ * Validate a raw broker notification into a typed `BashFrame`, or `null` if
+ * it isn't a well-formed bash frame. This is the single validation point
+ * (called once in serve.ts) so subscribers get typed params, not `any`.
+ * Preserves the prior lenient reads (non-string `bytes` -> absent, non-numeric
+ * `exitCode` -> null, `snapshot` truthy only when strictly `true`).
+ */
+export function parseBashFrame(method: string, params: unknown): BashFrame | null {
+    if (
+        method !== AgentRpcMethod.BASH_DATA &&
+        method !== AgentRpcMethod.BASH_FINISHED &&
+        method !== AgentRpcMethod.BASH_CANCEL
+    ) {
+        return null;
+    }
+    if (!params || typeof params !== "object") return null;
+    const p = params as Record<string, unknown>;
+    if (typeof p.commandId !== "string") return null;
+    return {
+        method,
+        params: {
+            commandId: p.commandId,
+            bytes: typeof p.bytes === "string" ? p.bytes : undefined,
+            exitCode: typeof p.exitCode === "number" ? p.exitCode : null,
+            snapshot: p.snapshot === true,
+        },
+    };
+}
+
 export interface RpcBridge {
     notify(method: string, params: Record<string, unknown>): void;
     registerCommandSubscriber(
         commandId: string,
-        subscriber: (frame: { method: string; params: any }) => void,
+        subscriber: (frame: BashFrame) => void,
     ): void;
     unregisterCommandSubscriber(commandId: string): void;
 }
@@ -102,20 +153,17 @@ export function createWarpSessionBashOperations(
                 };
 
                 deps.rpc.registerCommandSubscriber(commandId, (frame) => {
-                    if (frame.method === "bash/data") {
-                        const bytes = (frame.params?.bytes as string) ?? "";
-                        opts.onData?.(bytes);
-                    } else if (frame.method === "bash/finished") {
-                        const exitCode =
-                            typeof frame.params?.exitCode === "number"
-                                ? (frame.params.exitCode as number)
-                                : null;
-                        const snapshot = frame.params?.snapshot === true;
-                        finish({ exitCode, snapshot });
+                    if (frame.method === AgentRpcMethod.BASH_DATA) {
+                        opts.onData?.(frame.params.bytes ?? "");
+                    } else if (frame.method === AgentRpcMethod.BASH_FINISHED) {
+                        finish({
+                            exitCode: frame.params.exitCode ?? null,
+                            snapshot: frame.params.snapshot === true,
+                        });
                     }
                 });
 
-                deps.rpc.notify("bash/exec", {
+                deps.rpc.notify(AgentRpcMethod.BASH_EXEC, {
                     commandId,
                     command,
                     cwd,
@@ -126,7 +174,7 @@ export function createWarpSessionBashOperations(
 
                 if (opts.signal) {
                     abortHandler = (): void => {
-                        deps.rpc.notify("bash/cancel", { commandId });
+                        deps.rpc.notify(AgentRpcMethod.BASH_CANCEL, { commandId });
                         finish({ exitCode: null, snapshot: true });
                     };
                     if (opts.signal.aborted) {
@@ -138,7 +186,7 @@ export function createWarpSessionBashOperations(
 
                 if (opts.timeout !== undefined && opts.timeout > 0) {
                     timer = setTimeout(() => {
-                        deps.rpc.notify("bash/cancel", { commandId });
+                        deps.rpc.notify(AgentRpcMethod.BASH_CANCEL, { commandId });
                         finish({ exitCode: null, snapshot: true });
                     }, opts.timeout);
                 }

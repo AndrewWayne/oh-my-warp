@@ -190,6 +190,12 @@ impl<'de> serde::Deserialize<'de> for BaseUrl {
 
 // ---------------- ProviderConfig ----------------
 
+/// The closed provider-kind vocabulary (the `kind = ...` discriminator),
+/// sorted. Single source of truth: `specs/provider-kinds.txt`, which a golden
+/// test asserts this matches. Every [`ProviderConfig`] variant's
+/// [`ProviderConfig::kind_str`] is one of these.
+pub const PROVIDER_KINDS: &[&str] = &["anthropic", "ollama", "openai", "openai-compatible"];
+
 /// One configured provider. Internally tagged on `kind` — required fields per
 /// variant are enforced by the type system, not a runtime validator.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -274,18 +280,13 @@ impl ProviderConfig {
 
 /// Mirrors `omw_policy::ApprovalMode` and `apps/omw-agent/src/policy.ts:11`.
 /// The snake_case wire form is what the kernel sees in `session/create.policy.mode`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalMode {
     ReadOnly,
+    #[default]
     AskBeforeWrite,
     Trusted,
-}
-
-impl Default for ApprovalMode {
-    fn default() -> Self {
-        Self::AskBeforeWrite
-    }
 }
 
 /// `[approval]` block. Reserved as a forward-compat block in v0.1; first-class in v0.2.
@@ -358,6 +359,68 @@ mod tests {
             "foo/bar".parse::<ProviderId>().unwrap_err(),
             ProviderIdParseError::InvalidChars(_)
         ));
+    }
+
+    // -------- Provider-kind vocabulary --------
+
+    #[test]
+    fn provider_kinds_match_source_of_truth_and_cover_every_variant() {
+        // 1. PROVIDER_KINDS matches the cross-language source-of-truth list.
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../specs/provider-kinds.txt"
+        );
+        let file: Vec<String> = std::fs::read_to_string(path)
+            .expect("read specs/provider-kinds.txt")
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(str::to_string)
+            .collect();
+        let mut sorted = file.clone();
+        sorted.sort();
+        assert_eq!(file, sorted, "specs/provider-kinds.txt must be sorted");
+        assert_eq!(
+            file,
+            PROVIDER_KINDS
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>(),
+            "PROVIDER_KINDS must match specs/provider-kinds.txt",
+        );
+
+        // 2. Every ProviderConfig variant's kind_str() is in the vocabulary,
+        //    so a new variant can't ship a kind that isn't listed.
+        let key: KeyRef = "keychain:omw/x".parse().unwrap();
+        let base: BaseUrl = "https://x.test".parse().unwrap();
+        let variants = [
+            ProviderConfig::OpenAi {
+                key_ref: key.clone(),
+                default_model: None,
+                base_url: None,
+            },
+            ProviderConfig::Anthropic {
+                key_ref: key.clone(),
+                default_model: None,
+            },
+            ProviderConfig::OpenAiCompatible {
+                key_ref: key.clone(),
+                base_url: base,
+                default_model: None,
+            },
+            ProviderConfig::Ollama {
+                base_url: None,
+                key_ref: None,
+                default_model: None,
+            },
+        ];
+        for v in &variants {
+            assert!(
+                PROVIDER_KINDS.contains(&v.kind_str()),
+                "kind_str {:?} not in PROVIDER_KINDS",
+                v.kind_str(),
+            );
+        }
     }
 
     // -------- BaseUrl --------

@@ -4,7 +4,7 @@
 >
 > You want **WezTerm**. Open-source, configurable, scriptable. Ugly and tedious.
 >
-> You want **Warp**. Half-open-source, block-based, modern, beautiful, intelligent. They want to charge you for their best AI integration.
+> You want **[warp](https://github.com/warpdotdev/warp)**. Half-open-source, block-based, modern, beautiful, intelligent. They want to charge you for their best AI integration.
 >
 > We want to hybridize the two. We will have **warp-oss + Tailscale + pi-agent wrapper**. Configurable, all open-source, run by the community.
 
@@ -12,9 +12,9 @@
 
 ## What this is
 
-`omw` is a local-first fork of the open-source Warp terminal with a thin wrapper of pi-mono. It replaces Warp's cloud half with components you control:
+`omw` is a local-first fork of the open-source upstream terminal ([warpdotdev/warp](https://github.com/warpdotdev/warp)) with a thin wrapper of pi-mono. It replaces the upstream cloud half with components you control:
 
-- **BYOK** — bring your own LLM keys (OpenAI, Anthropic, OpenAI-compatible, Ollama). No omw cloud. No Warp cloud.
+- **BYOK** — bring your own LLM keys (OpenAI, Anthropic, OpenAI-compatible, Ollama). No omw cloud. No upstream cloud.
 - **BYORC** — bring your own remote controller. Pair sessions over your Tailscale tailnet, never the public internet.
 - **Local agent** — orchestrates LLMs, shell, and file edits with explicit approvals.
 
@@ -34,7 +34,7 @@ The `xattr` step is required because preview builds are unsigned.
 
 ## What works today
 
-- **Audit-clean stripped client.** All Warp cloud / sign-in / Drive / hosted-agent surfaces removed at compile time.
+- **Audit-clean stripped client.** All upstream cloud / sign-in / Drive / hosted-agent surfaces removed at compile time.
 - **BYORC over Tailscale.** Click the Phone button on any pane → the pair URL is auto-copied to your clipboard → open it on your phone (or paste into another laptop's browser) → attach to the live pane. Phone keystrokes echo on the laptop in real time.
 - **Inline agent.** Type `# <prompt>` at the start of any pane to run your prompt through `omw-agent` against your configured provider. Shell commands and file edits prompt for approval before running.
 - **Settings → Agent.** Configure providers, default model, and API keys (stored in the macOS Keychain) from inside the app.

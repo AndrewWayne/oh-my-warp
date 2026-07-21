@@ -111,6 +111,10 @@ async fn spawn_e2e_server() -> E2eFixture {
         revocations,
         nonce_store,
         pairings: Some(pairings.clone()),
+        request_log: None,
+        // This journey pairs then drives write ops (session create, PTY input),
+        // so it opts into pty:write at pair time.
+        default_pair_write: true,
         shell: real_shell(),
         pty_registry: registry,
         host_id: "omw-host".to_string(),

@@ -13,7 +13,7 @@ use std::time::Duration;
 use chrono::{Duration as ChronoDuration, Utc};
 use ed25519_dalek::SigningKey;
 use omw_remote::{
-    AuthError, Capability, CanonicalRequest, CapabilityToken, HostKey, NonceStore, Signer, Verifier,
+    AuthError, CanonicalRequest, Capability, CapabilityToken, HostKey, NonceStore, Signer, Verifier,
 };
 use sha2::{Digest, Sha256};
 
@@ -82,7 +82,12 @@ fn fixture_with_caps(caps: Vec<Capability>) -> Fixture {
     }
 }
 
-fn build_canonical(body: &[u8], device_id: &str, ts: chrono::DateTime<Utc>, nonce: &str) -> CanonicalRequest {
+fn build_canonical(
+    body: &[u8],
+    device_id: &str,
+    ts: chrono::DateTime<Utc>,
+    nonce: &str,
+) -> CanonicalRequest {
     CanonicalRequest {
         method: "POST".into(),
         path: "/api/v1/sessions/abc/input".into(),
@@ -97,7 +102,9 @@ fn build_canonical(body: &[u8], device_id: &str, ts: chrono::DateTime<Utc>, nonc
 
 fn sign_canonical(device: &SigningKey, req: &CanonicalRequest) -> [u8; 64] {
     let priv_seed = device.to_bytes();
-    let signer = Signer { device_priv: &priv_seed };
+    let signer = Signer {
+        device_priv: &priv_seed,
+    };
     signer.sign(req)
 }
 
@@ -110,7 +117,11 @@ fn canonical_request_bytes_match_spec_layout() {
     let s = std::str::from_utf8(&bytes).expect("canonical request must be utf8");
 
     // Eight lines, each terminated by '\n'.
-    assert_eq!(s.matches('\n').count(), 8, "must be 8 newline-terminated lines");
+    assert_eq!(
+        s.matches('\n').count(),
+        8,
+        "must be 8 newline-terminated lines"
+    );
 
     let lines: Vec<&str> = s.split('\n').collect();
     // After 8 trailing newlines, split yields 9 segments with the last empty.
@@ -118,7 +129,7 @@ fn canonical_request_bytes_match_spec_layout() {
     assert_eq!(lines[0], "POST");
     assert_eq!(lines[1], "/api/v1/sessions/abc/input");
     assert_eq!(lines[2], ""); // empty query
-    // lines[3] is RFC3339 ts, lines[4] is nonce
+                              // lines[3] is RFC3339 ts, lines[4] is nonce
     assert_eq!(lines[4], "nonce-abc");
     // body hash is hex-lower of SHA-256("hello")
     let expected_hash = hex_lower(&Sha256::digest(body));
@@ -233,7 +244,13 @@ fn ts_outside_skew_window_rejects_with_ts_skew() {
 
     let err = f
         .verifier
-        .verify(&req, &sig, &f.cap_token_b64, Capability::PtyWrite, Utc::now())
+        .verify(
+            &req,
+            &sig,
+            &f.cap_token_b64,
+            Capability::PtyWrite,
+            Utc::now(),
+        )
         .expect_err("ts outside skew window must be rejected");
     assert_eq!(err, AuthError::TsSkew);
 }
@@ -329,11 +346,20 @@ fn expired_capability_token_rejects_with_capability_expired() {
     let req_late = build_canonical(body, &device_id, later, "nonce-cap-exp-2");
     let sig_late = {
         let priv_seed = device.to_bytes();
-        Signer { device_priv: &priv_seed }.sign(&req_late)
+        Signer {
+            device_priv: &priv_seed,
+        }
+        .sign(&req_late)
     };
 
     let err = verifier
-        .verify(&req_late, &sig_late, &cap_token_b64, Capability::PtyWrite, later)
+        .verify(
+            &req_late,
+            &sig_late,
+            &cap_token_b64,
+            Capability::PtyWrite,
+            later,
+        )
         .expect_err("expired capability must be rejected");
     assert_eq!(err, AuthError::CapabilityExpired);
 

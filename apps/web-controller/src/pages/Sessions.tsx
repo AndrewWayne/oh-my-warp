@@ -10,7 +10,7 @@ import {
   deleteSession,
   listSessions,
   type SessionMeta,
-} from "../lib/sessions";
+} from "@oh-my-warp/byorc-client/sessions";
 
 const REFRESH_INTERVAL_MS = 5000;
 

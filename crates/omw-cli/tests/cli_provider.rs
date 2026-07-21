@@ -266,7 +266,7 @@ fn provider_add_openai_non_interactive() {
     let _g = env_lock();
     let env = InProcEnv::new();
 
-    const SECRET: &str = "sk-test-non-interactive-12345";
+    const SECRET: &str = "sk-test-nonint-123";
 
     let (code, stdout, stderr) = lib_mode_run(&[
         "provider",
@@ -354,7 +354,7 @@ fn provider_add_openai_non_interactive() {
         listed
     );
     // Hard guarantee: `provider list` must not echo the plaintext secret on
-    // either stream — an impl that prints "stored sk-test-non-interactive-12345"
+    // either stream — an impl that prints "stored sk-test-nonint-123"
     // would otherwise pass the substring check above.
     assert_no_secret_leak(&listed, SECRET, 4);
     assert_no_secret_leak(&listed_err, SECRET, 4);

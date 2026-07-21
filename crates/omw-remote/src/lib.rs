@@ -10,6 +10,7 @@
 //! [PRD §5.2](../../../PRD.md#52-byorc--bring-your-own-remote-controller).
 
 pub mod auth;
+pub mod bind;
 pub mod capability;
 pub mod db;
 pub mod host_key;
@@ -23,6 +24,7 @@ pub mod web_assets;
 pub mod ws;
 
 pub use auth::{AuthError, CanonicalRequest, DeviceId, Signer, Verifier};
+pub use bind::{resolve_bind_addr, DEFAULT_LISTEN_ADDR};
 pub use capability::{Capability, CapabilityError, CapabilityToken, ParseError as CapParseError};
 pub use db::{open_db, schema_version};
 pub use host_key::HostKey;

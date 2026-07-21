@@ -19821,7 +19821,7 @@ fn is_official_cloud_workspace_action(action: &WorkspaceAction) -> bool {
     // NOTE: autoupdate-related actions (AutoupdateFailureLink, ApplyUpdate,
     // DownloadNewVersion, CheckForUpdate) are intentionally NOT in this list.
     // They go through omw's own GitHub-Releases autoupdate path
-    // (see `autoupdate::oss`) and must remain reachable from the UI even
+    // (see `autoupdate::omw_oss`) and must remain reachable from the UI even
     // when official cloud services are disabled.
     matches!(
         action,

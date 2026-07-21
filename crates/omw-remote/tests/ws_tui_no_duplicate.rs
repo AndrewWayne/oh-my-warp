@@ -52,11 +52,17 @@ fn claude_like_byte_stream() -> Vec<Bytes> {
         b"\x1b[2J\x1b[H\x1b[1;1HClaude Code v2.1.126\r\n\x1b[2;1HOpus 4.7\r\n",
     ));
     // 5 spinner-tick frames each redrawing row 23 with the current state.
-    for state in &["Levitating 1s", "Levitating 2s", "Levitating 3s", "Levitating 4s", "Baked"] {
+    for state in &[
+        "Levitating 1s",
+        "Levitating 2s",
+        "Levitating 3s",
+        "Levitating 4s",
+        "Baked",
+    ] {
         let mut frame = Vec::new();
         frame.extend_from_slice(b"\x1b[?2026h");
         frame.extend_from_slice(b"\x1b[24;1H"); // row 24, col 1 = bottom row in 1-indexed
-        frame.extend_from_slice(b"\x1b[2K");     // clear that line
+        frame.extend_from_slice(b"\x1b[2K"); // clear that line
         frame.extend_from_slice(state.as_bytes());
         frame.extend_from_slice(b"\x1b[?2026l");
         chunks.push(Bytes::from(frame));
@@ -126,9 +132,15 @@ async fn phone_ws_renders_match_parser_after_mode_2026_updates() {
         device_id: device_id.clone(),
         protocol_version: 1,
     };
-    let sig = Signer { device_priv: &device_priv }.sign(&canonical);
+    let sig = Signer {
+        device_priv: &device_priv,
+    }
+    .sign(&canonical);
     let h = req.headers_mut();
-    h.insert("Authorization", format!("Bearer {cap_b64}").parse().unwrap());
+    h.insert(
+        "Authorization",
+        format!("Bearer {cap_b64}").parse().unwrap(),
+    );
     h.insert(
         "X-Omw-Signature",
         URL_SAFE_NO_PAD.encode(sig).parse().unwrap(),
@@ -191,7 +203,10 @@ async fn phone_ws_renders_match_parser_after_mode_2026_updates() {
     // What did the phone receive?
     let phone_received = phone_bytes.lock().await.clone();
     eprintln!("phone received {} bytes", phone_received.len());
-    eprintln!("phone bytes (utf8 lossy): {:?}", String::from_utf8_lossy(&phone_received));
+    eprintln!(
+        "phone bytes (utf8 lossy): {:?}",
+        String::from_utf8_lossy(&phone_received)
+    );
 
     // Replay phone's bytes into a fresh parser — proxy for xterm.js.
     let mut phone_parser = vt100::Parser::new(rows, cols, 0);

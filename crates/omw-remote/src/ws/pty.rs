@@ -131,6 +131,7 @@ mod tests {
 /// When non-empty it is shipped as the FIRST outbound `Output` frame, before
 /// the live broadcast pump starts — that's how a freshly-attached client
 /// renders the current TUI grid directly instead of replaying byte history.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_authed_socket(
     socket: WebSocket,
     state: AppState,

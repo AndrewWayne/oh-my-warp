@@ -25,7 +25,8 @@ fn agents_md_resolution_and_io() {
     std::env::set_var("OMW_AGENTS_MD_PATH", "");
     let resolved = agents_md_path().unwrap();
     assert_ne!(
-        resolved, PathBuf::new(),
+        resolved,
+        PathBuf::new(),
         "empty OMW_AGENTS_MD_PATH must fall back, not return empty path"
     );
     // Re-arm for the rest of the test.
@@ -88,7 +89,11 @@ fn agents_md_resolution_and_io() {
     );
 
     // -------- sync_agents_md: parent dir missing → created on demand --------
-    let nested_canonical = dir.path().join("brand-new").join("nested").join("AGENTS.md");
+    let nested_canonical = dir
+        .path()
+        .join("brand-new")
+        .join("nested")
+        .join("AGENTS.md");
     std::env::set_var("OMW_AGENTS_MD_PATH", &nested_canonical);
     assert!(!nested_canonical.parent().unwrap().exists());
     let copied = sync_agents_md(Some(&user_src)).unwrap();

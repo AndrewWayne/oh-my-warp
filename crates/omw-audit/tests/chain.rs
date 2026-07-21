@@ -34,7 +34,11 @@ fn append_100_entries_then_verify() {
     let session = fixed_session();
     for i in 0..100 {
         writer
-            .append("test_event", session, json!({ "i": i, "label": format!("entry {i}") }))
+            .append(
+                "test_event",
+                session,
+                json!({ "i": i, "label": format!("entry {i}") }),
+            )
             .expect("append");
     }
     let path: PathBuf = writer.current_path();
@@ -87,8 +91,12 @@ fn cross_day_chain_continues_from_yesterday_tail() {
     // Day 1: append two entries.
     let mut writer =
         AuditWriter::open_for_day(dir.path().to_path_buf(), yesterday).expect("open day 1");
-    writer.append("yesterday_a", session, json!({"i": 1})).unwrap();
-    writer.append("yesterday_b", session, json!({"i": 2})).unwrap();
+    writer
+        .append("yesterday_a", session, json!({"i": 1}))
+        .unwrap();
+    writer
+        .append("yesterday_b", session, json!({"i": 2}))
+        .unwrap();
     let yesterday_tail = writer.prev_hash().to_string();
     drop(writer);
 
@@ -125,9 +133,7 @@ fn reopening_picks_up_existing_tail() {
 fn malformed_line_fails_verification() {
     let dir = TempDir::new().unwrap();
     let mut writer = open_for_today(&dir);
-    writer
-        .append("a", fixed_session(), json!({}))
-        .unwrap();
+    writer.append("a", fixed_session(), json!({})).unwrap();
     let path = writer.current_path();
     drop(writer);
 

@@ -269,6 +269,14 @@ A scope grants nothing more than what the row says. There is no implicit hierarc
 
 This satisfies invariant I-6 (default read-only).
 
+**Implementation status (omw_local preview).** Per-device `omw pair upgrade`
+is not yet implemented — capability tokens bake their scopes at issue time, so
+a per-device upgrade needs token re-issuance, which is deferred to the #23
+protocol revision. The interim host-level opt-in is the daemon flag
+`omw remote start --allow-default-write`: off by default (so a stock daemon
+honors I-6), and when set it adds `pty:write` to the pair-time default so a
+single-user preview's paired phone can type.
+
 ### 5.4 Token lifetime and rotation
 
 - Default `expires_at`: 30 days from issuance.

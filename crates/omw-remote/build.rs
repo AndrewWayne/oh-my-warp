@@ -3,7 +3,8 @@
 //! Wiring sub-phase 3: builds the Web Controller SPA bundle so it can be
 //! embedded into the daemon binary via `include_dir!`. Runs `npm install`
 //! (idempotent, fast when `node_modules` already exists) followed by
-//! `npm run build` in `apps/web-controller/` when the bundle is missing or
+//! `npm run build`, both from the repo root against the
+//! `@oh-my-warp/web-controller` workspace, when the bundle is missing or
 //! stale relative to its sources.
 //!
 //! Skipped when the `embedded-web-controller` feature is OFF, or when the
@@ -13,6 +14,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
+
+/// npm workspace name of the Web Controller SPA (its `package.json` `name`).
+const WEB_CONTROLLER_WORKSPACE: &str = "@oh-my-warp/web-controller";
 
 fn main() {
     println!("cargo:rerun-if-env-changed=OMW_SKIP_WEB_BUILD");
@@ -35,17 +39,25 @@ fn main() {
     // Watch the SPA source tree so cargo reruns this script when it changes.
     // We watch directories rather than every file — cargo picks up changes to
     // any file inside.
+    //
+    // The lockfile lives at the repo root: this is one npm workspace, so there
+    // is no apps/web-controller/package-lock.json (watching that path was a
+    // no-op, meaning dependency changes never triggered a rebuild). The SPA
+    // also bundles the @oh-my-warp/byorc-client workspace package, so its
+    // sources are inputs too.
     for rel in [
         "apps/web-controller/src",
         "apps/web-controller/public",
         "apps/web-controller/index.html",
         "apps/web-controller/package.json",
-        "apps/web-controller/package-lock.json",
         "apps/web-controller/vite.config.ts",
         "apps/web-controller/tsconfig.json",
         "apps/web-controller/tsconfig.node.json",
         "apps/web-controller/postcss.config.js",
         "apps/web-controller/tailwind.config.ts",
+        "packages/byorc-client/src",
+        "packages/byorc-client/package.json",
+        "package-lock.json",
     ] {
         let p = workspace_root.join(rel);
         if p.exists() {
@@ -68,8 +80,8 @@ fn main() {
         return;
     }
 
-    if needs_rebuild(&dist_index, &wc_dir) {
-        run_npm_build(&wc_dir);
+    if needs_rebuild(&dist_index, &wc_dir, workspace_root) {
+        run_npm_build(workspace_root);
     }
 
     if !dist_index.exists() {
@@ -81,20 +93,24 @@ fn main() {
 }
 
 /// Check whether `dist/index.html` is missing or older than any tracked source.
-fn needs_rebuild(dist_index: &Path, wc_dir: &Path) -> bool {
+fn needs_rebuild(dist_index: &Path, wc_dir: &Path, workspace_root: &Path) -> bool {
     let dist_mtime = match dist_index.metadata().and_then(|m| m.modified()) {
         Ok(t) => t,
         Err(_) => return true,
     };
 
-    // If any tracked source file is newer than dist/index.html, rebuild.
+    // If any tracked source file is newer than dist/index.html, rebuild. The
+    // lockfile is the root workspace one; the byorc-client package is bundled
+    // into the SPA, so its sources count as inputs.
+    let byorc_dir = workspace_root.join("packages").join("byorc-client");
     let inputs = [
         wc_dir.join("package.json"),
-        wc_dir.join("package-lock.json"),
+        workspace_root.join("package-lock.json"),
         wc_dir.join("vite.config.ts"),
         wc_dir.join("tsconfig.json"),
         wc_dir.join("tsconfig.node.json"),
         wc_dir.join("index.html"),
+        byorc_dir.join("package.json"),
     ];
     for p in &inputs {
         if newer_than(p, dist_mtime) {
@@ -105,6 +121,9 @@ fn needs_rebuild(dist_index: &Path, wc_dir: &Path) -> bool {
         return true;
     }
     if dir_has_newer_file(&wc_dir.join("public"), dist_mtime) {
+        return true;
+    }
+    if dir_has_newer_file(&byorc_dir.join("src"), dist_mtime) {
         return true;
     }
     false
@@ -139,34 +158,46 @@ fn dir_has_newer_file(dir: &Path, baseline: SystemTime) -> bool {
     false
 }
 
-fn run_npm_build(wc_dir: &Path) {
+fn run_npm_build(workspace_root: &Path) {
+    // Run from the repo root against the workspace target. This repo is a
+    // single npm workspace whose lockfile lives at the root, so installing
+    // from apps/web-controller/ would work against the app directory and can
+    // leave an untracked app-level lockfile beside the root one. `-w` also
+    // links workspace deps (the SPA bundles @oh-my-warp/byorc-client) and
+    // keeps the root devDependencies (appium/webdriverio) out of the install.
+    //
     // `npm install` is idempotent and fast when node_modules is already
     // populated; running it unconditionally is the simplest way to make a
     // fresh checkout build cleanly.
     run_npm(
-        wc_dir,
+        workspace_root,
         &[
             "install",
+            "-w",
+            WEB_CONTROLLER_WORKSPACE,
             "--prefer-offline",
             "--no-audit",
             "--no-fund",
             "--progress=false",
         ],
     );
-    run_npm(wc_dir, &["run", "build"]);
+    run_npm(
+        workspace_root,
+        &["run", "build", "-w", WEB_CONTROLLER_WORKSPACE],
+    );
 }
 
-fn run_npm(wc_dir: &Path, args: &[&str]) {
+fn run_npm(dir: &Path, args: &[&str]) {
     // `npm` on Windows is `npm.cmd`; spawning the wrong one yields ENOENT.
     let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
-    let status = Command::new(npm).args(args).current_dir(wc_dir).status();
+    let status = Command::new(npm).args(args).current_dir(dir).status();
     match status {
         Ok(s) if s.success() => {}
         Ok(s) => panic!(
             "`{} {}` in {} exited with status {}",
             npm,
             args.join(" "),
-            wc_dir.display(),
+            dir.display(),
             s
         ),
         Err(e) => panic!(
@@ -175,7 +206,7 @@ fn run_npm(wc_dir: &Path, args: &[&str]) {
              or build with --no-default-features)",
             npm,
             args.join(" "),
-            wc_dir.display(),
+            dir.display(),
             e
         ),
     }

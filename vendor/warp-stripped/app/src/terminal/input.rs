@@ -1451,78 +1451,18 @@ pub fn parse_inline_agent_prompt(buffer: &str) -> Option<&str> {
     Some(rest.trim_end())
 }
 
-/// Resolve `OmwAgentSessionParams` from the on-disk omw-config. Mirrors
-/// the body of `OmwAgentState::start_with_config`'s preamble, but
-/// returns the params instead of starting a session — used by the
-/// per-pane session provisioner so the caller picks the target pane.
+/// Resolve `OmwAgentSessionParams` from the on-disk omw-config, including the
+/// AGENTS.md system prompt.
+///
+/// Thin wrapper over [`crate::ai_assistant::omw_agent_state::OmwAgentSessionParams::from_config`],
+/// which is the single source of truth shared with the agent panel's
+/// `start_with_config`. This used to be a hand-mirrored copy of that preamble;
+/// the two drifted (the panel copy passed `system_prompt: None` and so ignored
+/// AGENTS.md — issue #37), so the body now lives in exactly one place.
 #[cfg(feature = "omw_local")]
 fn build_session_params_from_config(
 ) -> Result<crate::ai_assistant::omw_agent_state::OmwAgentSessionParams, String> {
-    let cfg = omw_config::Config::load().map_err(|e| e.to_string())?;
-    if !cfg.agent.enabled {
-        return Err("Agent is disabled in settings".into());
-    }
-    let provider_id = cfg
-        .default_provider
-        .as_ref()
-        .ok_or_else(|| "No default provider configured".to_string())?;
-    let provider = cfg
-        .providers
-        .get(provider_id)
-        .ok_or_else(|| format!("default_provider `{provider_id}` not found"))?;
-
-    let approval_mode = match cfg.approval.mode {
-        omw_config::ApprovalMode::ReadOnly => Some("read_only".into()),
-        omw_config::ApprovalMode::AskBeforeWrite => Some("ask_before_write".into()),
-        omw_config::ApprovalMode::Trusted => Some("trusted".into()),
-    };
-
-    // Best-effort: ensure the canonical AGENTS.md exists (writes the
-    // bundled baseline on first run), re-sync the user-managed source
-    // path → canonical path if set, then load the canonical contents
-    // as the session's system prompt. Any failure (path resolution,
-    // missing source, oversize file, write perms) is logged and
-    // treated as "no system prompt" so a broken AGENTS.md never blocks
-    // session creation.
-    if let Err(e) = omw_config::bootstrap_agents_md_if_missing() {
-        log::warn!("omw# input: AGENTS.md bootstrap failed: {e}");
-    }
-    if let Err(e) =
-        omw_config::sync_agents_md(cfg.agent.agents_md_path.as_deref())
-    {
-        log::warn!("omw# input: AGENTS.md sync failed: {e}");
-    }
-    let system_prompt = match omw_config::read_agents_md() {
-        Ok(s) => s,
-        Err(e) => {
-            log::warn!("omw# input: AGENTS.md read failed: {e}");
-            None
-        }
-    };
-
-    Ok(crate::ai_assistant::omw_agent_state::OmwAgentSessionParams {
-        provider_kind: provider.kind_str().to_string(),
-        key_ref: provider.key_ref().map(|k| k.to_string()),
-        base_url: match provider {
-            omw_config::ProviderConfig::OpenAiCompatible { base_url, .. } => {
-                Some(base_url.as_str().to_string())
-            }
-            omw_config::ProviderConfig::Ollama { base_url, .. } => {
-                base_url.as_ref().map(|u| u.as_str().to_string())
-            }
-            omw_config::ProviderConfig::OpenAi { base_url, .. } => {
-                base_url.as_ref().map(|u| u.as_str().to_string())
-            }
-            _ => None,
-        },
-        model: provider
-            .default_model()
-            .map(|s| s.to_string())
-            .unwrap_or_default(),
-        system_prompt,
-        cwd: None,
-        approval_mode,
-    })
+    crate::ai_assistant::omw_agent_state::OmwAgentSessionParams::from_config()
 }
 
 fn should_show_completions_in_ai_input(buffer_text: &str) -> bool {

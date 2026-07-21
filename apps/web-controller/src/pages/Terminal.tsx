@@ -4,8 +4,11 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { getPairing, type PairingRecord } from "../lib/storage/idb";
-import { connectPty, type PtyConnection } from "../lib/pty-ws";
-import { listSessions } from "../lib/sessions";
+import {
+  connectPtyResilient,
+  type ResilientPtyConnection,
+} from "../lib/pty-resilient";
+import { listSessions } from "@oh-my-warp/byorc-client/sessions";
 import TerminalShortcutStrip from "../components/TerminalShortcutStrip";
 import { useVisualViewportSize } from "../hooks/useVisualViewportSize";
 import {
@@ -15,7 +18,13 @@ import {
 import { configureTerminalInputTraits } from "../lib/terminal-input-traits";
 import { computeKeyboardDockEdge } from "../lib/keyboard-dock";
 
-type Status = "loading" | "connecting" | "connected" | "disconnected" | "error";
+type Status =
+  | "loading"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "disconnected"
+  | "error";
 
 const MOBILE_BREAKPOINT_PX = 640;
 const MOBILE_TERMINAL_CANVAS_WIDTH_PX = 840;
@@ -43,7 +52,7 @@ export default function Terminal() {
   // re-running the effect.
   const xtermRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
-  const connectionRef = useRef<PtyConnection | null>(null);
+  const connectionRef = useRef<ResilientPtyConnection | null>(null);
   const lastSizeRef = useRef<TerminalGridSize>({ rows: 0, cols: 0 });
   const rafIdRef = useRef<number | null>(null);
   const fitDebounceIdRef = useRef<number | null>(null);
@@ -244,7 +253,7 @@ export default function Terminal() {
     let cancelled = false;
     let xterm: XTerm | null = null;
     let fit: FitAddon | null = null;
-    let connection: PtyConnection | null = null;
+    let connection: ResilientPtyConnection | null = null;
     let onResize: (() => void) | null = null;
 
     (async () => {
@@ -288,26 +297,27 @@ export default function Terminal() {
 
       setStatus("connecting");
       appendDebug("connectPty start");
-      try {
-        connection = await connectPty({
-          pairing,
-          sessionId,
-          onDebug: appendDebug,
-        });
-      } catch (e) {
-        appendDebug(`connectPty rejected: ${errStr(e)}`);
-        if (cancelled) return;
-        setErrorMsg(`Failed to connect: ${errStr(e)}`);
-        setStatus("error");
-        return;
-      }
-      appendDebug("connectPty resolved");
+      // Resilient wrapper: reconnects with a fresh connect-token when the
+      // page returns to the foreground (iOS Safari kills a backgrounded WS).
+      // The handle is returned synchronously; connection state arrives via
+      // onState, and a terminal failure/close via onClose below.
+      connection = connectPtyResilient({
+        pairing,
+        sessionId,
+        onDebug: appendDebug,
+      });
       if (cancelled) {
         connection.close();
         return;
       }
       connectionRef.current = connection;
-      setStatus("connected");
+      connection.onState((s) => {
+        if (cancelled) return;
+        appendDebug(`conn state: ${s}`);
+        if (s === "connected") setStatus("connected");
+        else if (s === "reconnecting") setStatus("reconnecting");
+        else if (s === "connecting") setStatus("connecting");
+      });
 
       const enc = new TextEncoder();
       xterm.onData((data) => {
@@ -494,6 +504,20 @@ export default function Terminal() {
         </div>
       ) : null}
 
+      {status === "reconnecting" ? (
+        <div
+          role="status"
+          data-testid="terminal-reconnecting"
+          className="rounded border border-amber-700 bg-amber-900/30 p-2 text-sm text-amber-200 flex items-center gap-2"
+        >
+          <span
+            aria-hidden="true"
+            className="inline-block h-3 w-3 animate-pulse rounded-full bg-amber-400"
+          />
+          <span>Reconnecting…</span>
+        </div>
+      ) : null}
+
       <div
         ref={containerRef}
         data-testid="xterm-container"
@@ -545,6 +569,8 @@ function StatusBadge({ status }: { status: Status }) {
       ? "connecting"
       : status === "connected"
       ? "connected"
+      : status === "reconnecting"
+      ? "reconnecting"
       : status === "disconnected"
       ? "disconnected"
       : "error";
@@ -553,6 +579,8 @@ function StatusBadge({ status }: { status: Status }) {
       ? "bg-emerald-900/50 text-emerald-200 border-emerald-800"
       : status === "connecting" || status === "loading"
       ? "bg-neutral-800 text-neutral-200 border-neutral-700"
+      : status === "reconnecting"
+      ? "bg-amber-900/40 text-amber-200 border-amber-800"
       : "bg-red-900/40 text-red-200 border-red-800";
   return (
     <span

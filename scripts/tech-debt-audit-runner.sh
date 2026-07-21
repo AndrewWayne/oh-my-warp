@@ -137,7 +137,7 @@ fi
 # Fetch existing finding IDs from open + closed issues with our label.
 if ! gh issue list -R "$GH_REPO" -l "$ISSUE_LABEL" -s all \
      --json body --limit 1000 \
-     | jq -r '.[].body | capture("Finding ID: `(?<id>[a-f0-9]+)`") | .id' \
+     | jq -r '.[].body | capture("Finding ID:\\**\\s*`(?<id>[a-f0-9]+)`") | .id' \
      > "$existing_ids_file" 2>>"$LOG_FILE"; then
   log "ERROR: gh issue list failed"
   exit 6

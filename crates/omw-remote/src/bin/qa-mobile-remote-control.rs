@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use omw_remote::{
-    HostKey, NonceStore, Pairings, RevocationList, ServerConfig, ShellSpec, make_router, open_db,
+    make_router, open_db, HostKey, NonceStore, Pairings, RevocationList, ServerConfig, ShellSpec,
 };
 use omw_server::{SessionRegistry, SessionSpec};
 use serde_json::json;
@@ -121,6 +121,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         revocations: RevocationList::new(),
         nonce_store: NonceStore::new(Duration::from_secs(60)),
         pairings: Some(pairings),
+        request_log: None,
+        // Interactive QA drives real phone typing, so pair grants pty:write.
+        default_pair_write: true,
         shell: shell_spec,
         pty_registry: registry,
         host_id,
@@ -183,14 +186,17 @@ fn qa_shell_spec(clean_shell: bool, work_dir: &std::path::Path) -> ShellSpec {
         } else {
             vec!["-i".into(), "-c".into(), command.into()]
         };
-        return ShellSpec {
+        ShellSpec {
             program: "/bin/zsh".into(),
             args,
-        };
+        }
     }
 
     #[cfg(not(target_os = "macos"))]
     {
+        // Only the macOS spec builds a cd-into-workdir command line.
+        let _ = work_dir;
+
         if !clean_shell {
             return ShellSpec::default_for_host();
         }
@@ -202,11 +208,12 @@ fn qa_shell_spec(clean_shell: bool, work_dir: &std::path::Path) -> ShellSpec {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
     use std::ffi::OsStr;
@@ -220,11 +227,9 @@ mod tests {
         assert_eq!(spec.program, OsStr::new("/bin/zsh"));
         assert_eq!(spec.args[0], OsStr::new("-i"));
         assert_eq!(spec.args[1], OsStr::new("-c"));
-        assert!(
-            spec.args[2]
-                .to_string_lossy()
-                .contains("cd '/tmp/omw qa' && exec /bin/zsh -i")
-        );
+        assert!(spec.args[2]
+            .to_string_lossy()
+            .contains("cd '/tmp/omw qa' && exec /bin/zsh -i"));
     }
 
     #[test]
@@ -236,10 +241,8 @@ mod tests {
         assert_eq!(spec.args[0], OsStr::new("-f"));
         assert_eq!(spec.args[1], OsStr::new("-i"));
         assert_eq!(spec.args[2], OsStr::new("-c"));
-        assert!(
-            spec.args[3]
-                .to_string_lossy()
-                .contains("cd '/tmp/omw qa' && exec /bin/zsh -f -i")
-        );
+        assert!(spec.args[3]
+            .to_string_lossy()
+            .contains("cd '/tmp/omw qa' && exec /bin/zsh -f -i"));
     }
 }

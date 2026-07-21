@@ -43,10 +43,7 @@ fn make_external_spec(
         output_tx: output_tx.clone(),
         kill,
         resize_handler: None,
-        initial_size: PtySize {
-            cols: 80,
-            rows: 24,
-        },
+        initial_size: PtySize { cols: 80, rows: 24 },
     };
     (spec, input_rx, output_tx, killed)
 }
@@ -187,9 +184,7 @@ async fn external_session_write_input_to_closed_mpsc_returns_io_error() {
         .expect_err("write_input must fail when the mpsc receiver has been dropped");
     match err {
         Error::Io(_) => {}
-        other => panic!(
-            "expected Error::Io after mpsc receiver dropped, got: {other:?}"
-        ),
+        other => panic!("expected Error::Io after mpsc receiver dropped, got: {other:?}"),
     }
 }
 
@@ -344,9 +339,7 @@ async fn external_session_per_id_routing() {
     // rx_b must NOT have received A's payload — assert via a short timeout.
     match timeout(Duration::from_millis(200), rx_b.recv()).await {
         Err(_elapsed) => { /* expected: nothing for B yet */ }
-        Ok(other) => panic!(
-            "rx_b must not receive A's broadcast; got {other:?}"
-        ),
+        Ok(other) => panic!("rx_b must not receive A's broadcast; got {other:?}"),
     }
 
     // Now broadcast on B's tx — only rx_b must observe it.
@@ -365,9 +358,7 @@ async fn external_session_per_id_routing() {
     // And rx_a must not see B's payload.
     match timeout(Duration::from_millis(200), rx_a.recv()).await {
         Err(_elapsed) => { /* expected */ }
-        Ok(other) => panic!(
-            "rx_a must not receive B's broadcast; got {other:?}"
-        ),
+        Ok(other) => panic!("rx_a must not receive B's broadcast; got {other:?}"),
     }
 
     // --- write_input routing: write to A only; A's mpsc must see it; B's must not ---
@@ -386,9 +377,7 @@ async fn external_session_per_id_routing() {
     );
     match timeout(Duration::from_millis(200), input_rx_b.recv()).await {
         Err(_elapsed) => { /* expected: B got nothing */ }
-        Ok(other) => panic!(
-            "input_rx_b must not receive A's input; got {other:?}"
-        ),
+        Ok(other) => panic!("input_rx_b must not receive A's input; got {other:?}"),
     }
 
     // --- kill routing: kill A only; A's closure fires, B's does not ---
@@ -400,10 +389,7 @@ async fn external_session_per_id_routing() {
         !killed_b.load(Ordering::SeqCst),
         "B's kill flag must be false before kill(id_a)"
     );
-    registry
-        .kill(id_a)
-        .await
-        .expect("kill(id_a) must succeed");
+    registry.kill(id_a).await.expect("kill(id_a) must succeed");
     assert!(
         killed_a.load(Ordering::SeqCst),
         "A's kill closure must have fired"
@@ -421,10 +407,7 @@ async fn external_session_per_id_routing() {
         "after kill(id_a), list() must contain only B; got {}",
         listed.len()
     );
-    assert_eq!(
-        listed[0].id, id_b,
-        "the sole remaining entry must be B"
-    );
+    assert_eq!(listed[0].id, id_b, "the sole remaining entry must be B");
     assert!(
         registry.get(id_a).is_none(),
         "get(id_a) must be None after A is killed"
@@ -501,7 +484,9 @@ async fn external_session_does_not_break_owned_path() {
     let chunk = timeout(Duration::from_secs(3), owned_rx.recv())
         .await
         .expect("owned subscriber must receive the delayed chunk within 3s after subscribe was set up before the child emitted");
-    let _ = chunk.expect("owned subscriber recv must yield Ok (broadcast must not be closed before first emit)");
+    let _ = chunk.expect(
+        "owned subscriber recv must yield Ok (broadcast must not be closed before first emit)",
+    );
 
     // kill(owned_id) must succeed and remove it from list().
     registry

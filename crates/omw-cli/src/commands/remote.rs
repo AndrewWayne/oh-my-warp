@@ -13,7 +13,8 @@ use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use clap::Args;
 use omw_remote::{
-    make_router, open_db, HostKey, NonceStore, Pairings, RevocationList, ServerConfig, ShellSpec,
+    make_router, open_db, HostKey, NonceStore, Pairings, RequestLog, RevocationList, ServerConfig,
+    ShellSpec,
 };
 
 use crate::db::data_dir;
@@ -29,6 +30,12 @@ pub struct StartArgs {
     /// Hidden test hook: when the named env var is set, the server shuts down.
     #[arg(long, hide = true)]
     pub shutdown_signal: Option<String>,
+    /// Grant `pty:write` to newly-paired devices at pair time. Off by default:
+    /// spec §5.3 / invariant I-6 mandate a read-only default. Enable for a
+    /// single-user preview so a paired phone can type. The per-device
+    /// `omw pair upgrade` path is deferred to issue #23.
+    #[arg(long, default_value_t = false)]
+    pub allow_default_write: bool,
 }
 
 #[derive(Args, Debug)]
@@ -126,7 +133,15 @@ pub(crate) fn start(
         HostKey::load_or_create(&host_key_path(&dir))
             .with_context(|| "loading host signing key")?,
     );
-    let db = open_db(&remote_db_path(&dir)).with_context(|| "opening omw-remote db")?;
+    // Pairings and the request log share one SQLite file via two connections
+    // (open_db is idempotent — CREATE TABLE IF NOT EXISTS). A busy_timeout on
+    // each lets a concurrent write wait instead of returning SQLITE_BUSY.
+    let db_path = remote_db_path(&dir);
+    let db = open_db(&db_path).with_context(|| "opening omw-remote db")?;
+    let _ = db.busy_timeout(Duration::from_secs(5));
+    let log_conn = open_db(&db_path).with_context(|| "opening omw-remote request-log db")?;
+    let _ = log_conn.busy_timeout(Duration::from_secs(5));
+    let request_log = Arc::new(RequestLog::new(log_conn));
 
     let pinned_origin = format!("https://{}", args.listen);
     let config = ServerConfig {
@@ -137,6 +152,8 @@ pub(crate) fn start(
         revocations: RevocationList::new(),
         nonce_store: NonceStore::new(Duration::from_secs(60)),
         pairings: Some(Arc::new(Pairings::new(db))),
+        request_log: Some(request_log),
+        default_pair_write: args.allow_default_write,
         shell: ShellSpec::default_for_host(),
         pty_registry: omw_server::SessionRegistry::new(),
         host_id: "omw-host".to_string(),

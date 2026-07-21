@@ -109,11 +109,14 @@ fn read_argv_log(argv_file: &Path) -> Vec<Vec<String>> {
 
 /// Lower-case + canonicalize a path for comparison. On Windows, `tempdir`
 /// may hand us `C:\Users\andre\...` while the child's `process.cwd()`
-/// may render with different case. We can't rely on `canonicalize`
-/// existing on every path we want to compare (e.g. the canonical form
-/// might prepend `\\?\`); just lower-case the string form on both sides.
+/// may render with different case (canonicalizing both sides makes the
+/// `\\?\` prefix consistent). On macOS, `tempdir` returns `/var/...`
+/// while the child's cwd resolves through the symlink to `/private/var/...`;
+/// canonicalizing both sides resolves the symlink. Falls back to the raw
+/// path when canonicalize fails (path since deleted).
 fn normalize_path(p: &Path) -> String {
-    p.to_string_lossy().to_lowercase().replace('\\', "/")
+    let canon = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    canon.to_string_lossy().to_lowercase().replace('\\', "/")
 }
 
 // =============================================================================

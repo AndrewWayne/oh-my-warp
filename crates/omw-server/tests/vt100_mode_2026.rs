@@ -28,7 +28,13 @@ fn row_str(screen: &vt100::Screen, row: u16, width: u16) -> String {
 fn dump_screen(label: &str, screen: &vt100::Screen, rows: u16, cols: u16) -> String {
     let mut out = String::new();
     writeln!(out, "=== {label} ===").unwrap();
-    writeln!(out, "alt={} cursor={:?}", screen.alternate_screen(), screen.cursor_position()).unwrap();
+    writeln!(
+        out,
+        "alt={} cursor={:?}",
+        screen.alternate_screen(),
+        screen.cursor_position()
+    )
+    .unwrap();
     for r in 0..rows {
         let line = row_str(screen, r, cols);
         let trimmed = line.trim_end();
@@ -51,7 +57,10 @@ fn mode_2026_inner_bytes_reach_screen() {
     p.process(b"INSIDE");
     p.process(b"\x1b[?2026l");
 
-    eprintln!("{}", dump_screen("after mode-2026 frame", p.screen(), 5, 80));
+    eprintln!(
+        "{}",
+        dump_screen("after mode-2026 frame", p.screen(), 5, 80)
+    );
 
     let row0 = row_str(p.screen(), 0, 80);
     let row1 = row_str(p.screen(), 1, 80);
@@ -70,12 +79,15 @@ fn mode_2026_with_cursor_positioning_inside() {
 
     // Mode 2026: move to row 5 col 1, write NEW. Then ESU.
     p.process(b"\x1b[?2026h");
-    p.process(b"\x1b[6;1H");      // cursor to (row 6, col 1) which is row=5 in 0-index
-    p.process(b"\x1b[2K");          // clear line
+    p.process(b"\x1b[6;1H"); // cursor to (row 6, col 1) which is row=5 in 0-index
+    p.process(b"\x1b[2K"); // clear line
     p.process(b"NEW-CONTENT");
     p.process(b"\x1b[?2026l");
 
-    eprintln!("{}", dump_screen("after cursor-positioned mode-2026 frame", p.screen(), 8, 80));
+    eprintln!(
+        "{}",
+        dump_screen("after cursor-positioned mode-2026 frame", p.screen(), 8, 80)
+    );
     let row5 = row_str(p.screen(), 5, 80);
     eprintln!("row5 trimmed: {:?}", row5.trim_end());
 
@@ -95,7 +107,15 @@ fn multiple_mode_2026_frames_accumulate_or_replace() {
     // Frame C: cursor to row 10, write "CCC" (should REPLACE BBB)
     p.process(b"\x1b[?2026h\x1b[11;1H\x1b[2KCCC\x1b[?2026l");
 
-    eprintln!("{}", dump_screen("after 3 mode-2026 frames replacing row 10", p.screen(), 15, 80));
+    eprintln!(
+        "{}",
+        dump_screen(
+            "after 3 mode-2026 frames replacing row 10",
+            p.screen(),
+            15,
+            80
+        )
+    );
 
     let row10 = row_str(p.screen(), 10, 80);
     eprintln!("row10 trimmed: {:?}", row10.trim_end());

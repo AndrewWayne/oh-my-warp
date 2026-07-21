@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 use crate::auth::{AuthError, CanonicalRequest, Verifier};
 use crate::capability::{Capability, CapabilityToken};
+use crate::request_log::RequestLogEntry;
 use crate::server::AppState;
 use omw_server::SessionSpec;
 
@@ -169,8 +170,10 @@ pub(crate) async fn delete(
     }
 }
 
-/// Signed-request verification shared by all session routes. Returns Ok with
-/// the resolved device id on success, or Err with the HTTP response to send.
+/// Signed-request verification shared by all session routes. Runs the pure
+/// [`verify_signed_inner`] ladder, then appends exactly one `request_log` row
+/// for the decision (spec §4.2 step 10 + §6.3) before returning `Ok(id)` or
+/// the HTTP response to send.
 fn verify_signed(
     state: &AppState,
     method: &Method,
@@ -180,35 +183,63 @@ fn verify_signed(
     headers: &axum::http::HeaderMap,
     required: Capability,
 ) -> Result<String, Box<axum::response::Response>> {
+    let result = verify_signed_inner(state, method, path, query, body, headers, required);
+
+    let (accepted, reason, device_id) = match &result {
+        Ok(id) => (true, None, Some(id.clone())),
+        Err((_, code)) => (false, Some(*code), device_id_hint(headers)),
+    };
+    state.log_request(RequestLogEntry {
+        route: path.to_string(),
+        actor_device_id: device_id,
+        nonce: crate::server::header_str(headers, "x-omw-nonce"),
+        ts: Utc::now(),
+        signature: crate::server::header_str(headers, "x-omw-signature"),
+        body_hash: Some(hex_lower(&sha256(body))),
+        accepted,
+        reason: reason.map(str::to_string),
+    });
+
+    result.map_err(|(status, code)| boxed_err(status, code))
+}
+
+/// The pure signed-request ladder. Returns the resolved device id on success
+/// or `(status, code)` on reject — the `code` is both the wire error and the
+/// `request_log` reject reason. No logging here so the wrapper owns the single
+/// append point.
+fn verify_signed_inner(
+    state: &AppState,
+    method: &Method,
+    path: &str,
+    query: &str,
+    body: &[u8],
+    headers: &axum::http::HeaderMap,
+    required: Capability,
+) -> Result<String, (StatusCode, &'static str)> {
     let auth_header = match headers.get("authorization").and_then(|h| h.to_str().ok()) {
         Some(s) => s,
-        None => return Err(boxed_err(StatusCode::UNAUTHORIZED, "missing_authorization")),
+        None => return Err((StatusCode::UNAUTHORIZED, "missing_authorization")),
     };
     let cap_b64 = match auth_header.strip_prefix("Bearer ") {
         Some(s) => s.trim(),
-        None => return Err(boxed_err(StatusCode::UNAUTHORIZED, "bad_authorization")),
+        None => return Err((StatusCode::UNAUTHORIZED, "bad_authorization")),
     };
     let sig_b64 = match headers.get("x-omw-signature").and_then(|h| h.to_str().ok()) {
         Some(s) => s,
-        None => return Err(boxed_err(StatusCode::UNAUTHORIZED, "missing_signature")),
+        None => return Err((StatusCode::UNAUTHORIZED, "missing_signature")),
     };
     let nonce = match headers.get("x-omw-nonce").and_then(|h| h.to_str().ok()) {
         Some(s) => s,
-        None => return Err(boxed_err(StatusCode::UNAUTHORIZED, "missing_nonce")),
+        None => return Err((StatusCode::UNAUTHORIZED, "missing_nonce")),
     };
     let ts = match headers.get("x-omw-ts").and_then(|h| h.to_str().ok()) {
         Some(s) => s,
-        None => return Err(boxed_err(StatusCode::UNAUTHORIZED, "missing_ts")),
+        None => return Err((StatusCode::UNAUTHORIZED, "missing_ts")),
     };
 
     let sig_bytes = match URL_SAFE_NO_PAD.decode(sig_b64) {
         Ok(b) if b.len() == 64 => b,
-        _ => {
-            return Err(boxed_err(
-                StatusCode::UNAUTHORIZED,
-                "bad_signature_encoding",
-            ))
-        }
+        _ => return Err((StatusCode::UNAUTHORIZED, "bad_signature_encoding")),
     };
     let mut sig = [0u8; 64];
     sig.copy_from_slice(&sig_bytes);
@@ -217,7 +248,7 @@ fn verify_signed(
 
     let cap_token = match CapabilityToken::from_base64url(cap_b64) {
         Ok(t) => t,
-        Err(_) => return Err(boxed_err(StatusCode::UNAUTHORIZED, "capability_invalid")),
+        Err(_) => return Err((StatusCode::UNAUTHORIZED, "capability_invalid")),
     };
 
     let canonical = CanonicalRequest {
@@ -236,7 +267,7 @@ fn verify_signed(
     match verifier.verify(&canonical, &sig, cap_b64, required, now) {
         Ok(id) => {
             if state.revocations.is_revoked(&id) {
-                return Err(boxed_err(StatusCode::UNAUTHORIZED, "device_revoked"));
+                return Err((StatusCode::UNAUTHORIZED, "device_revoked"));
             }
             Ok(id)
         }
@@ -251,9 +282,31 @@ fn verify_signed(
                 AuthError::NonceReplayed => (StatusCode::UNAUTHORIZED, "nonce_replayed"),
                 AuthError::InvalidBody => (StatusCode::BAD_REQUEST, "invalid_body"),
             };
-            Err(boxed_err(status, code))
+            Err((status, code))
         }
     }
+}
+
+/// Best-effort device id for an audit row on a rejected request: parse the
+/// claimed capability token from the `Authorization` header without verifying
+/// it. `None` when the header is absent or unparseable.
+fn device_id_hint(headers: &axum::http::HeaderMap) -> Option<String> {
+    let auth = headers.get("authorization").and_then(|h| h.to_str().ok())?;
+    let cap_b64 = auth.strip_prefix("Bearer ")?.trim();
+    CapabilityToken::from_base64url(cap_b64)
+        .ok()
+        .map(|t| t.device_id)
+}
+
+/// Lowercase hex of a byte slice (audit `body_hash`).
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0x0F) as usize] as char);
+    }
+    s
 }
 
 fn resolve_shell(state: &AppState, requested: Option<&str>) -> (String, Vec<String>) {

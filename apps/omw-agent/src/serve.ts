@@ -41,8 +41,10 @@ import type { AgentEvent } from "../vendor/pi-agent-core/index.js";
 
 import type { ApprovalDecision } from "./policy-hook.js";
 import type { PolicyConfig } from "./policy.js";
+import { isProviderKind } from "./provider-kinds.js";
+import { AgentRpcMethod } from "./rpc-methods.js";
 import { Session, type GetApiKey, type ProviderConfig, type SessionSpec } from "./session.js";
-import type { RpcBridge } from "./warp-session-bash.js";
+import { parseBashFrame, type BashFrame, type RpcBridge } from "./warp-session-bash.js";
 
 export interface RunStdioServerOptions {
 	stdin: NodeJS.ReadableStream;
@@ -90,10 +92,7 @@ export async function runStdioServer(opts: RunStdioServerOptions): Promise<void>
 	// adapter (warp-session-bash.ts) registers a subscriber for each
 	// in-flight exec; inbound bash/data, bash/finished, bash/cancel
 	// notifications from the broker are dispatched here by commandId.
-	const bashSubscribers = new Map<
-		string,
-		(frame: { method: string; params: unknown }) => void
-	>();
+	const bashSubscribers = new Map<string, (frame: BashFrame) => void>();
 
 	const writeFrame = (frame: JsonRpcFrame): void => {
 		// JSON.stringify + "\n" is sufficient framing because no JSON value
@@ -132,13 +131,13 @@ export async function runStdioServer(opts: RunStdioServerOptions): Promise<void>
 		const id = req.id ?? null;
 		try {
 			switch (req.method) {
-				case "session/create":
+				case AgentRpcMethod.SESSION_CREATE:
 					return handleSessionCreate(req, id, sessions, opts.getApiKey, rpcBridge, notify, reply, replyError);
-				case "session/prompt":
+				case AgentRpcMethod.SESSION_PROMPT:
 					return handleSessionPrompt(req, id, sessions, reply, replyError, notify);
-				case "session/cancel":
+				case AgentRpcMethod.SESSION_CANCEL:
 					return handleSessionCancel(req, id, sessions, reply, replyError);
-				case "approval/decide":
+				case AgentRpcMethod.APPROVAL_DECIDE:
 					return handleApprovalDecide(req, id, sessions, reply, replyError);
 				default:
 					return replyError(id, -32601, `unknown method: ${req.method}`);
@@ -152,14 +151,12 @@ export async function runStdioServer(opts: RunStdioServerOptions): Promise<void>
 		method: string,
 		params: unknown,
 	): boolean => {
-		const commandId =
-			params && typeof params === "object"
-				? (params as Record<string, unknown>).commandId
-				: undefined;
-		if (typeof commandId !== "string") return false;
-		const sub = bashSubscribers.get(commandId);
+		// Validate once here; subscribers receive a typed BashFrame.
+		const frame = parseBashFrame(method, params);
+		if (!frame) return false;
+		const sub = bashSubscribers.get(frame.params.commandId);
 		if (!sub) return false;
-		sub({ method, params });
+		sub(frame);
 		return true;
 	};
 
@@ -183,9 +180,9 @@ export async function runStdioServer(opts: RunStdioServerOptions): Promise<void>
 		// mis-emit one with id:null.
 		if (req.id === undefined) {
 			if (
-				req.method === "bash/data" ||
-				req.method === "bash/finished" ||
-				req.method === "bash/cancel"
+				req.method === AgentRpcMethod.BASH_DATA ||
+				req.method === AgentRpcMethod.BASH_FINISHED ||
+				req.method === AgentRpcMethod.BASH_CANCEL
 			) {
 				dispatchBashNotification(req.method, req.params);
 			}
@@ -250,7 +247,7 @@ function handleSessionCreate(
 			getApiKey,
 			rpcBridge,
 			notifyApprovalRequest: ({ approvalId, toolCall }) => {
-				notify("approval/request", { sessionId, approvalId, toolCall });
+				notify(AgentRpcMethod.APPROVAL_REQUEST, { sessionId, approvalId, toolCall });
 			},
 		});
 	} catch (e) {
@@ -419,12 +416,7 @@ function parseProviderConfig(raw: unknown): ProviderConfig | null {
 	if (!raw || typeof raw !== "object") return null;
 	const obj = raw as Record<string, unknown>;
 	const kind = obj.kind;
-	if (
-		kind !== "openai" &&
-		kind !== "anthropic" &&
-		kind !== "openai-compatible" &&
-		kind !== "ollama"
-	) {
+	if (!isProviderKind(kind)) {
 		return null;
 	}
 	const cfg: ProviderConfig = { kind };

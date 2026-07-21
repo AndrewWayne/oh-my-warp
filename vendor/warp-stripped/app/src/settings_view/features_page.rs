@@ -5117,7 +5117,17 @@ impl SettingsWidget for DesktopNotificationsWidget {
                         appearance,
                     )
                 },
-                // Pane-focus notifications (MS5)
+            ];
+
+            column.add_child(render_group(toggles, appearance));
+        }
+
+        // Pane-focus (OSC 9/777) notifications — rendered OUTSIDE the `mode`
+        // gate so it is always visible: these fire independent of the desktop
+        // notifications master switch (gated on `is_escape_sequence_enabled`,
+        // default on), so users must always be able to see and turn them off.
+        column.add_child(render_group(
+            vec![
                 view.render_notification_toggle(
                     session_settings.notifications.is_escape_sequence_enabled,
                     "Enable pane-focus notifications (OSC 9/777 escape sequences)",
@@ -5150,10 +5160,9 @@ impl SettingsWidget for DesktopNotificationsWidget {
                     view.button_mouse_states.focus_on_click_checkbox.clone(),
                     appearance,
                 ),
-            ];
-
-            column.add_child(render_group(toggles, appearance));
-        }
+            ],
+            appearance,
+        ));
 
         if FeatureFlag::HOANotifications.is_enabled() {
             let ai_settings = AISettings::as_ref(app);

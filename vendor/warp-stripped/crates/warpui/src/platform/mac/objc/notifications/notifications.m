@@ -74,10 +74,6 @@ void sendNotificationWithErrorHandler(NSString *title, NSString *body, NSString 
               @"DATA" : data,
           };
 
-          // Configure the trigger to send the notification after 1 second.
-          UNTimeIntervalNotificationTrigger *trigger =
-              [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:1 repeats:NO];
-
           // A non-empty `identifier` (typically per-pane) makes a later
           // notification from the same pane replace the previous one, while
           // distinct panes never clobber each other. Empty falls back to the
@@ -85,11 +81,13 @@ void sendNotificationWithErrorHandler(NSString *title, NSString *body, NSString 
           NSString *requestIdentifier =
               (identifier != nil && identifier.length > 0) ? identifier : @"CUSTOMIZED_NOTIFICATION";
 
-          // Create the request object.
+          // Deliver immediately (nil trigger) instead of after a 1s delay, so the
+          // notification lines up with the event that fired it (avoids a laggy
+          // notification that looks like it belongs to the previous turn).
           UNNotificationRequest *request =
               [UNNotificationRequest requestWithIdentifier:requestIdentifier
                                                    content:content
-                                                   trigger:trigger];
+                                                   trigger:nil];
 
           // Schedule the notification.
           [center addNotificationRequest:request

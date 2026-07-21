@@ -62,16 +62,16 @@ install -m755 codex-notify-dispatch.sh  ~/.local/bin/codex-notify-dispatch.sh
 ```toml
 # 每轮完成 → 走钩子桥接(可靠)
 notify = ["/绝对路径/codex-notify-dispatch.sh", "turn-ended"]
-
-# "等你批准" codex 的 notify 钩子收不到, 只能靠 TUI 通知发 OSC 9:
-[tui]
-notifications = ["approval-requested"]
-notification_method = "osc9"
 ```
 
 - 已有别的 notify 程序想共存?给上面加 `CODEX_PREVIOUS_NOTIFY=/那个程序` 到环境即可链式转发。
 - codex 需重开会话才读新配置。
-- **局限**:codex 的 OSC 9 不带类型,omw 会把 approval 也当"完成"标签(正文仍是它要你批准的话)。
+- **已知局限(codex 侧,非 omw)**:codex 的 `notify` 钩子**只在"一轮完成"时触发**,
+  它"停下等你批准某条命令"时属于 turn 未结束、**不触发 notify**;而交互式 codex
+  也不往终端吐 OSC 转义。所以**"codex 等待批准"这个状态目前拿不到可靠信号、无法通知**
+  (`[tui] notification_method="osc9"` 经实测在交互式下不生效)。能通知的是"codex 一轮
+  真正跑完"。若未来 codex 给 approval 加了 notify 事件,可在 `codex-notify-dispatch.sh`
+  里按 `type` 增加分支。
 
 ## 原理(数据流)
 

@@ -11312,12 +11312,51 @@ impl TerminalView {
                     }
                 }
 
-                if self.is_navigated_away_from_window(ctx) {
-                    let notification_title =
-                        title.clone().unwrap_or_else(|| "Notification".to_string());
-                    let notification = BlockNotification {
-                        title: notification_title,
+                // Pane-focus notifications (MS1): default is "always notify"
+                // (event-driven), not the legacy "only when you left the window".
+                let notif_settings = SessionSettings::as_ref(ctx).notifications.value().clone();
+                if !notif_settings.is_escape_sequence_enabled {
+                    // Master switch for OSC 9/777 desktop notifications is off:
+                    // fall back to the in-app toast only.
+                    ctx.emit(Event::PluggableNotification {
+                        title: title.clone(),
                         body: body.clone(),
+                    });
+                    return;
+                }
+
+                let navigated_away = self.is_navigated_away_from_window(ctx);
+                let suppressed_in_foreground =
+                    notif_settings.suppress_when_pane_foreground && self.is_pane_in_foreground(ctx);
+                // Raise a desktop notification when: not suppressed AND
+                // (always_notify OR we already left the window).
+                let should_send_desktop =
+                    !suppressed_in_foreground && (notif_settings.always_notify || navigated_away);
+
+                if should_send_desktop {
+                    let raw_title = title.clone().unwrap_or_else(|| "Notification".to_string());
+                    let raw_body = body.clone();
+                    // MS3: apply optional title/body templates ({title}/{body}).
+                    let vars = [("title", raw_title.as_str()), ("body", raw_body.as_str())];
+                    let final_title = if notif_settings.title_template.is_empty() {
+                        raw_title.clone()
+                    } else {
+                        warpui::notification::render_notification_template(
+                            &notif_settings.title_template,
+                            &vars,
+                        )
+                    };
+                    let final_body = if notif_settings.body_template.is_empty() {
+                        raw_body.clone()
+                    } else {
+                        warpui::notification::render_notification_template(
+                            &notif_settings.body_template,
+                            &vars,
+                        )
+                    };
+                    let notification = BlockNotification {
+                        title: final_title,
+                        body: final_body,
                     };
                     ctx.emit(Event::SendNotification(notification));
                 } else {
@@ -11816,11 +11855,25 @@ impl TerminalView {
             }
         }
 
-        // Desktop notifications — only when navigated away and not in-progress.
-        if !self.is_navigated_away_from_window(ctx)
-            || matches!(status, CLIAgentSessionStatus::InProgress)
-        {
+        // Desktop notifications (MS6 P2): default always-notify (event-driven),
+        // mirroring the escape-sequence handler (MS1) — no longer "only when you
+        // left the window". Never notify while the agent is still working. The
+        // per-event toggles and the notifications `mode` gate are still enforced
+        // downstream by `send_agent_desktop_notification_or_show_banner`.
+        if matches!(status, CLIAgentSessionStatus::InProgress) {
             return;
+        }
+        {
+            let notif_settings = SessionSettings::as_ref(ctx).notifications.value().clone();
+            let suppressed_in_foreground =
+                notif_settings.suppress_when_pane_foreground && self.is_pane_in_foreground(ctx);
+            // always_notify (default on) → notify regardless of focus. When it is
+            // off, fall back to the legacy "only when navigated away" behavior.
+            if suppressed_in_foreground
+                || (!notif_settings.always_notify && !self.is_navigated_away_from_window(ctx))
+            {
+                return;
+            }
         }
 
         let title = session_context
@@ -19632,6 +19685,17 @@ impl TerminalView {
     fn is_navigated_away_from_window(&self, ctx: &mut ViewContext<Self>) -> bool {
         let active_window = ctx.windows().active_window();
         Some(ctx.window_id()) != active_window
+    }
+
+    /// Whether the pane that owns this view is currently in the foreground.
+    ///
+    /// MS1 uses a conservative window-level approximation (the pane is "in the
+    /// foreground" iff its window is active). Precise tab/pane-level foreground
+    /// detection is deferred (see design §2.8); this only gates the opt-in,
+    /// default-off `suppress_when_pane_foreground` setting, so a window-level
+    /// approximation is safe for the default (always-notify) behavior.
+    fn is_pane_in_foreground(&self, ctx: &mut ViewContext<Self>) -> bool {
+        !self.is_navigated_away_from_window(ctx)
     }
 
     fn is_block_active_and_running(&self, model: &TerminalModel, block_index: BlockIndex) -> bool {

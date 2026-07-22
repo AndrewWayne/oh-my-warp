@@ -12112,9 +12112,15 @@ impl Workspace {
 
     fn request_notification_permissions_if_needed(&mut self, ctx: &mut ViewContext<Self>) {
         // Request permissions any time notifications are currently enabled.
-        let current_mode = SessionSettings::as_ref(ctx).notifications.value().mode;
+        let notif = SessionSettings::as_ref(ctx).notifications.value();
+        let current_mode = notif.mode;
+        // Pane-focus (escape-sequence) notifications are default-on and bypass the
+        // `mode` gate — but macOS still needs authorization, which used to be
+        // requested only when mode==Enabled. Also request it for the default-on
+        // escape path so those notifications actually surface out of the box.
+        let escape_default_on = notif.is_escape_sequence_enabled;
 
-        if current_mode == NotificationsMode::Enabled {
+        if current_mode == NotificationsMode::Enabled || escape_default_on {
             ctx.request_desktop_notification_permissions(move |view, outcome, ctx| {
                 match &outcome {
                     RequestPermissionsOutcome::Accepted => (),
@@ -13029,17 +13035,42 @@ impl Workspace {
                 let window_id = ctx.window_id();
                 let pane_group_id = pane_group.id();
                 let pane_id = *pane_id;
+                // Ensure macOS has been asked for notification authorization before we
+                // try to deliver. Default-on escape-sequence notifications fire even
+                // when `mode == Unset`, but macOS silently drops them until authorized;
+                // this requests authorization once (idempotent) so they surface.
+                self.request_notification_permissions_if_needed(ctx);
                 let notification_data = NotificationContext::BlockOrigin {
                     window_id,
                     pane_group_id,
                     pane_id,
                 };
 
-                if let Ok(notification_data_str) = serde_json::to_string(&notification_data) {
-                    // Read the notification sound setting from SessionSettings
+                // Per-pane coalescing identifier: repeated notifications from the
+                // same pane replace each other; distinct panes never clobber one
+                // another (see design R4).
+                let identifier = format!("omw-notif-{window_id:?}-{pane_id:?}");
+                // MS4: rate-limit identical bursts from the same pane.
+                let throttle_window_secs =
+                    SessionSettings::as_ref(ctx).notifications.throttle_window_secs;
+                let throttled = notification_throttled(
+                    &identifier,
+                    &notification.title,
+                    &notification.body,
+                    throttle_window_secs,
+                );
+
+                if !throttled {
+                  if let Ok(notification_data_str) = serde_json::to_string(&notification_data) {
+                    // Read the notification sound settings from SessionSettings
                     let play_sound = SessionSettings::as_ref(ctx)
                         .notifications
                         .play_notification_sound;
+                    // Optional named sound (empty = platform default sound).
+                    let sound_name = SessionSettings::as_ref(ctx)
+                        .notifications
+                        .notification_sound_name
+                        .clone();
 
                     ctx.send_desktop_notification(
                         UserNotification::new_with_sound(
@@ -13047,7 +13078,9 @@ impl Workspace {
                             notification.body.to_string(),
                             Some(notification_data_str),
                             play_sound,
-                        ),
+                        )
+                        .with_identifier(identifier.clone())
+                        .with_sound_name(Some(sound_name)),
                         move |workspace, notification_error, ctx| {
                             // Log to sentry if unknown error
                             if let NotificationSendError::Other { error_message } =
@@ -13073,6 +13106,7 @@ impl Workspace {
                             );
                         },
                     )
+                  }
                 }
             }
             pane_group::Event::OpenSettings(section) => {
@@ -23291,4 +23325,46 @@ fn set_opencode_warp_plugin(new_entry: &str) -> String {
         },
         Err(e) => format!("Failed to serialize opencode.json: {e}"),
     }
+}
+
+/// MS4 pane-focus notification throttle: returns `true` if an identical
+/// notification (same per-pane identifier + title + body) fired within
+/// `window_secs`, otherwise records the fire time and returns `false`.
+///
+/// Backed by a process-global table. A pane lives in exactly one window, so the
+/// per-pane identifier keys never collide across windows (design R6). MS2's
+/// per-pane OS notification identifier already replaces the banner in place;
+/// this additionally rate-limits bursts of identical notifications.
+pub(crate) fn notification_throttled(
+    identifier: &str,
+    title: &str,
+    body: &str,
+    window_secs: u64,
+) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+
+    if window_secs == 0 {
+        return false;
+    }
+
+    static TABLE: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+    let table = TABLE.get_or_init(|| Mutex::new(HashMap::new()));
+    let Ok(mut map) = table.lock() else {
+        return false;
+    };
+
+    let now = Instant::now();
+    // Bound growth: drop entries older than an hour.
+    map.retain(|_, seen| now.duration_since(*seen) < Duration::from_secs(3600));
+
+    let key = format!("{identifier}|{title}|{body}");
+    if let Some(seen) = map.get(&key) {
+        if now.duration_since(*seen) < Duration::from_secs(window_secs) {
+            return true;
+        }
+    }
+    map.insert(key, now);
+    false
 }

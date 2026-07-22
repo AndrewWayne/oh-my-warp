@@ -860,7 +860,16 @@ pub const DEBUG_FLAGS: &[FeatureFlag] = &[FeatureFlag::DebugMode, FeatureFlag::R
 /// cargo feature, so `lib.rs::enabled_features` wouldn't add `FeatureFlag::Autoupdate`
 /// without this list. `bin/oss.rs` wires this into `ChannelState::additional_features`
 /// under `#[cfg(feature = "omw_local")]`. The regression test guards the contract.
-pub const OMW_LOCAL_FLAGS: &[FeatureFlag] = &[FeatureFlag::Autoupdate];
+pub const OMW_LOCAL_FLAGS: &[FeatureFlag] = &[
+    FeatureFlag::Autoupdate,
+    // Pane-focus notifications: unlocks the existing OSC 9/777 -> desktop
+    // notification -> click-to-focus-origin-pane pipeline that Warp ships but
+    // omw ships disabled. Added here (additional_features) so it is enabled
+    // regardless of the `pluggable_notifications` cargo feature; it MUST also be
+    // removed from `OMW_LOCAL_DISABLED_FLAGS` in `app/src/lib.rs`, otherwise the
+    // omw_local removal pass strips it back out.
+    FeatureFlag::PluggableNotifications,
+];
 
 /// Features enabled for the development team.  The expectation is that, over
 /// time, these will move on to PREVIEW_FLAGS before being launched.

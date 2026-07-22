@@ -45,7 +45,7 @@ void requestNotificationPermissions(void *on_completion_callback) {
 
 void sendNotificationWithErrorHandler(NSString *title, NSString *body, NSString *data,
                                       void (^error_handler)(NSUInteger error_type, id error_msg),
-                                      BOOL playSound) {
+                                      BOOL playSound, NSString *soundName, NSString *identifier) {
     UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
     [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
       if (settings.authorizationStatus == UNAuthorizationStatusDenied) {
@@ -59,24 +59,35 @@ void sendNotificationWithErrorHandler(NSString *title, NSString *body, NSString 
           content.title = [NSString localizedUserNotificationStringForKey:title arguments:nil];
           content.body = [NSString localizedUserNotificationStringForKey:body arguments:nil];
 
-          // Only play sound if the user setting allows it
+          // Only play sound if the user setting allows it. A non-empty
+          // `soundName` selects a named sound (looked up in the app bundle or
+          // `~/Library/Sounds`); otherwise fall back to the default sound.
           if (playSound) {
-              content.sound = [UNNotificationSound defaultSound];
+              if (soundName != nil && soundName.length > 0) {
+                  content.sound = [UNNotificationSound soundNamed:soundName];
+              } else {
+                  content.sound = [UNNotificationSound defaultSound];
+              }
           }
 
           content.userInfo = @{
               @"DATA" : data,
           };
 
-          // Configure the trigger to send the notification after 1 second.
-          UNTimeIntervalNotificationTrigger *trigger =
-              [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:1 repeats:NO];
+          // A non-empty `identifier` (typically per-pane) makes a later
+          // notification from the same pane replace the previous one, while
+          // distinct panes never clobber each other. Empty falls back to the
+          // legacy shared identifier.
+          NSString *requestIdentifier =
+              (identifier != nil && identifier.length > 0) ? identifier : @"CUSTOMIZED_NOTIFICATION";
 
-          // Create the request object.
+          // Deliver immediately (nil trigger) instead of after a 1s delay, so the
+          // notification lines up with the event that fired it (avoids a laggy
+          // notification that looks like it belongs to the previous turn).
           UNNotificationRequest *request =
-              [UNNotificationRequest requestWithIdentifier:@"CUSTOMIZED_NOTIFICATION"
+              [UNNotificationRequest requestWithIdentifier:requestIdentifier
                                                    content:content
-                                                   trigger:trigger];
+                                                   trigger:nil];
 
           // Schedule the notification.
           [center addNotificationRequest:request
@@ -89,7 +100,8 @@ void sendNotificationWithErrorHandler(NSString *title, NSString *body, NSString 
     }];
 }
 
-void sendNotification(id title, id body, id data, void *on_error_callback, BOOL playSound) {
+void sendNotification(id title, id body, id data, void *on_error_callback, BOOL playSound,
+                      id soundName, id identifier) {
     sendNotificationWithErrorHandler(
         title, body, data,
         ^(NSUInteger error_type, id error_msg) {
@@ -97,5 +109,5 @@ void sendNotification(id title, id body, id data, void *on_error_callback, BOOL 
             warp_on_notification_send_error(error_type, error_msg, on_error_callback);
           });
         },
-        playSound);
+        playSound, soundName, identifier);
 }

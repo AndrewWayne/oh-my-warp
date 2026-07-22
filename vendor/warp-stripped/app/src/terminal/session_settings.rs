@@ -55,6 +55,35 @@ pub enum NotificationsMode {
     Disabled,
 }
 
+/// How clicking a pane-focus notification focuses its origin pane (MS2).
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    schemars::JsonSchema,
+    settings_value::SettingsValue,
+)]
+#[schemars(
+    description = "How clicking a notification focuses the pane that raised it.",
+    rename_all = "snake_case"
+)]
+pub enum FocusBehavior {
+    /// Do not change focus on click.
+    None,
+    /// Only raise the window.
+    RaiseWindowOnly,
+    /// Raise the window and select the origin tab.
+    RaiseAndSelectTab,
+    /// Raise the window, select the tab, and focus the pane (full, default).
+    #[default]
+    RaiseSelectTabAndPane,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, settings_value::SettingsValue)]
 /**
  * Added [serde(default)] to ensure that new notification settings are backwards compatible with old clients.
@@ -94,6 +123,61 @@ pub struct NotificationsSettings {
 
     #[schemars(description = "Whether to play a sound with notifications.")]
     pub play_notification_sound: bool,
+
+    // ── Pane-focus notifications (MS1) ──────────────────────────────────────
+    #[schemars(
+        description = "Master switch for OSC 9/777 escape-sequence desktop \
+                       notifications (pane-focus notifications). Default: on."
+    )]
+    pub is_escape_sequence_enabled: bool,
+    #[schemars(
+        description = "Notify whenever the triggering event fires, regardless of \
+                       whether you are looking at that pane. Default: on."
+    )]
+    pub always_notify: bool,
+    #[schemars(
+        description = "When `always_notify` is on, still skip the desktop \
+                       notification if the pane that raised it is in the \
+                       foreground. Default: off."
+    )]
+    pub suppress_when_pane_foreground: bool,
+
+    // ── Pane-focus notifications (MS2) ──────────────────────────────────────
+    #[schemars(description = "Whether clicking a notification focuses its origin pane. Default: on.")]
+    pub focus_on_click: bool,
+    #[schemars(description = "How clicking a notification focuses its origin pane.")]
+    pub focus_behavior: FocusBehavior,
+    #[schemars(
+        description = "Named sound for escape-sequence notifications: a macOS system \
+                       sound name, or the name of an audio file placed in \
+                       ~/Library/Sounds. Empty = default notification sound."
+    )]
+    pub notification_sound_name: String,
+
+    // ── Pane-focus notifications (MS3): text templates ──────────────────────
+    #[schemars(
+        description = "Optional title template for escape-sequence notifications. \
+                       Variables: {title}, {body}. Empty = use the program-provided title."
+    )]
+    pub title_template: String,
+    #[schemars(
+        description = "Optional body template for escape-sequence notifications. \
+                       Variables: {title}, {body}. Empty = use the program-provided body."
+    )]
+    pub body_template: String,
+
+    // ── Pane-focus notifications (MS4): dedup / throttle / DND ───────────────
+    #[schemars(
+        description = "Respect the system Do-Not-Disturb / Focus state. On macOS the \
+                       notification center already honours Focus; this additionally \
+                       silences the sound. Default: on."
+    )]
+    pub respect_system_dnd: bool,
+    #[schemars(
+        description = "Coalesce identical notifications from the same pane fired within \
+                       this many seconds (0 = no throttling). Default: 5."
+    )]
+    pub throttle_window_secs: u64,
 }
 
 impl Default for NotificationsSettings {
@@ -106,6 +190,20 @@ impl Default for NotificationsSettings {
             is_agent_task_completed_enabled: true,
             is_needs_attention_enabled: true,
             play_notification_sound: true,
+            // Pane-focus notifications default on + always-notify (event-driven).
+            is_escape_sequence_enabled: true,
+            always_notify: true,
+            suppress_when_pane_foreground: false,
+            // MS2: click focuses origin pane (full), no custom sound by default.
+            focus_on_click: true,
+            focus_behavior: FocusBehavior::RaiseSelectTabAndPane,
+            notification_sound_name: String::new(),
+            // MS3: no custom text templates by default (use program-provided text).
+            title_template: String::new(),
+            body_template: String::new(),
+            // MS4: respect DND, coalesce identical same-pane notifications within 5s.
+            respect_system_dnd: true,
+            throttle_window_secs: 5,
         }
     }
 }
@@ -418,3 +516,45 @@ settings::macros::implement_setting_for_enum!(
     max_table_depth: 1,
     description: "Controls the working directory used when opening new sessions.",
 );
+
+#[cfg(test)]
+mod pane_focus_notifications_settings_tests {
+    use super::NotificationsSettings;
+
+    /// MS1: pane-focus notification fields default to on / on / off.
+    #[test]
+    fn defaults_escape_on_always_on_suppress_off() {
+        let d = NotificationsSettings::default();
+        assert!(d.is_escape_sequence_enabled, "escape sequence notifications default on");
+        assert!(d.always_notify, "always_notify defaults on (event-driven)");
+        assert!(
+            !d.suppress_when_pane_foreground,
+            "foreground suppression defaults off"
+        );
+    }
+
+    /// MS1: serde round-trip preserves the new fields (non-default values).
+    #[test]
+    fn serde_round_trip_preserves_new_fields() {
+        let mut s = NotificationsSettings::default();
+        s.is_escape_sequence_enabled = false;
+        s.always_notify = false;
+        s.suppress_when_pane_foreground = true;
+        let json = serde_json::to_string(&s).expect("serialize NotificationsSettings");
+        let back: NotificationsSettings =
+            serde_json::from_str(&json).expect("deserialize NotificationsSettings");
+        assert_eq!(back, s);
+    }
+
+    /// MS1: settings persisted before these fields existed still deserialize
+    /// (backwards compat via `#[serde(default)]`), filling in the new defaults.
+    /// Regression guard for the historical notification-settings deser incident.
+    #[test]
+    fn legacy_settings_without_new_fields_use_defaults() {
+        let parsed: NotificationsSettings =
+            serde_json::from_str("{}").expect("empty object deserializes via serde(default)");
+        assert!(parsed.is_escape_sequence_enabled);
+        assert!(parsed.always_notify);
+        assert!(!parsed.suppress_when_pane_foreground);
+    }
+}

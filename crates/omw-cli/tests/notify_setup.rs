@@ -3,6 +3,11 @@
 //! Uses the subprocess harness (`common::omw_cmd`), which `env_clear`s and sets
 //! `HOME` to a temp dir, so `~/.claude` and `~/.codex` resolve inside it. We add
 //! `OMW_DATA_DIR` so the materialized bridge scripts land under the temp dir too.
+//!
+//! Both agents now use Claude Code's JSON hooks format:
+//!   Claude: ~/.claude/settings.json  (Stop, Notification)
+//!   Codex:  ~/.codex/hooks.json      (Stop, PermissionRequest)
+//! both pointing at the unified `agent-notify.sh <label>` dispatcher.
 
 mod common;
 
@@ -25,15 +30,22 @@ fn claude(dir: &Path) -> PathBuf {
 }
 
 fn codex(dir: &Path) -> PathBuf {
-    dir.join(".codex").join("config.toml")
+    dir.join(".codex").join("hooks.json")
 }
 
 fn scripts_dir(dir: &Path) -> PathBuf {
     dir.join("data").join("notify-hooks")
 }
 
-fn claude_json(dir: &Path) -> serde_json::Value {
-    serde_json::from_str(&read(&claude(dir))).expect("settings.json is valid JSON")
+fn json_of(p: &Path) -> serde_json::Value {
+    serde_json::from_str(&read(p)).unwrap_or_else(|_| panic!("{} is valid JSON", p.display()))
+}
+
+fn first_command(v: &serde_json::Value, event: &str) -> String {
+    v["hooks"][event][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no command for {event}"))
+        .to_string()
 }
 
 #[test]
@@ -47,11 +59,7 @@ fn install_writes_scripts_and_configs() {
         .success();
 
     // Bridge scripts materialized and executable.
-    for name in [
-        "ai-notify.sh",
-        "claude-notify-dispatch.sh",
-        "codex-notify-dispatch.sh",
-    ] {
+    for name in ["agent-notify.sh", "ai-notify.sh"] {
         let p = scripts_dir(dir).join(name);
         assert!(p.is_file(), "missing script {name}");
         #[cfg(unix)]
@@ -62,27 +70,16 @@ fn install_writes_scripts_and_configs() {
         }
     }
 
-    // Claude hooks: one Stop (done) + one Notification (input) pointing at our script.
-    let v = claude_json(dir);
-    let stop = v["hooks"]["Stop"].as_array().expect("Stop is array");
-    assert_eq!(stop.len(), 1);
-    let stop_cmd = stop[0]["hooks"][0]["command"].as_str().unwrap();
-    assert!(
-        stop_cmd.ends_with("claude-notify-dispatch.sh done"),
-        "{stop_cmd}"
-    );
-    let note_cmd = v["hooks"]["Notification"][0]["hooks"][0]["command"]
-        .as_str()
-        .unwrap();
-    assert!(
-        note_cmd.ends_with("claude-notify-dispatch.sh input"),
-        "{note_cmd}"
-    );
+    // Claude: Stop + Notification -> agent-notify.sh Claude.
+    let cj = json_of(&claude(dir));
+    assert_eq!(cj["hooks"]["Stop"].as_array().unwrap().len(), 1);
+    assert!(first_command(&cj, "Stop").ends_with("agent-notify.sh Claude"));
+    assert!(first_command(&cj, "Notification").ends_with("agent-notify.sh Claude"));
 
-    // Codex notify points at our dispatcher.
-    let c = read(&codex(dir));
-    assert!(c.contains("codex-notify-dispatch.sh"), "{c}");
-    assert!(c.contains("turn-ended"), "{c}");
+    // Codex: Stop + PermissionRequest -> agent-notify.sh Codex, in ~/.codex/hooks.json.
+    let xj = json_of(&codex(dir));
+    assert!(first_command(&xj, "Stop").ends_with("agent-notify.sh Codex"));
+    assert!(first_command(&xj, "PermissionRequest").ends_with("agent-notify.sh Codex"));
 }
 
 #[test]
@@ -99,9 +96,15 @@ fn install_is_idempotent() {
         .assert()
         .success();
 
-    let v = claude_json(dir);
-    assert_eq!(v["hooks"]["Stop"].as_array().unwrap().len(), 1);
-    assert_eq!(v["hooks"]["Notification"].as_array().unwrap().len(), 1);
+    let cj = json_of(&claude(dir));
+    assert_eq!(cj["hooks"]["Stop"].as_array().unwrap().len(), 1);
+    assert_eq!(cj["hooks"]["Notification"].as_array().unwrap().len(), 1);
+    let xj = json_of(&codex(dir));
+    assert_eq!(xj["hooks"]["Stop"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        xj["hooks"]["PermissionRequest"].as_array().unwrap().len(),
+        1
+    );
 }
 
 #[test]
@@ -126,7 +129,7 @@ fn status_reports_state() {
 }
 
 #[test]
-fn install_preserves_user_entries_and_keeps_foreign_codex_notify() {
+fn install_preserves_user_entries() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
     std::fs::create_dir_all(dir.join(".claude")).unwrap();
@@ -138,7 +141,7 @@ fn install_preserves_user_entries_and_keeps_foreign_codex_notify() {
     .unwrap();
     std::fs::write(
         codex(dir),
-        "model = \"gpt-5\"\nnotify = [\"/opt/mine.sh\"]\n",
+        r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/opt/mine.sh"}]}]}}"#,
     )
     .unwrap();
 
@@ -147,15 +150,22 @@ fn install_preserves_user_entries_and_keeps_foreign_codex_notify() {
         .assert()
         .success();
 
-    // Claude: user's own Stop hook kept, ours appended (2 groups), model preserved.
-    let v = claude_json(dir);
-    assert_eq!(v["model"], "opus");
-    let stop = v["hooks"]["Stop"].as_array().unwrap();
-    assert_eq!(stop.len(), 2, "user hook + ours");
-    assert_eq!(stop[0]["hooks"][0]["command"], "/usr/local/bin/mine.sh");
+    // Claude: user's own Stop hook kept, ours appended (2 groups); model preserved.
+    let cj = json_of(&claude(dir));
+    assert_eq!(cj["model"], "opus");
+    assert_eq!(cj["hooks"]["Stop"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        cj["hooks"]["Stop"][0]["hooks"][0]["command"],
+        "/usr/local/bin/mine.sh"
+    );
 
-    // Codex: foreign notify left untouched (no --force).
-    assert!(read(&codex(dir)).contains("/opt/mine.sh"));
+    // Codex: user's own PreToolUse hook untouched; our Stop + PermissionRequest added.
+    let xj = json_of(&codex(dir));
+    assert_eq!(
+        xj["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+        "/opt/mine.sh"
+    );
+    assert!(first_command(&xj, "PermissionRequest").ends_with("agent-notify.sh Codex"));
 }
 
 #[test]
@@ -179,30 +189,12 @@ fn uninstall_removes_only_omw_entries() {
         .success();
 
     // User's model + own hook survive; ours are gone; scripts dir removed.
-    let v = claude_json(dir);
-    assert_eq!(v["model"], "opus");
-    let stop = v["hooks"]["Stop"].as_array().unwrap();
-    assert_eq!(stop.len(), 1);
-    assert_eq!(stop[0]["hooks"][0]["command"], "/usr/local/bin/mine.sh");
+    let cj = json_of(&claude(dir));
+    assert_eq!(cj["model"], "opus");
+    assert_eq!(cj["hooks"]["Stop"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        cj["hooks"]["Stop"][0]["hooks"][0]["command"],
+        "/usr/local/bin/mine.sh"
+    );
     assert!(!scripts_dir(dir).exists());
-}
-
-#[test]
-fn codex_force_overwrites_then_uninstall_removes() {
-    let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path();
-    std::fs::create_dir_all(dir.join(".codex")).unwrap();
-    std::fs::write(codex(dir), "notify = [\"/opt/mine.sh\"]\n").unwrap();
-
-    omw(dir)
-        .args(["notify-setup", "install", "--force"])
-        .assert()
-        .success();
-    assert!(read(&codex(dir)).contains("codex-notify-dispatch.sh"));
-
-    omw(dir)
-        .args(["notify-setup", "uninstall"])
-        .assert()
-        .success();
-    assert!(!read(&codex(dir)).contains("notify"));
 }

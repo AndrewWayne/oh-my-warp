@@ -860,7 +860,17 @@ pub const DEBUG_FLAGS: &[FeatureFlag] = &[FeatureFlag::DebugMode, FeatureFlag::R
 /// cargo feature, so `lib.rs::enabled_features` wouldn't add `FeatureFlag::Autoupdate`
 /// without this list. `bin/oss.rs` wires this into `ChannelState::additional_features`
 /// under `#[cfg(feature = "omw_local")]`. The regression test guards the contract.
-pub const OMW_LOCAL_FLAGS: &[FeatureFlag] = &[FeatureFlag::Autoupdate];
+///
+/// `ImeMarkedText` renders inline IME preedit (the characters you're composing show
+/// up underlined at the cursor, e.g. pinyin while typing Chinese) instead of only the
+/// OS candidate window. Release Warp enables it on macOS via `RELEASE_FLAGS`, but
+/// omw_local builds aren't release bundles, so we opt in here. Upstream marked-text
+/// support is macOS-only, so we gate it the same way `RELEASE_FLAGS` does.
+pub const OMW_LOCAL_FLAGS: &[FeatureFlag] = &[
+    FeatureFlag::Autoupdate,
+    #[cfg(target_os = "macos")]
+    FeatureFlag::ImeMarkedText,
+];
 
 /// Features enabled for the development team.  The expectation is that, over
 /// time, these will move on to PREVIEW_FLAGS before being launched.

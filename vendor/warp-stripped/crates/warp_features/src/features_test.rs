@@ -29,3 +29,19 @@ fn omw_local_flags_enables_autoupdate() {
          ChannelState::additional_features and the poll loop never starts."
     );
 }
+
+/// omw_local builds aren't release bundles, so `enabled_features()` never applies
+/// `RELEASE_FLAGS` (which turns on `ImeMarkedText` for macOS). Without this entry,
+/// inline IME preedit (composing characters shown at the cursor, e.g. pinyin while
+/// typing Chinese) never reaches the terminal model and only the OS candidate window
+/// is visible. Marked-text support is macOS-only upstream, hence the platform gate.
+#[cfg(target_os = "macos")]
+#[test]
+fn omw_local_flags_enable_ime_marked_text() {
+    assert!(
+        OMW_LOCAL_FLAGS.contains(&FeatureFlag::ImeMarkedText),
+        "OMW_LOCAL_FLAGS must enable ImeMarkedText on macOS so IME preedit \
+         (e.g. Chinese pinyin) renders inline in omw_local builds instead of only \
+         showing the OS candidate window."
+    );
+}

@@ -26,6 +26,7 @@ mod style;
 mod testing;
 
 use std::rc::Rc;
+use std::sync::Arc;
 
 use attribute_map::AttributeMap;
 use content::Content;
@@ -61,6 +62,10 @@ pub struct FlatStorage {
     /// An interval map storing additional styling information.
     bg_and_style_map: style::BgAndStyleMap,
 
+    /// An interval map storing OSC 8 destinations. Values are shared so a long hyperlink stores
+    /// its destination once per contiguous range, rather than once per terminal cell.
+    hyperlink_map: AttributeMap<Option<Arc<String>>>,
+
     /// The content offset with the end of prompt marker, if any.
     end_of_prompt_marker: Option<EndOfPromptMarker>,
 
@@ -84,6 +89,7 @@ impl FlatStorage {
             columns,
             fg_color_map: AttributeMap::new(DEFAULT_FG_COLOR),
             bg_and_style_map: AttributeMap::new(BgAndStyle::default()),
+            hyperlink_map: AttributeMap::new(None),
             end_of_prompt_marker: None,
             max_rows,
             num_truncated_rows: 0,
@@ -149,6 +155,7 @@ impl FlatStorage {
         self.content.truncate(new_content_len);
         self.fg_color_map.truncate(new_content_len);
         self.bg_and_style_map.truncate(new_content_len);
+        self.hyperlink_map.truncate(new_content_len);
 
         // Clear out the end-of-prompt marker if it was in a row we just
         // popped.
@@ -174,6 +181,7 @@ impl FlatStorage {
         self.content.truncate_front(new_start_offset);
         self.fg_color_map.truncate_front(new_start_offset);
         self.bg_and_style_map.truncate_front(new_start_offset);
+        self.hyperlink_map.truncate_front(new_start_offset);
 
         self.num_truncated_rows += count as u64;
     }
@@ -185,6 +193,7 @@ impl FlatStorage {
     fn push_rows_internal(&mut self, rows: &mut dyn Iterator<Item = &Row>) {
         let mut fg_color = self.fg_color_map.tail();
         let mut bg_and_style = self.bg_and_style_map.tail();
+        let mut hyperlink = self.hyperlink_map.tail();
 
         for row in rows {
             let start_offset = ByteOffset::from(self.content().end_offset());
@@ -227,6 +236,13 @@ impl FlatStorage {
                     bg_and_style = cell.into();
                     self.bg_and_style_map
                         .push_attribute_change(offset.., bg_and_style);
+                }
+                let cell_hyperlink = cell.hyperlink().cloned();
+                if hyperlink != cell_hyperlink {
+                    needs_processing = true;
+                    hyperlink.clone_from(&cell_hyperlink);
+                    self.hyperlink_map
+                        .push_attribute_change(offset.., cell_hyperlink);
                 }
                 if let Some(marker) = cell.end_of_prompt_marker() {
                     needs_processing = true;

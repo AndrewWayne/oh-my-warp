@@ -14991,6 +14991,14 @@ impl TerminalView {
                             })
                             .unwrap_or_default()
                     }
+                    GridHighlightedLink::Osc8(link) => {
+                        let url_content = link.get_inner().destination().to_owned();
+                        vec![MenuItemFields::new("Copy link")
+                            .with_on_select_action(TerminalAction::ContextMenu(
+                                ContextMenuAction::CopyUrl { url_content },
+                            ))
+                            .into_item()]
+                    }
                     #[cfg(feature = "local_fs")]
                     GridHighlightedLink::File(file_link) => {
                         let path = file_link.get_inner().absolute_path();
@@ -17085,6 +17093,10 @@ impl TerminalView {
                 let model = self.model.lock();
                 ctx.notify();
                 ctx.open_url(&model.link_at_range(url, RespectObfuscatedSecrets::No));
+            }
+            GridHighlightedLink::Osc8(link) if link.contains(position) => {
+                let destination = link.get_inner().destination().to_owned();
+                self.open_osc8_destination(&destination, ctx);
             }
             _ => (),
         }

@@ -34,6 +34,9 @@ pub trait Handler {
     /// Set the cursor shape.
     fn set_cursor_shape(&mut self, _shape: CursorShape);
 
+    /// Set or clear the OSC 8 hyperlink applied to subsequently written cells.
+    fn set_hyperlink(&mut self, _destination: Option<&str>) {}
+
     /// A character to be displayed.
     fn input(&mut self, _c: char);
 

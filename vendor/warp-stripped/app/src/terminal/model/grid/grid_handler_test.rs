@@ -1144,6 +1144,52 @@ fn test_possible_file_paths() {
 }
 
 #[test]
+fn test_possible_file_paths_detects_prefixed_absolute_path_after_full_width_colon() {
+    let prefix = "总入口：";
+    let path = "/Users/shuokong/Desktop/NanoCosmos/output/index.html";
+    let blockgrid = mock_blockgrid(&format!("{prefix}{path}"));
+    let path_start_col = prefix
+        .chars()
+        .map(|c| usize::max(c.width().unwrap_or(1), 1))
+        .sum::<usize>();
+
+    let paths = blockgrid
+        .grid_handler
+        .possible_file_paths_at_point(Point::new(0, path_start_col + 8));
+    let detected = paths
+        .iter()
+        .find(|possible_path| possible_path.path.path == path)
+        .expect("absolute paths after non-English labels should still be detected");
+
+    assert_eq!(
+        detected.range,
+        Point::new(0, path_start_col)..=Point::new(0, path_start_col + path.len() - 1)
+    );
+}
+
+#[test]
+fn test_possible_file_paths_reconstructs_prefixed_hard_wrapped_absolute_path() {
+    let prefix = "- main entry: ";
+    let first = "/Users/shuokong/Desktop/NanoCosmos/output/";
+    let second = "generated_fragment_diversity_20260730/index.html";
+    let blockgrid = mock_blockgrid(&format!("{prefix}{first}\r\n  {second}"));
+    let expected_path = format!("{first}{second}");
+
+    for point in [Point::new(0, prefix.len() + 8), Point::new(1, 8)] {
+        let paths = blockgrid.grid_handler.possible_file_paths_at_point(point);
+        let detected = paths
+            .iter()
+            .find(|possible_path| possible_path.path.path == expected_path)
+            .expect("prefixed hard-wrapped absolute path should reconstruct into one candidate");
+
+        assert_eq!(
+            detected.range,
+            Point::new(0, prefix.len())..=Point::new(1, second.len() + 1)
+        );
+    }
+}
+
+#[test]
 fn test_possible_file_paths_reconstructs_codex_hard_wrapped_path() {
     let blockgrid = mock_blockgrid("• root/segment/\r\n  child/\r\n  file.html");
     let expected_path = "root/segment/child/file.html";

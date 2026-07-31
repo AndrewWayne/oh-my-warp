@@ -90,7 +90,7 @@ const HARD_WRAPPED_FILE_PATH_CONTINUATION_INDENT: usize = 2;
 
 lazy_static! {
     pub static ref FILE_LINK_SEPARATORS: HashSet<char> =
-        HashSet::from(['\0', '\t', ' ', '(', ')', ':', '\\', ',', '"', '\'', '[', ']', '{', '}', '<', '>', ';', '|', '`', '=']);
+        HashSet::from(['\0', '\t', ' ', '(', ')', ':', '：', '\\', ',', '"', '\'', '[', ']', '{', '}', '<', '>', ';', '|', '`', '=']);
 
     /// The set of characters where, if we encounter them, we have a high degree of confidence that
     /// we're not in a valid URL. Other characters (e.g. '%') might be used in such a way that they
@@ -1395,10 +1395,14 @@ impl GridHandler {
             end_point: Option<Point>,
         }
 
+        fn is_blank(c: char) -> bool {
+            c == DEFAULT_CHAR || c.is_whitespace()
+        }
+
         fn trim_trailing_whitespace(mut fragments: Vec<Fragment>) -> Vec<Fragment> {
             while fragments
                 .last()
-                .is_some_and(|fragment| fragment.content.chars().all(char::is_whitespace))
+                .is_some_and(|fragment| fragment.content.chars().all(is_blank))
             {
                 fragments.pop();
             }
@@ -1409,7 +1413,7 @@ impl GridHandler {
             let mut fragment_count = 0;
             let mut cell_width = 0;
             for fragment in fragments {
-                if !fragment.content.chars().all(char::is_whitespace) {
+                if !fragment.content.chars().all(is_blank) {
                     break;
                 }
                 fragment_count += 1;
@@ -1425,6 +1429,59 @@ impl GridHandler {
             fragments.last().is_some_and(|fragment| {
                 fragment.content.ends_with('/') || fragment.content.ends_with('\\')
             })
+        }
+
+        fn is_absolute_path_boundary(c: char) -> bool {
+            is_blank(c)
+                || matches!(
+                    c,
+                    '(' | ')'
+                        | ':'
+                        | '：'
+                        | ','
+                        | '"'
+                        | '\''
+                        | '['
+                        | ']'
+                        | '{'
+                        | '}'
+                        | '<'
+                        | '>'
+                        | ';'
+                        | '|'
+                        | '`'
+                        | '='
+                )
+        }
+
+        fn text_cell_width(text: &str) -> usize {
+            text.chars()
+                .map(|c| usize::max(c.width().unwrap_or(1), 1))
+                .sum()
+        }
+
+        fn absolute_local_path_start_byte(text: &str) -> Option<usize> {
+            let mut previous_char = None;
+            for (idx, c) in text.char_indices() {
+                if c != '/' {
+                    previous_char = Some(c);
+                    continue;
+                }
+
+                let starts_after_boundary =
+                    previous_char.map(is_absolute_path_boundary).unwrap_or(true);
+                let next_char = text[idx + c.len_utf8()..].chars().next();
+                let has_path_body =
+                    next_char.is_some_and(|next| next != '/' && !is_absolute_path_boundary(next));
+
+                if starts_after_boundary && has_path_body {
+                    return Some(idx);
+                }
+
+                previous_char = Some(c);
+            }
+
+            None
         }
 
         if point.row >= self.total_rows() || self.columns() == 0 {
@@ -1557,9 +1614,25 @@ impl GridHandler {
                 let mut start_offset = first_fragment_offset;
 
                 for start_fragment_index in 0..first_fragments.len() {
-                    let mut possible_path = String::new();
+                    let mut possible_first_line_path = String::new();
                     for fragment in &first_fragments[start_fragment_index..] {
-                        possible_path.push_str(&fragment.content);
+                        possible_first_line_path.push_str(&fragment.content);
+                    }
+
+                    let (first_line_path, absolute_start_offset) =
+                        match absolute_local_path_start_byte(&possible_first_line_path) {
+                            Some(start_byte) => (
+                                Cow::Borrowed(&possible_first_line_path[start_byte..]),
+                                text_cell_width(&possible_first_line_path[..start_byte]),
+                            ),
+                            None => (Cow::Borrowed(possible_first_line_path.as_str()), 0),
+                        };
+
+                    let mut possible_path = first_line_path.to_string();
+                    let starting_offset = start_offset + absolute_start_offset;
+                    if absolute_start_offset > 0 && possible_path.is_empty() {
+                        start_offset += first_fragments[start_fragment_index].total_cell_width;
+                        continue;
                     }
                     for continuation_line in &logical_lines[start_line_index + 1..=end_line_index] {
                         let Some((fragment_count, _)) =
@@ -1581,7 +1654,7 @@ impl GridHandler {
                     }
 
                     let mut starting_point = Point::new(first_line.start_row, 0)
-                        .wrapping_add(self.columns(), start_offset);
+                        .wrapping_add(self.columns(), starting_offset);
                     if point < starting_point || point > ending_point {
                         start_offset += first_fragments[start_fragment_index].total_cell_width;
                         continue;

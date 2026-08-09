@@ -34,7 +34,7 @@ use super::block::{
 };
 use super::blockgrid::BlockGrid;
 use super::grid::grid_handler::{
-    ContainsPoint, FragmentBoundary, GridHandler, Link, PossiblePath, TermMode,
+    ContainsPoint, FragmentBoundary, GridHandler, Link, Osc8Hyperlink, PossiblePath, TermMode,
 };
 use super::image_map::StoredImageMetadata;
 use super::index::Point;
@@ -1852,6 +1852,22 @@ impl TerminalModel {
         }
     }
 
+    pub fn osc8_hyperlink_at_point(
+        &self,
+        point: &WithinModel<Point>,
+    ) -> Option<WithinModel<Osc8Hyperlink>> {
+        match point {
+            WithinModel::AltScreen(inner_point) => self
+                .alt_screen
+                .osc8_hyperlink_at_point(inner_point)
+                .map(WithinModel::AltScreen),
+            WithinModel::BlockList(inner_point) => self
+                .block_list
+                .osc8_hyperlink_at_point(inner_point)
+                .map(WithinModel::BlockList),
+        }
+    }
+
     /// Get boundary of the word at the given point.
     pub fn fragment_boundary_at_point(
         &self,
@@ -2436,6 +2452,10 @@ impl ansi::Handler for TerminalModel {
 
     fn set_cursor_shape(&mut self, shape: ansi::CursorShape) {
         delegate!(self.set_cursor_shape(shape));
+    }
+
+    fn set_hyperlink(&mut self, destination: Option<&str>) {
+        delegate!(self.set_hyperlink(destination));
     }
 
     fn input(&mut self, c: char) {

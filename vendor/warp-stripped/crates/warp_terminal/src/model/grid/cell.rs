@@ -1,4 +1,5 @@
 use std::boxed::Box;
+use std::sync::Arc;
 
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
@@ -114,6 +115,9 @@ struct CellExtra {
     /// base character and zerowidth characters).
     cell_with_zero_width: Option<String>,
     end_of_prompt: Option<EndOfPromptMarker>,
+    /// OSC 8 destination associated with this cell. The string is shared by all cells in the
+    /// same hyperlink so long links do not duplicate their destination per character.
+    hyperlink: Option<Arc<String>>,
 }
 
 /// Content and attributes of a single cell in the terminal grid.
@@ -188,6 +192,31 @@ impl Cell {
         match self.content_with_zerowidth() {
             Some(content_with_zerowidth) => CharOrStr::Str(content_with_zerowidth),
             None => CharOrStr::Char(self.c),
+        }
+    }
+
+    /// Returns the OSC 8 destination associated with this cell, if any.
+    #[inline]
+    pub fn hyperlink(&self) -> Option<&Arc<String>> {
+        self.extra
+            .as_ref()
+            .and_then(|extra| extra.hyperlink.as_ref())
+    }
+
+    /// Associates this cell with an OSC 8 destination.
+    #[inline]
+    pub fn set_hyperlink(&mut self, hyperlink: Option<Arc<String>>) {
+        if let Some(hyperlink) = hyperlink {
+            self.extra.get_or_insert_with(Box::default).hyperlink = Some(hyperlink);
+            return;
+        }
+
+        let should_drop_extra = self.extra.as_mut().is_some_and(|extra| {
+            extra.hyperlink = None;
+            extra.cell_with_zero_width.is_none() && extra.end_of_prompt.is_none()
+        });
+        if should_drop_extra {
+            self.extra = None;
         }
     }
 

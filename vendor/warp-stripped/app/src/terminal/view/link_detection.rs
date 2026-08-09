@@ -9,7 +9,7 @@ use crate::{
     server::telemetry::{LinkOpenMethod, TelemetryEvent},
     terminal::{
         model::{
-            grid::grid_handler::Link,
+            grid::grid_handler::{Link, Osc8Hyperlink},
             index::Point,
             terminal_model::{WithinBlock, WithinModel},
             RespectObfuscatedSecrets,
@@ -33,6 +33,7 @@ cfg_if::cfg_if! {
 }
 
 use super::{FindLinkArg, TerminalEditor};
+use url::Url;
 
 // "a/" and "b/" are prefixes specific to Git Diff
 #[cfg(feature = "local_fs")]
@@ -43,10 +44,35 @@ const PREFIXES_TO_REMOVE: [&str; 2] = ["a/", "b/"];
 #[cfg(feature = "local_fs")]
 const SUFFIXES_TO_REMOVE: [&str; 1] = ["@"];
 
+enum Osc8Target<'a> {
+    Web(&'a str),
+    #[cfg(feature = "local_fs")]
+    File(PathBuf),
+}
+
+fn osc8_target(destination: &str) -> Option<Osc8Target<'_>> {
+    let url = Url::parse(destination).ok()?;
+    match url.scheme() {
+        "http" | "https" => Some(Osc8Target::Web(destination)),
+        "file" => {
+            #[cfg(feature = "local_fs")]
+            {
+                url.to_file_path().ok().map(Osc8Target::File)
+            }
+            #[cfg(not(feature = "local_fs"))]
+            {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Highlighted link within a terminal model grid.
 #[derive(Debug, Clone)]
 pub enum GridHighlightedLink {
     Url(WithinModel<Link>),
+    Osc8(WithinModel<Osc8Hyperlink>),
     #[cfg(feature = "local_fs")]
     File(WithinModel<FileLink>),
 }
@@ -55,6 +81,7 @@ impl GridHighlightedLink {
     pub fn contains(&self, position: &WithinModel<Point>) -> bool {
         match self {
             GridHighlightedLink::Url(url) => url.contains(position),
+            GridHighlightedLink::Osc8(link) => link.contains(position),
             #[cfg(feature = "local_fs")]
             GridHighlightedLink::File(file_link) => file_link.contains(position),
         }
@@ -74,6 +101,13 @@ impl GridHighlightedLink {
             }
             #[cfg(feature = "local_fs")]
             GridHighlightedLink::File(_) => "Open file",
+            GridHighlightedLink::Osc8(link) => match osc8_target(link.get_inner().destination()) {
+                #[cfg(feature = "local_fs")]
+                Some(Osc8Target::File(path)) if path.is_dir() => "Open folder",
+                #[cfg(feature = "local_fs")]
+                Some(Osc8Target::File(_)) => "Open file",
+                _ => "Open link",
+            },
             GridHighlightedLink::Url(_) => "Open link",
         }
     }
@@ -92,6 +126,9 @@ impl Serialize for GridHighlightedLink {
             GridHighlightedLink::File(_) => {
                 serializer.serialize_unit_variant("HighlightedLink", 1, "File")
             }
+            GridHighlightedLink::Osc8(_) => {
+                serializer.serialize_unit_variant("HighlightedLink", 2, "Osc8")
+            }
         }
     }
 }
@@ -102,6 +139,7 @@ impl TryFrom<GridHighlightedLink> for Link {
     fn try_from(value: GridHighlightedLink) -> Result<Self, Self::Error> {
         match value {
             GridHighlightedLink::Url(WithinModel::AltScreen(url)) => Ok(url),
+            GridHighlightedLink::Osc8(WithinModel::AltScreen(link)) => Ok(link.link),
             #[cfg(feature = "local_fs")]
             GridHighlightedLink::File(WithinModel::AltScreen(file_link)) => Ok(file_link.link),
             _ => Err(anyhow::anyhow!(
@@ -117,6 +155,9 @@ impl TryFrom<GridHighlightedLink> for WithinBlock<Link> {
     fn try_from(value: GridHighlightedLink) -> Result<Self, Self::Error> {
         match value {
             GridHighlightedLink::Url(WithinModel::BlockList(url)) => Ok(url),
+            GridHighlightedLink::Osc8(WithinModel::BlockList(link)) => {
+                Ok(link.map(|link| link.link))
+            }
             #[cfg(feature = "local_fs")]
             GridHighlightedLink::File(WithinModel::BlockList(file_link)) => {
                 Ok(file_link.map(|file_link| file_link.link))
@@ -193,6 +234,23 @@ impl HighlightedLinkOption {
                         .set_smart_select_override(link.range.clone());
                 }
             },
+            GridHighlightedLink::Osc8(within_model) => match within_model {
+                WithinModel::BlockList(within_block) => {
+                    let point_range = WithinBlock::new(
+                        within_block.inner.link.range.clone(),
+                        within_block.block_index,
+                        within_block.grid,
+                    );
+                    model
+                        .block_list_mut()
+                        .set_smart_select_override(point_range);
+                }
+                WithinModel::AltScreen(link) => {
+                    model
+                        .alt_screen_mut()
+                        .set_smart_select_override(link.link.range.clone());
+                }
+            },
             #[cfg(feature = "local_fs")]
             GridHighlightedLink::File(within_model) => match within_model {
                 WithinModel::BlockList(within_block) => {
@@ -246,6 +304,15 @@ impl Deref for HighlightedLinkOption {
 }
 
 impl super::TerminalView {
+    pub(super) fn open_osc8_destination(&mut self, destination: &str, ctx: &mut ViewContext<Self>) {
+        match osc8_target(destination) {
+            Some(Osc8Target::Web(url)) => ctx.open_url(url),
+            #[cfg(feature = "local_fs")]
+            Some(Osc8Target::File(path)) => self.open_file_path(path, None, ctx),
+            None => log::warn!("Ignored unsupported OSC 8 destination scheme"),
+        }
+    }
+
     pub(super) fn maybe_link_hover(
         &mut self,
         position: &Option<WithinModel<Point>>,
@@ -296,22 +363,34 @@ impl super::TerminalView {
             new_cursor_shape = Some(Cursor::Arrow);
         }
 
-        let (url_at_point, new_fragment_boundary) = {
+        let (osc8_at_point, url_at_point, new_fragment_boundary) = {
             let model = self.model.lock();
             (
+                model
+                    .osc8_hyperlink_at_point(position)
+                    .filter(|link| osc8_target(link.get_inner().destination()).is_some()),
                 model.url_at_point(position),
                 model.fragment_boundary_at_point(position),
             )
         };
 
-        match (url_at_point, &self.last_hover_fragment_boundary) {
-            (Some(url), _) => {
+        match (
+            osc8_at_point,
+            url_at_point,
+            &self.last_hover_fragment_boundary,
+        ) {
+            (Some(link), _, _) => {
+                self.highlighted_link
+                    .set(GridHighlightedLink::Osc8(link), &mut self.model.lock());
+                new_cursor_shape = Some(Cursor::PointingHand);
+            }
+            (_, Some(url), _) => {
                 self.highlighted_link
                     .set(GridHighlightedLink::Url(url), &mut self.model.lock());
                 new_cursor_shape = Some(Cursor::PointingHand);
             }
             // Only scan for links if the mouse hovered on a new word.
-            (_, Some(last_hover_fragment_boundary))
+            (_, _, Some(last_hover_fragment_boundary))
                 if !last_hover_fragment_boundary.contains(position) =>
             {
                 // Use try_send to return an error directly when the channel is full
@@ -322,7 +401,7 @@ impl super::TerminalView {
                 });
             }
             // If there's no last hover fragment boundary, we scan for links.
-            (_, None) => {
+            (_, _, None) => {
                 let _ = self.find_link_tx.try_send(FindLinkArg {
                     position: *position,
                     from_editor,
@@ -392,6 +471,9 @@ impl super::TerminalView {
                 let model = self.model.lock();
                 ctx.open_url(&model.link_at_range(url, RespectObfuscatedSecrets::No));
             }
+            GridHighlightedLink::Osc8(link) => {
+                self.open_osc8_destination(link.get_inner().destination(), ctx);
+            }
         };
     }
 
@@ -426,6 +508,79 @@ impl super::TerminalView {
                 ctx.open_url(url);
             }
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::TerminalView;
+    use super::*;
+
+    #[test]
+    fn osc8_target_accepts_web_links_and_rejects_unsupported_schemes() {
+        assert!(matches!(
+            osc8_target("https://example.com/path"),
+            Some(Osc8Target::Web("https://example.com/path"))
+        ));
+        assert!(osc8_target("javascript:alert(1)").is_none());
+    }
+
+    #[cfg(feature = "local_fs")]
+    #[test]
+    fn osc8_target_decodes_local_file_urls() {
+        let target = osc8_target("file:///Users/test/My%20%E6%96%87%E4%BB%B6.md")
+            .expect("local file URL should be supported");
+        let Osc8Target::File(path) = target else {
+            panic!("file URL should classify as a local file");
+        };
+        assert_eq!(path, PathBuf::from("/Users/test/My 文件.md"));
+    }
+
+    #[cfg(feature = "local_fs")]
+    #[test]
+    fn reconstructed_hard_wrapped_path_wins_over_valid_prefix_directory() {
+        let temp_dir = tempfile::tempdir().expect("temporary directory should be created");
+        let relative_file = PathBuf::from("root/segment/child/file.html");
+        let absolute_file = temp_dir.path().join(&relative_file);
+        std::fs::create_dir_all(absolute_file.parent().expect("file should have a parent"))
+            .expect("nested directories should be created");
+        std::fs::write(&absolute_file, "test").expect("test file should be created");
+
+        let full_range = Point::new(0, 2)..=Point::new(2, 10);
+        let prefix_range = Point::new(0, 2)..=Point::new(0, 14);
+        let possible_paths = vec![
+            WithinModel::AltScreen(grid_handler::PossiblePath {
+                path: CleanPathResult {
+                    path: relative_file.to_string_lossy().into_owned(),
+                    line_and_column_num: None,
+                },
+                range: full_range.clone(),
+            }),
+            WithinModel::AltScreen(grid_handler::PossiblePath {
+                path: CleanPathResult {
+                    path: "root/segment/".into(),
+                    line_and_column_num: None,
+                },
+                range: prefix_range,
+            }),
+        ];
+
+        let link = TerminalView::compute_valid_paths(
+            temp_dir
+                .path()
+                .to_str()
+                .expect("temporary path should be UTF-8"),
+            possible_paths.into_iter(),
+            100,
+            None,
+        )
+        .expect("the reconstructed full file should be linkified");
+        let GridHighlightedLink::File(WithinModel::AltScreen(file_link)) = link else {
+            panic!("expected an alt-screen file link");
+        };
+
+        assert_eq!(file_link.link.range, full_range);
+        assert_eq!(file_link.absolute_path(), Some(absolute_file));
     }
 }
 

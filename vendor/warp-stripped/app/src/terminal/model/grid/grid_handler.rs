@@ -14,6 +14,7 @@ use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 use std::ops::{Range, RangeInclusive};
+use std::sync::Arc;
 use std::{
     cmp::{min, Ordering},
     mem,
@@ -83,10 +84,13 @@ const DEFAULT_BG_CODE: u8 = 49;
 /// the SGR (Select Graphic Rendition) parameters for 256-color and true-color
 const FG_SGR_PARAM: u8 = 38;
 const BG_SGR_PARAM: u8 = 48;
+const HARD_WRAPPED_FILE_PATH_MAX_ROWS: usize = 8;
+const HARD_WRAPPED_FILE_PATH_MAX_BYTES: usize = 8192;
+const HARD_WRAPPED_FILE_PATH_CONTINUATION_INDENT: usize = 2;
 
 lazy_static! {
     pub static ref FILE_LINK_SEPARATORS: HashSet<char> =
-        HashSet::from(['\0', '\t', ' ', '(', ')', ':', '\\', ',', '"', '\'', '[', ']', '{', '}', '<', '>', ';', '|', '`', '=']);
+        HashSet::from(['\0', '\t', ' ', '(', ')', ':', '：', '\\', ',', '"', '\'', '[', ']', '{', '}', '<', '>', ';', '|', '`', '=']);
 
     /// The set of characters where, if we encounter them, we have a high degree of confidence that
     /// we're not in a valid URL. Other characters (e.g. '%') might be used in such a way that they
@@ -166,6 +170,31 @@ impl Link {
 impl ContainsPoint for Link {
     fn contains(&self, point: Point) -> bool {
         self.range.contains(&point)
+    }
+}
+
+/// A semantic hyperlink supplied by an OSC 8 escape sequence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Osc8Hyperlink {
+    pub link: Link,
+    destination: Arc<String>,
+}
+
+impl Osc8Hyperlink {
+    pub fn destination(&self) -> &str {
+        self.destination.as_str()
+    }
+}
+
+impl RangeInModel for Osc8Hyperlink {
+    fn range(&self) -> RangeInclusive<Point> {
+        self.link.range.clone()
+    }
+}
+
+impl ContainsPoint for Osc8Hyperlink {
+    fn contains(&self, point: Point) -> bool {
+        self.link.contains(point)
     }
 }
 
@@ -756,6 +785,61 @@ impl GridHandler {
         }
     }
 
+    /// Returns the OSC 8 destination and contiguous linked cell range at a point.
+    pub fn osc8_hyperlink_at_point(&self, displayed_point: Point) -> Option<Osc8Hyperlink> {
+        let original_point = self.maybe_translate_point_from_displayed_to_original(displayed_point);
+        let mut cursor = self.grapheme_cursor_from(original_point, grapheme_cursor::Wrap::All);
+        let anchor = cursor.current_item()?;
+        let destination = anchor.cell().hyperlink()?.clone();
+        let anchor_point = anchor.point();
+        let has_destination = |cell: &Cell| {
+            cell.hyperlink()
+                .is_some_and(|candidate| candidate == &destination)
+        };
+
+        let mut start = anchor_point;
+        cursor.move_backward();
+        while let Some(item) = cursor.current_item() {
+            if !has_destination(item.cell()) {
+                break;
+            }
+            start = item.point();
+            cursor.move_backward();
+        }
+
+        let mut end = anchor_point.max(original_point);
+        let mut cursor = self.grapheme_cursor_from(anchor_point, grapheme_cursor::Wrap::All);
+        cursor.move_forward();
+        while let Some(item) = cursor.current_item() {
+            if !has_destination(item.cell()) {
+                break;
+            }
+            end = item.point();
+            cursor.move_forward();
+        }
+
+        let mut link = Link {
+            range: start..=end,
+            is_empty: false,
+        };
+
+        if self.has_displayed_output() {
+            let displayed_start =
+                self.maybe_translate_point_from_original_to_displayed(*link.range.start());
+            let displayed_end =
+                self.maybe_translate_point_from_original_to_displayed(*link.range.end());
+            if displayed_start > displayed_end {
+                log::error!(
+                    "OSC 8 translation to displayed points failed. Displayed range start {displayed_start:?} is greater than displayed range end {displayed_end:?}"
+                );
+            } else {
+                link.range = displayed_start..=displayed_end;
+            }
+        }
+
+        Some(Osc8Hyperlink { link, destination })
+    }
+
     /// Converts a cell to a string, with ansi escape sequences
     fn cell_to_string(cell: &Cell) -> String {
         let cell_content = cell.content_for_display();
@@ -1093,6 +1177,7 @@ impl GridHandler {
     /// Return all possible file paths containing the grid point ordered from longest to shortest.
     pub fn possible_file_paths_at_point(&self, displayed_point: Point) -> Vec<PossiblePath> {
         let point = self.maybe_translate_point_from_displayed_to_original(displayed_point);
+        let mut hard_wrapped_paths = self.hard_wrapped_file_paths_at_point(point);
         let last_row_end_with_line_wrap = point.row > 0 && self.row_wraps(point.row - 1);
         let current_row_end_with_line_wrap =
             point.row + 1 < self.total_rows() && self.row_wraps(point.row);
@@ -1295,6 +1380,315 @@ impl GridHandler {
         }
 
         possible_paths.reverse();
+        hard_wrapped_paths.extend(possible_paths);
+        hard_wrapped_paths
+    }
+
+    /// Reconstruct paths that rich terminal renderers split with hard line breaks. Codex prefixes
+    /// continuation lines with two spaces. Terminal soft wraps inside those logical lines are
+    /// joined without removing content; the view layer still verifies candidates on the filesystem.
+    fn hard_wrapped_file_paths_at_point(&self, point: Point) -> Vec<PossiblePath> {
+        struct LogicalLine {
+            start_row: usize,
+            end_row: usize,
+            fragments: Vec<Fragment>,
+            end_point: Option<Point>,
+        }
+
+        fn is_blank(c: char) -> bool {
+            c == DEFAULT_CHAR || c.is_whitespace()
+        }
+
+        fn trim_trailing_whitespace(mut fragments: Vec<Fragment>) -> Vec<Fragment> {
+            while fragments
+                .last()
+                .is_some_and(|fragment| fragment.content.chars().all(is_blank))
+            {
+                fragments.pop();
+            }
+            fragments
+        }
+
+        fn continuation_indent(fragments: &[Fragment]) -> Option<(usize, usize)> {
+            let mut fragment_count = 0;
+            let mut cell_width = 0;
+            for fragment in fragments {
+                if !fragment.content.chars().all(is_blank) {
+                    break;
+                }
+                fragment_count += 1;
+                cell_width += fragment.total_cell_width;
+            }
+
+            (cell_width >= HARD_WRAPPED_FILE_PATH_CONTINUATION_INDENT
+                && fragment_count < fragments.len())
+            .then_some((fragment_count, cell_width))
+        }
+
+        fn ends_with_path_separator(fragments: &[Fragment]) -> bool {
+            fragments.last().is_some_and(|fragment| {
+                fragment.content.ends_with('/') || fragment.content.ends_with('\\')
+            })
+        }
+
+        fn is_absolute_path_boundary(c: char) -> bool {
+            is_blank(c)
+                || matches!(
+                    c,
+                    '(' | ')'
+                        | ':'
+                        | '：'
+                        | ','
+                        | '"'
+                        | '\''
+                        | '['
+                        | ']'
+                        | '{'
+                        | '}'
+                        | '<'
+                        | '>'
+                        | ';'
+                        | '|'
+                        | '`'
+                        | '='
+                )
+        }
+
+        fn text_cell_width(text: &str) -> usize {
+            text.chars()
+                .map(|c| usize::max(c.width().unwrap_or(1), 1))
+                .sum()
+        }
+
+        fn absolute_local_path_start_byte(text: &str) -> Option<usize> {
+            let mut previous_char = None;
+            for (idx, c) in text.char_indices() {
+                if c != '/' {
+                    previous_char = Some(c);
+                    continue;
+                }
+
+                let starts_after_boundary =
+                    previous_char.map(is_absolute_path_boundary).unwrap_or(true);
+                let next_char = text[idx + c.len_utf8()..].chars().next();
+                let has_path_body =
+                    next_char.is_some_and(|next| next != '/' && !is_absolute_path_boundary(next));
+
+                if starts_after_boundary && has_path_body {
+                    return Some(idx);
+                }
+
+                previous_char = Some(c);
+            }
+
+            None
+        }
+
+        if point.row >= self.total_rows() || self.columns() == 0 {
+            return Vec::new();
+        }
+
+        let raw_row_fragments = |row| {
+            self.line_to_fragments(
+                row,
+                0..self.columns().saturating_sub(1),
+                IncludeFirstWideChar::Yes,
+            )
+        };
+        let row_fragments = |row| {
+            let fragments = raw_row_fragments(row);
+            if self.row_wraps(row) {
+                fragments
+            } else {
+                trim_trailing_whitespace(fragments)
+            }
+        };
+
+        let logical_line_at = |row| {
+            let start_row = self.line_search_left(Point::new(row, 0)).row;
+            let end_row = self
+                .line_search_right(Point::new(row, 0))
+                .row
+                .min(self.total_rows() - 1);
+            let mut fragments = Vec::new();
+            let mut end_point = None;
+
+            for physical_row in start_row..=end_row {
+                let physical_fragments = row_fragments(physical_row);
+                let physical_width = physical_fragments
+                    .iter()
+                    .map(|fragment| fragment.total_cell_width)
+                    .sum::<usize>();
+                if physical_width > 0 {
+                    end_point = Some(Point::new(physical_row, physical_width - 1));
+                }
+                fragments.extend(physical_fragments);
+            }
+
+            LogicalLine {
+                start_row,
+                end_row,
+                fragments,
+                end_point,
+            }
+        };
+
+        let hovered_row_width = row_fragments(point.row)
+            .iter()
+            .map(|fragment| fragment.total_cell_width)
+            .sum::<usize>();
+        if point.col >= hovered_row_width {
+            return Vec::new();
+        }
+
+        let hovered_line = logical_line_at(point.row);
+        let hovered_start_row = hovered_line.start_row;
+        let mut logical_lines = vec![hovered_line];
+
+        while logical_lines.len() < HARD_WRAPPED_FILE_PATH_MAX_ROWS {
+            let current_line = &logical_lines[0];
+            if current_line.start_row == 0 || continuation_indent(&current_line.fragments).is_none()
+            {
+                break;
+            }
+
+            let previous_line = logical_line_at(current_line.start_row - 1);
+            if !ends_with_path_separator(&previous_line.fragments) {
+                break;
+            }
+            logical_lines.insert(0, previous_line);
+        }
+
+        while logical_lines.len() < HARD_WRAPPED_FILE_PATH_MAX_ROWS {
+            let current_line = logical_lines
+                .last()
+                .expect("hard-wrapped path always has a hovered logical line");
+            if current_line.end_row + 1 >= self.total_rows()
+                || !ends_with_path_separator(&current_line.fragments)
+            {
+                break;
+            }
+
+            let next_line = logical_line_at(current_line.end_row + 1);
+            if continuation_indent(&next_line.fragments).is_none() {
+                break;
+            }
+            logical_lines.push(next_line);
+        }
+
+        if logical_lines.len() < 2 {
+            return Vec::new();
+        }
+
+        let hovered_line_index = logical_lines
+            .iter()
+            .position(|line| line.start_row == hovered_start_row)
+            .expect("hovered logical line should remain in the collected path lines");
+        if hovered_line_index > 0
+            && point.row == logical_lines[hovered_line_index].start_row
+            && continuation_indent(&logical_lines[hovered_line_index].fragments)
+                .is_some_and(|(_, indent_width)| point.col < indent_width)
+        {
+            return Vec::new();
+        }
+
+        let mut possible_paths = Vec::new();
+        for start_line_index in 0..=hovered_line_index {
+            for end_line_index in hovered_line_index..logical_lines.len() {
+                if start_line_index == end_line_index {
+                    continue;
+                }
+
+                let first_line = &logical_lines[start_line_index];
+                let last_line = &logical_lines[end_line_index];
+                let Some(mut ending_point) = last_line.end_point else {
+                    continue;
+                };
+
+                let (first_fragment_index, first_fragment_offset) = if start_line_index > 0 {
+                    continuation_indent(&first_line.fragments).unwrap_or((0, 0))
+                } else {
+                    (0, 0)
+                };
+                let first_fragments = &first_line.fragments[first_fragment_index..];
+                let mut start_offset = first_fragment_offset;
+
+                for start_fragment_index in 0..first_fragments.len() {
+                    let mut possible_first_line_path = String::new();
+                    for fragment in &first_fragments[start_fragment_index..] {
+                        possible_first_line_path.push_str(&fragment.content);
+                    }
+
+                    let (first_line_path, absolute_start_offset) =
+                        match absolute_local_path_start_byte(&possible_first_line_path) {
+                            Some(start_byte) => (
+                                Cow::Borrowed(&possible_first_line_path[start_byte..]),
+                                text_cell_width(&possible_first_line_path[..start_byte]),
+                            ),
+                            None => (Cow::Borrowed(possible_first_line_path.as_str()), 0),
+                        };
+
+                    let mut possible_path = first_line_path.to_string();
+                    let starting_offset = start_offset + absolute_start_offset;
+                    if absolute_start_offset > 0 && possible_path.is_empty() {
+                        start_offset += first_fragments[start_fragment_index].total_cell_width;
+                        continue;
+                    }
+                    for continuation_line in &logical_lines[start_line_index + 1..=end_line_index] {
+                        let Some((fragment_count, _)) =
+                            continuation_indent(&continuation_line.fragments)
+                        else {
+                            possible_path.clear();
+                            break;
+                        };
+                        for fragment in &continuation_line.fragments[fragment_count..] {
+                            possible_path.push_str(&fragment.content);
+                        }
+                    }
+
+                    if possible_path.len() > HARD_WRAPPED_FILE_PATH_MAX_BYTES
+                        || (!possible_path.contains('/') && !possible_path.contains('\\'))
+                    {
+                        start_offset += first_fragments[start_fragment_index].total_cell_width;
+                        continue;
+                    }
+
+                    let mut starting_point = Point::new(first_line.start_row, 0)
+                        .wrapping_add(self.columns(), starting_offset);
+                    if point < starting_point || point > ending_point {
+                        start_offset += first_fragments[start_fragment_index].total_cell_width;
+                        continue;
+                    }
+
+                    let expanded_path = shellexpand::tilde(&possible_path);
+                    let cleaned_path = CleanPathResult::with_line_and_column_number(&expanded_path);
+
+                    if self.has_displayed_output() {
+                        let displayed_start =
+                            self.maybe_translate_point_from_original_to_displayed(starting_point);
+                        let displayed_end =
+                            self.maybe_translate_point_from_original_to_displayed(ending_point);
+                        if displayed_start <= displayed_end {
+                            starting_point = displayed_start;
+                            ending_point = displayed_end;
+                        } else {
+                            log::error!(
+                                "Hard-wrapped file path translation failed. Displayed range start {displayed_start:?} is greater than displayed range end {displayed_end:?}"
+                            );
+                        }
+                    }
+
+                    possible_paths.push(PossiblePath {
+                        path: cleaned_path,
+                        range: starting_point..=ending_point,
+                    });
+
+                    start_offset += first_fragments[start_fragment_index].total_cell_width;
+                }
+            }
+        }
+
+        possible_paths.sort_by(|left, right| right.path.path.len().cmp(&left.path.path.len()));
         possible_paths
     }
 

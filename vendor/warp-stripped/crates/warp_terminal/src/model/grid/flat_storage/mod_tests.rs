@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use std::sync::Arc;
 use testing::{assert_rows_equal, ToRows as _};
 
 use crate::model::{
@@ -145,6 +146,35 @@ fn test_push_rows_with_color_and_multibyte_chars() {
     storage.push_rows([&row]);
 
     assert_eq!(storage.rows_from(0).next().unwrap().as_ref(), &row);
+}
+
+#[test]
+fn test_osc8_hyperlinks_roundtrip_through_flat_storage() {
+    let destination = Arc::new("file:///Users/test/My%20File.md".to_owned());
+    let mut cells = "link!"
+        .chars()
+        .map(|c| {
+            let mut cell = Cell::default();
+            cell.c = c;
+            cell
+        })
+        .collect_vec();
+    for cell in &mut cells[0..4] {
+        cell.set_hyperlink(Some(destination.clone()));
+    }
+    let row = Row::from_vec(cells, 5);
+
+    let mut storage = FlatStorage::new(5, None, None);
+    storage.push_rows([&row]);
+    let restored = storage.rows_from(0).next().expect("row should roundtrip");
+
+    for cell in &restored[0..4] {
+        assert!(Arc::ptr_eq(
+            cell.hyperlink().expect("linked cell should retain target"),
+            &destination
+        ));
+    }
+    assert!(restored[4].hyperlink().is_none());
 }
 
 #[test]

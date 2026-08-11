@@ -292,33 +292,40 @@ pub(crate) fn install(
     Ok(())
 }
 
-pub(crate) fn status(stdout: &mut dyn Write, _stderr: &mut dyn Write) -> anyhow::Result<()> {
+pub(crate) fn status(
+    stdout: &mut dyn Write,
+    _stderr: &mut dyn Write,
+    json: bool,
+) -> anyhow::Result<()> {
     let dir = scripts_dir()?;
     let dispatch = dir.join(DISPATCH);
     let dispatch = dispatch
         .to_str()
         .context("script path is not valid UTF-8")?;
 
+    let scripts = scripts_present(&dir);
+    let claude = hooks_installed(&claude_settings_path()?, dispatch)?;
+    let codex = hooks_installed(&codex_hooks_path()?, dispatch)?;
+
+    // Machine-readable form for the GUI (the startup banner reads this to decide
+    // whether to offer one-click setup). Keep the keys stable.
+    if json {
+        writeln!(
+            stdout,
+            "{}",
+            json!({ "scripts_present": scripts, "claude": claude, "codex": codex })
+        )?;
+        return Ok(());
+    }
+
     writeln!(
         stdout,
         "Bridge scripts ({}): {}",
         dir.display(),
-        if scripts_present(&dir) {
-            "present"
-        } else {
-            "missing"
-        }
+        if scripts { "present" } else { "missing" }
     )?;
-    writeln!(
-        stdout,
-        "Claude Code: {}",
-        yes_no(hooks_installed(&claude_settings_path()?, dispatch)?)
-    )?;
-    writeln!(
-        stdout,
-        "Codex: {}",
-        yes_no(hooks_installed(&codex_hooks_path()?, dispatch)?)
-    )?;
+    writeln!(stdout, "Claude Code: {}", yes_no(claude))?;
+    writeln!(stdout, "Codex: {}", yes_no(codex))?;
     Ok(())
 }
 

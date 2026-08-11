@@ -74,7 +74,9 @@ pub fn run(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) -> i
             NotifySetupCommand::Install(args) => {
                 commands::notify_setup::install(args, stdout, stderr)
             }
-            NotifySetupCommand::Status => commands::notify_setup::status(stdout, stderr),
+            NotifySetupCommand::Status { json } => {
+                commands::notify_setup::status(stdout, stderr, json)
+            }
             NotifySetupCommand::Uninstall => commands::notify_setup::uninstall(stdout, stderr),
         },
     };
@@ -130,7 +132,11 @@ enum NotifySetupCommand {
     /// Install the bridge scripts and hook entries for Claude Code and Codex
     Install(commands::notify_setup::InstallArgs),
     /// Report which agents are wired up
-    Status,
+    Status {
+        /// Emit machine-readable JSON: {"scripts_present":bool,"claude":bool,"codex":bool}
+        #[arg(long)]
+        json: bool,
+    },
     /// Remove omw's hook entries and the bridge scripts
     Uninstall,
 }

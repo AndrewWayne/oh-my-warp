@@ -1,4 +1,5 @@
 mod accessibility;
+mod agent_notify_banner;
 pub mod ai;
 mod alias_expansion;
 pub mod app_icon;
@@ -38,6 +39,7 @@ mod vim_banner;
 mod schema_validation_tests;
 
 pub use accessibility::*;
+pub use agent_notify_banner::*;
 pub use ai::*;
 pub use alias_expansion::*;
 pub use block_visibility::*;

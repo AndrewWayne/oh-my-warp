@@ -255,8 +255,8 @@ use crate::server::telemetry::SharingDialogSource;
 use crate::settings::import::model::ImportedConfigModel;
 use crate::settings::import::view::{SettingsImportEvent, SettingsImportView};
 use crate::settings::{
-    AISettings, AISettingsChangedEvent, AliasExpansionSettings, AppEditorSettings,
-    BlockVisibilitySettings, BlockVisibilitySettingsChangedEvent, DebugSettings,
+    AISettings, AISettingsChangedEvent, AgentNotifyBannerSettings, AliasExpansionSettings,
+    AppEditorSettings, BlockVisibilitySettings, BlockVisibilitySettingsChangedEvent, DebugSettings,
     DebugSettingsChangedEvent, EmacsBindingsSettings, FontSettings, FontSettingsChangedEvent,
     InputModeSettings, InputModeSettingsChangedEvent, InputSettings, PaneSettings,
     PaneSettingsChangedEvent, SelectionSettings, VimBannerSettings,
@@ -2507,6 +2507,14 @@ pub struct TerminalView {
     emacs_bindings_banner: ViewHandle<Banner<TerminalAction>>,
     is_emacs_bindings_banner_open: bool,
 
+    /// One-click "enable Claude Code / Codex completion notifications" banner,
+    /// offered on first bootstrap when the agent-notify hooks aren't wired.
+    agent_notify_banner: ViewHandle<Banner<TerminalAction>>,
+    is_agent_notify_banner_open: bool,
+    /// Guards the async `omw notify-setup status` probe so it runs at most once
+    /// per view.
+    agent_notify_check_started: bool,
+
     pane_configuration: ModelHandle<PaneConfiguration>,
     focus_handle: Option<PaneFocusHandle>,
 
@@ -3768,6 +3776,43 @@ impl TerminalView {
             });
         }
 
+        // One-click agent-notification setup banner. Reuses the emacs-banner
+        // idiom: the affirmative button rides Dismiss(Temporary) ("Enable") and
+        // the decline button rides Dismiss(Permanent) ("Don't show again"), so
+        // no new action variant is needed.
+        let agent_notify_banner = ctx.add_typed_action_view(|_| {
+            Banner::new_with_buttons(
+                BannerTextContent::plain_text(
+                    "Get a desktop notification when Claude Code or Codex finishes.",
+                ),
+                vec![
+                    BannerTextButton::new(
+                        String::from("Enable"),
+                        Rc::new(|event_ctx, _app_ctx, _| {
+                            event_ctx.dispatch_typed_action(
+                                BannerAction::<TerminalAction>::Dismiss(DismissalType::Temporary),
+                            );
+                        }),
+                    ),
+                    BannerTextButton::new(
+                        String::from("Don't show again"),
+                        Rc::new(|event_ctx, _app_ctx, _| {
+                            event_ctx.dispatch_typed_action(
+                                BannerAction::<TerminalAction>::Dismiss(DismissalType::Permanent),
+                            );
+                        }),
+                    ),
+                ],
+                // No (X): it would also emit Dismiss(Temporary) and collide with
+                // the "Enable" button. The two buttons cover both outcomes.
+                /* with_close_button */ false,
+            )
+            .with_icon(icons::Icon::Bell)
+        });
+        ctx.subscribe_to_view(&agent_notify_banner, |me, _, event, ctx| {
+            me.handle_agent_notify_banner_event(event, ctx);
+        });
+
         let windowing_state_handle = WindowManager::handle(ctx);
         ctx.subscribe_to_model(&windowing_state_handle, |me, _handle, evt, ctx| match evt {
             windowing::StateEvent::ValueChanged { current, previous } => {
@@ -4058,6 +4103,9 @@ impl TerminalView {
             is_incompatible_configuration_banner_open: false,
             emacs_bindings_banner,
             is_emacs_bindings_banner_open: false,
+            agent_notify_banner,
+            is_agent_notify_banner_open: false,
+            agent_notify_check_started: false,
             control_master_error_banner,
             control_master_error_banner_state: Default::default(),
             pane_configuration,
@@ -11954,6 +12002,8 @@ impl TerminalView {
         if self.should_display_vim_banner(&session, ctx) {
             self.insert_vim_mode_banner(ctx);
         }
+
+        self.maybe_offer_agent_notify_setup(ctx);
 
         // If we were waiting to share this session once it was bootstrapped,
         // we can now attempt to share it.
@@ -20627,6 +20677,108 @@ impl TerminalView {
         ctx.notify();
     }
 
+    /// Absolute path to the bundled `omw` CLI (Contents/Resources/bin/omw,
+    /// which is on the shell PATH inside omw). Falls back to bare `omw` for
+    /// dev/`cargo run` where there is no app bundle.
+    fn agent_notify_omw_path() -> std::path::PathBuf {
+        if let Some(resources) = warp_core::paths::bundled_resources_dir() {
+            let bundled = resources.join("bin").join("omw");
+            if bundled.exists() {
+                return bundled;
+            }
+        }
+        std::path::PathBuf::from("omw")
+    }
+
+    /// On first bootstrap, probe (once) whether the Claude Code / Codex
+    /// completion-notification hooks are wired via the bundled `omw` CLI. If
+    /// they aren't — and the user hasn't permanently dismissed the offer — open
+    /// a one-click banner. The probe runs off the UI thread.
+    fn maybe_offer_agent_notify_setup(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.agent_notify_check_started {
+            return;
+        }
+        // Only offer in the active session, one place at a time.
+        if !self.is_active_session(ctx) {
+            return;
+        }
+        // Respect a prior "Don't show again".
+        let dismissed = AgentNotifyBannerSettings::handle(ctx).read(ctx, |s, _| {
+            *s.agent_notify_banner_state.value() == BannerState::Dismissed
+        });
+        if dismissed {
+            return;
+        }
+        self.agent_notify_check_started = true;
+
+        let omw = Self::agent_notify_omw_path();
+        let future = async move {
+            let output = command::r#async::Command::new(&omw)
+                .args(["notify-setup", "status", "--json"])
+                .output()
+                .await
+                .ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let v: serde_json::Value = serde_json::from_str(stdout.trim()).ok()?;
+            let claude = v.get("claude").and_then(|b| b.as_bool()).unwrap_or(false);
+            let codex = v.get("codex").and_then(|b| b.as_bool()).unwrap_or(false);
+            // "Needs setup" when neither agent is wired yet.
+            Some(!(claude || codex))
+        };
+        ctx.spawn(future, move |me, needs_setup, ctx| {
+            if needs_setup == Some(true) {
+                me.is_agent_notify_banner_open = true;
+                ctx.notify();
+            }
+        });
+    }
+
+    fn handle_agent_notify_banner_event(
+        &mut self,
+        event: &BannerEvent<TerminalAction>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            // "Enable" — run the bundled one-click installer, then remember it's
+            // handled so we don't offer again.
+            BannerEvent::Dismiss(DismissalType::Temporary) | BannerEvent::Action(_) => {
+                let omw = Self::agent_notify_omw_path();
+                let future = async move {
+                    command::r#async::Command::new(&omw)
+                        .args(["notify-setup", "install"])
+                        .output()
+                        .await
+                        .map(|o| o.status.success())
+                        .unwrap_or(false)
+                };
+                ctx.spawn(future, move |me, ok, ctx| {
+                    if ok {
+                        AgentNotifyBannerSettings::handle(ctx).update(ctx, |s, mctx| {
+                            report_if_error!(s
+                                .agent_notify_banner_state
+                                .set_value(BannerState::Dismissed, mctx));
+                        });
+                    }
+                    me.is_agent_notify_banner_open = false;
+                    ctx.notify();
+                });
+            }
+            // "Don't show again" — persist the dismissal.
+            BannerEvent::Dismiss(DismissalType::Permanent) => {
+                AgentNotifyBannerSettings::handle(ctx).update(ctx, |s, mctx| {
+                    report_if_error!(s
+                        .agent_notify_banner_state
+                        .set_value(BannerState::Dismissed, mctx));
+                });
+                self.is_agent_notify_banner_open = false;
+                ctx.notify();
+            }
+        }
+    }
+
     /// Updates the state of the "incompatible shell configuration" banner with
     /// a new set of shell plugins. This should be called when either a new session
     /// is bootstrapped or the `honor_ps1` setting changes.
@@ -25931,6 +26083,8 @@ impl View for TerminalView {
                 stack.add_child(ChildView::new(&self.incompatible_configuration_banner).finish());
             } else if self.is_emacs_bindings_banner_open {
                 stack.add_child(ChildView::new(&self.emacs_bindings_banner).finish());
+            } else if self.is_agent_notify_banner_open {
+                stack.add_child(ChildView::new(&self.agent_notify_banner).finish());
             }
         }
 

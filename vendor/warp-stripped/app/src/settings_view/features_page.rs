@@ -670,7 +670,7 @@ const NOTIFICATIONS_DOCS_URL: &str = "";
 // Setup docs for wiring interactive agents (Claude Code / Codex) into pane-focus
 // notifications via the optional bridge scripts shipped under contrib/.
 const AGENT_NOTIFICATIONS_DOCS_URL: &str =
-    "https://github.com/AndrewWayne/oh-my-warp/tree/main/contrib/agent-notifications";
+    "https://github.com/AndrewWayne/oh-my-warp/tree/omw-local-preview-v0.0.11/contrib/agent-notifications";
 
 /// WARNING: this constant was computed manually by determining the pixel width
 /// of the quake mode dropdowns based on the number of expanded items in the flex row.
@@ -5148,9 +5148,10 @@ impl SettingsWidget for DesktopNotificationsWidget {
                 )),
                 secondary_text: Some("Set up Claude Code / Codex".to_string()),
                 tooltip_override_text: Some(
-                    "Interactive agents (Claude Code, Codex) need the optional \
-                     bridge scripts under contrib/agent-notifications to notify \
-                     on completion. Click to open setup."
+                    "Interactive agents (Claude Code, Codex) need one-time setup to \
+                     notify on completion. Open a new tab and run: \
+                     omw notify-setup install  (the bundled omw CLI wires the hooks \
+                     for you). Click for details."
                         .to_string(),
                 ),
             }),

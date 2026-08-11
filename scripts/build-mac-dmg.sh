@@ -92,6 +92,19 @@ KEYCHAIN_HELPER_BIN="${REPO_ROOT}/target/release/omw-keychain-helper"
 [[ -f "${KEYCHAIN_HELPER_BIN}" ]] \
     || { echo "ERROR: omw-keychain-helper build did not produce ${KEYCHAIN_HELPER_BIN}" >&2; exit 1; }
 
+# Build the omw CLI. Bundled into Resources/bin (which extra_path_entries()
+# appends to the shell PATH inside omw terminals), so users get
+# `omw notify-setup install` for one-command agent-notification setup instead
+# of hand-editing ~/.claude/settings.json and ~/.codex/hooks.json.
+echo "==> Building omw CLI release binary ..."
+(
+    cd "${REPO_ROOT}"
+    cargo build --release -p omw-cli --bin omw
+)
+OMW_CLI_BIN="${REPO_ROOT}/target/release/omw"
+[[ -f "${OMW_CLI_BIN}" ]] \
+    || { echo "ERROR: omw CLI build did not produce ${OMW_CLI_BIN}" >&2; exit 1; }
+
 # Fetch a Node interpreter to bundle. Without this the .app's bare
 # `Command::new("node")` ENOENTs when launched from Finder, because
 # LaunchServices hands .apps a minimal PATH that excludes Homebrew.
@@ -263,6 +276,12 @@ chmod +x "${KERNEL_RESOURCES}/omw-keychain-helper"
 # spawn `node` from a minimal PATH and ENOENT (see locate_node docstring).
 cp "${NODE_BIN_SRC}" "${KERNEL_RESOURCES}/bin/node"
 chmod +x "${KERNEL_RESOURCES}/bin/node"
+
+# Place the omw CLI on the shell PATH inside omw terminals. shell.rs's
+# extra_path_entries() appends Contents/Resources/bin, so `omw` here means
+# users can run `omw notify-setup install` in any tab.
+cp "${OMW_CLI_BIN}" "${KERNEL_RESOURCES}/bin/omw"
+chmod +x "${KERNEL_RESOURCES}/bin/omw"
 
 # Ad-hoc sign the bundle. Cargo's linker stamps a `linker-signed,adhoc` signature
 # on the Mach-O that claims sealed resources are required, but without this step

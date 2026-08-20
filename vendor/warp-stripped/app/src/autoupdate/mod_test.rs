@@ -25,6 +25,7 @@ fn initialize_app(app: &mut App) -> ModelHandle<AutoupdateState> {
     app.add_model(|_| AutoupdateState::new(server_api))
 }
 
+#[cfg(not(feature = "omw_local"))]
 #[test]
 fn test_queueing_behavior() {
     App::test((), |mut app| async move {
@@ -63,6 +64,30 @@ fn test_queueing_behavior() {
             assert_eq!(
                 autoupdate.get_next_request(ctx),
                 Some(RequestType::ManualCheck)
+            );
+            assert_eq!(autoupdate.request_queue.len(), 0);
+        });
+    });
+}
+
+/// Local mode keeps the manual update surface, but launch/focus/timer events
+/// must never turn into public-network requests without an explicit user action.
+#[cfg(feature = "omw_local")]
+#[test]
+fn test_omw_local_queue_allows_manual_checks_only() {
+    App::test((), |mut app| async move {
+        app.add_singleton_model(|ctx| AppExecutionMode::new(ExecutionMode::App, false, ctx));
+        let autoupdate_state = initialize_app(&mut app);
+
+        app.update_model(&autoupdate_state, |autoupdate, ctx| {
+            autoupdate.request_queue.push_back(RequestType::Poll);
+            autoupdate.request_queue.push_back(RequestType::DailyCheck);
+            autoupdate.request_queue.push_back(RequestType::ManualCheck);
+
+            assert_eq!(
+                autoupdate.get_next_request(ctx),
+                Some(RequestType::ManualCheck),
+                "omw_local must discard automatic requests and retain the explicit manual check"
             );
             assert_eq!(autoupdate.request_queue.len(), 0);
         });

@@ -4,7 +4,7 @@
 //!   - construct via `SessionRegistry::new()`
 //!   - register a short-lived child
 //!   - assert it appears in `list()` with `alive == true`
-//!   - poll until the child exits (max 2s); assert `alive == false`
+//!   - poll until the child exits (max 10s); assert `alive == false`
 //!   - drop the registry — must not panic
 //!
 //! Uses platform-appropriate "print one line then exit" commands so the test
@@ -65,8 +65,11 @@ async fn register_then_observe_exit_then_drop() {
     assert_eq!(got.id, id);
     assert_eq!(got.name, "quick-echo");
 
-    // Wait up to 2s for the child to exit. Poll alive every 50ms.
-    let deadline = Instant::now() + Duration::from_secs(2);
+    // A short-lived ConPTY child can still take roughly three seconds to be
+    // observed as reaped on Windows. Keep the assertion bounded without
+    // assuming Unix-like process startup and teardown latency.
+    let exit_timeout = Duration::from_secs(10);
+    let deadline = Instant::now() + exit_timeout;
     let mut last_alive = true;
     while Instant::now() < deadline {
         match registry.get(id) {
@@ -87,7 +90,7 @@ async fn register_then_observe_exit_then_drop() {
     }
     assert!(
         !last_alive,
-        "child should have exited within 2s; last observed alive = {last_alive}"
+        "child should have exited within {exit_timeout:?}; last observed alive = {last_alive}"
     );
 
     // Drop the registry — must not panic. We cannot directly assert "no

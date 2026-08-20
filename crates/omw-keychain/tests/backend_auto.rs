@@ -8,7 +8,7 @@ mod common;
 
 use std::sync::Once;
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 use common::{key_ref, unique_name};
 
 static INIT: Once = Once::new();
@@ -20,7 +20,7 @@ fn init() {
     });
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[test]
 fn auto_backend_on_supported_platform_uses_os_backend() {
     init();
@@ -31,7 +31,7 @@ fn auto_backend_on_supported_platform_uses_os_backend() {
     // Pure introspection, no UI/keyring side-effect.
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 #[test]
 fn auto_backend_on_unsupported_platform_uses_memory_backend() {
     init();

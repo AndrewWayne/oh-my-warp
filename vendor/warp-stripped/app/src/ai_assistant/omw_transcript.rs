@@ -220,6 +220,22 @@ impl OmwAgentTranscriptModel {
             }
         }
     }
+
+    /// True only while the matching approval card still accepts a user
+    /// decision. The panel action handler checks this before writing to the
+    /// session channel, making duplicate queued clicks harmless.
+    pub fn is_approval_pending(&self, approval_id: &str) -> bool {
+        self.messages.iter().any(|message| {
+            matches!(
+                message,
+                OmwAgentMessage::Approval {
+                    id,
+                    decision: ApprovalCardStatus::Pending,
+                    ..
+                } if id == approval_id
+            )
+        })
+    }
 }
 
 #[cfg(any(test, feature = "test-exports"))]

@@ -121,14 +121,6 @@ pub mod appearance;
 #[cfg(any(test, feature = "test-exports"))]
 pub mod test_exports {
     #[cfg(feature = "omw_local")]
-    pub use crate::settings_view::omw_agent_page::{
-        apply_action, form_from_config, form_from_config_with_order, form_to_config,
-        validate_form, DefaultProviderDropdownState, FormError, OmwAgentForm,
-        OmwAgentPageAction, OmwAgentPageState, OmwAgentPageView, ProviderKindForm,
-        ProviderRow,
-    };
-    pub use crate::view_components::{SubmittableTextInput, SubmittableTextInputAction};
-    #[cfg(feature = "omw_local")]
     pub use crate::ai_assistant::{
         omw_agent_state::{ActiveTerminalHandle, OmwAgentState, PaneSession},
         omw_command_broker::{detect_osc133_prompt_end, spawn_command_broker},
@@ -136,7 +128,16 @@ pub mod test_exports {
         omw_transcript::{ApprovalCardStatus, OmwAgentMessage, OmwAgentTranscriptModel},
     };
     #[cfg(feature = "omw_local")]
+    pub use crate::settings_view::omw_agent_page::{
+        apply_action, form_from_config, form_from_config_with_order, form_to_config,
+        provider_api_key_buffer_clear_slot, provider_test_endpoint,
+        test_provider_connection_for_test, validate_form, validate_provider_test_inputs,
+        DefaultProviderDropdownState, FormError, OmwAgentForm, OmwAgentPageAction,
+        OmwAgentPageState, OmwAgentPageView, ProviderKindForm, ProviderRow, ProviderTestStatus,
+    };
+    #[cfg(feature = "omw_local")]
     pub use crate::terminal::input::parse_inline_agent_prompt;
+    pub use crate::view_components::{SubmittableTextInput, SubmittableTextInputAction};
     #[cfg(feature = "omw_local")]
     pub mod terminal_io {
         //! Re-exports of the local-PTY channel types so integration tests
@@ -1810,8 +1811,9 @@ fn initialize_app(
         aliases.connect(ctx);
     });
 
-    // When running natively, add the http server singleton to the application.
-    #[cfg(not(target_family = "wasm"))]
+    // The upstream installation-detection server is not part of the local-only product. Keeping
+    // it disabled avoids exposing an unrelated unauthenticated loopback endpoint in omw_local.
+    #[cfg(all(not(target_family = "wasm"), not(feature = "omw_local")))]
     ctx.add_singleton_model(move |ctx| {
         let routers = vec![
             app_installation_detection::make_router(),

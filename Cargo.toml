@@ -40,3 +40,6 @@ anyhow = "1"
 rusqlite = { version = "0.35", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
 vt100 = "0.16"
+
+[patch.crates-io]
+portable-pty = { path = "vendor/portable-pty" }

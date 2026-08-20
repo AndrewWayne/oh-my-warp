@@ -166,7 +166,9 @@ fn update_approval_flips_decision() {
         approval_id: "a1".into(),
         tool_call: serde_json::json!({"name": "bash"}),
     });
+    assert!(t.is_approval_pending("a1"));
     t.update_approval("a1", ApprovalCardStatus::Approved);
+    assert!(!t.is_approval_pending("a1"));
     let decision = t.messages().iter().find_map(|m| match m {
         OmwAgentMessage::Approval { id, decision, .. } if id == "a1" => Some(decision),
         _ => None,

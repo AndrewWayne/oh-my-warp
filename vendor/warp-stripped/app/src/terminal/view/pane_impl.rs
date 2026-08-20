@@ -106,15 +106,7 @@ impl TerminalView {
         {
             let agent_state =
                 crate::ai_assistant::omw_agent_state::OmwAgentState::shared();
-            if let Some((event_loop_tx, pty_reads_tx, _)) =
-                crate::omw::pane_auto_share::local_io_handles_for(self, ctx)
-            {
-                let handle =
-                    crate::ai_assistant::omw_agent_state::ActiveTerminalHandle {
-                        view_id: self.view_id,
-                        event_loop_tx,
-                        pty_reads_tx,
-                    };
+            if let Some(handle) = self.omw_agent_terminal_handle(ctx) {
                 agent_state.register_pane_io(handle.clone());
                 if self.is_pane_focused(ctx) {
                     agent_state.register_active_terminal(handle);

@@ -26,11 +26,11 @@ fn main() -> Result<()> {
     if cfg!(debug_assertions) {
         state = state.with_additional_features(warp_core::features::DEBUG_FLAGS);
     }
-    // omw_local builds autoupdate against GitHub Releases (see `autoupdate::omw_oss`).
-    // The cargo `autoupdate` feature and `release_bundle` aren't set on this build,
-    // so without this hint `FeatureFlag::Autoupdate.is_enabled()` is false and both
-    // the poll loop (`autoupdate/mod.rs`) and the "Check for updates" command-palette
-    // binding (`workspace/mod.rs`) skip registration.
+    // omw_local exposes an explicit GitHub-Releases update action (see
+    // `autoupdate::omw_oss`). The cargo `autoupdate` feature and `release_bundle`
+    // aren't set on this build, so this hint keeps the "Check for updates"
+    // command/UI registered. `AppExecutionMode::can_autoupdate` remains false in
+    // local mode, preventing launch/focus/timer polling before user opt-in.
     #[cfg(feature = "omw_local")]
     {
         state = state.with_additional_features(warp_core::features::OMW_LOCAL_FLAGS);

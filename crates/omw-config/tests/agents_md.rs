@@ -14,7 +14,47 @@ use omw_config::{
 #[test]
 fn agents_md_resolution_and_io() {
     let restore = std::env::var_os("OMW_AGENTS_MD_PATH");
+    let restore_local_app_data = std::env::var_os("LOCALAPPDATA");
+    let restore_user_profile = std::env::var_os("USERPROFILE");
     let dir = tempfile::tempdir().unwrap();
+
+    // -------- Windows default: LocalAppData + first-run preservation --------
+    #[cfg(windows)]
+    {
+        let local_app_data = dir.path().join("local-app-data");
+        let expected = local_app_data.join("omw.local.warpOss").join("AGENTS.md");
+        std::env::remove_var("OMW_AGENTS_MD_PATH");
+        std::env::set_var("LOCALAPPDATA", &local_app_data);
+
+        assert_eq!(agents_md_path().unwrap(), expected);
+        assert!(bootstrap_agents_md_if_missing().unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&expected).unwrap(),
+            DEFAULT_AGENTS_MD
+        );
+
+        std::fs::write(&expected, "user-edited Windows default").unwrap();
+        assert!(!bootstrap_agents_md_if_missing().unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&expected).unwrap(),
+            "user-edited Windows default",
+            "bootstrap must preserve an existing Windows-default AGENTS.md"
+        );
+
+        let fallback_home = dir.path().join("fallback-profile");
+        std::env::set_var("LOCALAPPDATA", "");
+        std::env::set_var("USERPROFILE", &fallback_home);
+        assert_eq!(
+            agents_md_path().unwrap(),
+            fallback_home
+                .join("AppData")
+                .join("Local")
+                .join("omw.local.warpOss")
+                .join("AGENTS.md"),
+            "empty LOCALAPPDATA must fall back to the user profile"
+        );
+        std::env::set_var("LOCALAPPDATA", &local_app_data);
+    }
 
     // -------- agents_md_path env override --------
     let canonical = dir.path().join("subdir").join("AGENTS.md");
@@ -140,5 +180,13 @@ fn agents_md_resolution_and_io() {
     match restore {
         Some(v) => std::env::set_var("OMW_AGENTS_MD_PATH", v),
         None => std::env::remove_var("OMW_AGENTS_MD_PATH"),
+    }
+    match restore_local_app_data {
+        Some(v) => std::env::set_var("LOCALAPPDATA", v),
+        None => std::env::remove_var("LOCALAPPDATA"),
+    }
+    match restore_user_profile {
+        Some(v) => std::env::set_var("USERPROFILE", v),
+        None => std::env::remove_var("USERPROFILE"),
     }
 }

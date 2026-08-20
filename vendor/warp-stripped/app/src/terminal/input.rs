@@ -861,6 +861,12 @@ pub enum CommandExecutionSource {
         metadata: AgentInteractionMetadata,
     },
 
+    /// A command approved through the local omw agent panel. Unlike the
+    /// official Warp AI path, this has no cloud conversation/action IDs, but
+    /// it must still be recorded as agent-executed in local command history.
+    #[cfg(feature = "omw_local")]
+    OmwAgent,
+
     /// A command execution request in a shared session (by a viewer or sharer).
     ///
     /// For a sharer, this will be processed similar to [`CommandExecutionSource::User`]
@@ -892,14 +898,16 @@ impl CommandExecutionSource {
     pub fn is_ai_command(&self) -> bool {
         // TODO: at some point we will want to couple both of these cases
         // into one source variant, as they are both AI sources.
-        matches!(
-            self,
-            CommandExecutionSource::AI { .. }
-                | CommandExecutionSource::SharedSession {
-                    ai_metadata: Some(_),
-                    ..
-                }
-        )
+        match self {
+            CommandExecutionSource::AI { .. } => true,
+            #[cfg(feature = "omw_local")]
+            CommandExecutionSource::OmwAgent => true,
+            CommandExecutionSource::SharedSession {
+                ai_metadata: Some(_),
+                ..
+            } => true,
+            _ => false,
+        }
     }
 }
 

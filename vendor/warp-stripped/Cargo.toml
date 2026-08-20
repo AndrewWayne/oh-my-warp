@@ -489,6 +489,7 @@ inherits = "dev"
 opt-level = "s"
 
 [patch.crates-io]
+portable-pty = { path = "../portable-pty" }
 core-foundation = { git = "https://github.com/servo/core-foundation-rs", rev = "0bcad1e103ead6bd71c4e5f85598ada9508e3a82" }
 core-foundation-sys = { git = "https://github.com/servo/core-foundation-rs", rev = "0bcad1e103ead6bd71c4e5f85598ada9508e3a82" }
 core-graphics = { git = "https://github.com/servo/core-foundation-rs", rev = "0bcad1e103ead6bd71c4e5f85598ada9508e3a82" }

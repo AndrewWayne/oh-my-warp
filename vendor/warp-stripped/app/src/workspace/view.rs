@@ -4381,6 +4381,7 @@ impl Workspace {
     }
 
     fn toggle_ai_assistant_panel(&mut self, ctx: &mut ViewContext<Self>) {
+        #[cfg(not(feature = "omw_local"))]
         if !ChannelState::official_cloud_services_enabled() {
             return;
         }
@@ -17404,13 +17405,18 @@ impl Workspace {
             }
         }
 
-        // Legacy AI assistant button (non-agent-mode only)
-        if is_online
-            && ChannelState::official_cloud_services_enabled()
-            && !FeatureFlag::AgentMode.is_enabled()
-            && !is_web_anonymous_user
-            && !self.current_workspace_state.is_ai_assistant_panel_open
-        {
+        // The omw-local assistant is local even when official cloud services are
+        // disabled, and remains its approval surface when Agent Mode is enabled.
+        let should_show_legacy_ai_assistant = if cfg!(feature = "omw_local") {
+            !self.current_workspace_state.is_ai_assistant_panel_open
+        } else {
+            is_online
+                && ChannelState::official_cloud_services_enabled()
+                && !FeatureFlag::AgentMode.is_enabled()
+                && !is_web_anonymous_user
+                && !self.current_workspace_state.is_ai_assistant_panel_open
+        };
+        if should_show_legacy_ai_assistant {
             target.add_child(
                 Container::new(
                     SavePosition::new(
@@ -19784,6 +19790,14 @@ fn is_omw_local_hidden_settings_section(_section: Option<SettingsSection>) -> bo
 fn is_official_cloud_workspace_action(action: &WorkspaceAction) -> bool {
     use WorkspaceAction::*;
 
+    // The omw agent panel intentionally reuses these two legacy workspace
+    // actions while being backed exclusively by the local agent state. They
+    // must remain dispatchable even though official cloud services are off.
+    #[cfg(feature = "omw_local")]
+    if matches!(action, ClickedAIAssistantIcon | ToggleAIAssistant) {
+        return false;
+    }
+
     // NOTE: autoupdate-related actions (AutoupdateFailureLink, ApplyUpdate,
     // DownloadNewVersion, CheckForUpdate) are intentionally NOT in this list.
     // They go through omw's own GitHub-Releases autoupdate path
@@ -20801,7 +20815,7 @@ impl TypedActionView for Workspace {
                 );
             }
             ClickedAIAssistantIcon => {
-                if !FeatureFlag::AgentMode.is_enabled() {
+                if cfg!(feature = "omw_local") || !FeatureFlag::AgentMode.is_enabled() {
                     self.toggle_ai_assistant_panel(ctx);
                     if self.current_workspace_state.is_ai_assistant_panel_open {
                         send_telemetry_from_ctx!(

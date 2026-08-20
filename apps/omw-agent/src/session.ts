@@ -38,6 +38,16 @@ import { createBashTool, type RpcBridge } from "./warp-session-bash.js";
 
 export type { ProviderKind };
 
+// pi-ai's OpenAI-compatible adapter requires a non-empty API key even for
+// local Ollama. The locked openai-node client accepts a null default header
+// as an explicit deletion, so this non-secret sentinel satisfies the SDK
+// without putting an Authorization header on the wire. A request-boundary
+// regression test pins that behavior.
+const KEYLESS_OLLAMA_API_KEY_SENTINEL = "omw-keyless-ollama";
+const OMIT_AUTHORIZATION_HEADER = {
+	Authorization: null,
+} as unknown as Record<string, string>;
+
 export interface ProviderConfig {
 	kind: ProviderKind;
 	/** Keychain reference resolved via the helper-bridge factory. */
@@ -136,9 +146,16 @@ export class Session {
 			pendingApprovals: this.pendingApprovals,
 			notifyApprovalRequest: this.notifyApprovalRequest,
 		});
+		const isKeylessOllama = this.providerConfig.kind === "ollama" && !this.providerConfig.key_ref;
 
 		const config: AgentLoopConfig = {
 			model: this.model,
+			...(isKeylessOllama
+				? {
+						apiKey: KEYLESS_OLLAMA_API_KEY_SENTINEL,
+						headers: OMIT_AUTHORIZATION_HEADER,
+					}
+				: {}),
 			// AgentMessage = Message in our config (no CustomAgentMessages
 			// declaration merging) — identity is correct.
 			convertToLlm: (msgs) => msgs as Message[],

@@ -1,11 +1,12 @@
 //! Behaviour when `OMW_KEYCHAIN_BACKEND` is unset entirely. Should match
-//! `auto` exactly: macOS and Linux resolve to OS, everywhere else to memory.
+//! `auto` exactly: macOS, Linux, and Windows resolve to OS, everywhere else
+//! to memory.
 
 mod common;
 
 use std::sync::Once;
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 use common::{key_ref, unique_name};
 
 static INIT: Once = Once::new();
@@ -17,7 +18,7 @@ fn init() {
     });
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[test]
 fn unset_backend_on_supported_platform_defaults_to_os() {
     init();
@@ -27,7 +28,7 @@ fn unset_backend_on_supported_platform_defaults_to_os() {
     );
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 #[test]
 fn unset_backend_on_unsupported_platform_defaults_to_memory() {
     init();

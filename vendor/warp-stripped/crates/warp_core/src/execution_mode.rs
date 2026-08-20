@@ -68,11 +68,11 @@ impl AppExecutionMode {
 
     /// Whether the app can *automatically* update. This does not prevent manual updates.
     ///
-    /// omw_local builds autoupdate against GitHub Releases (see `autoupdate::omw_oss`), not the
-    /// official cloud services — so they bypass the cloud-services gate here.
+    /// `omw_local` keeps the manual GitHub-Releases update action, but background
+    /// polling is disabled because public-network access must be explicit and
+    /// user-initiated in local mode.
     pub fn can_autoupdate(&self) -> bool {
-        self.is_app()
-            && (cfg!(feature = "omw_local") || ChannelState::official_cloud_services_enabled())
+        self.is_app() && ChannelState::official_cloud_services_enabled()
     }
 
     /// Whether the app can automatically start MCP servers from the previous session.
@@ -129,25 +129,20 @@ pub fn current_client_id() -> Option<&'static str> {
 mod tests {
     use super::*;
 
-    /// Regression guard for the v0.0.6/v0.0.7 inert-poll bug (PR #63).
-    ///
-    /// Under `omw_local`, `ChannelState::official_cloud_services_enabled()` is
-    /// intentionally false (that's what strips cloud surfaces). Before PR #63
-    /// `can_autoupdate()` required it to be true, so the gate at
-    /// `autoupdate/mod.rs::AutoupdateState::register` never fired. omw builds
-    /// have their own GitHub-Releases autoupdate path (`autoupdate::omw_oss`) that
-    /// doesn't go through the cloud, so the gate has to bypass for omw.
+    /// `omw_local` must not contact GitHub merely because the app launched or
+    /// regained focus. The manual update action bypasses this automatic-update
+    /// capability check in `autoupdate::AutoupdateState::get_next_request`.
     #[cfg(feature = "omw_local")]
     #[test]
-    fn omw_local_app_can_autoupdate() {
+    fn omw_local_app_cannot_autoupdate_without_user_action() {
         let mode = AppExecutionMode {
             mode: ExecutionMode::App,
             is_sandboxed: false,
         };
         assert!(
-            mode.can_autoupdate(),
-            "omw_local App-mode must allow autoupdate even when official cloud \
-             services are disabled — it polls GitHub Releases, not the cloud."
+            !mode.can_autoupdate(),
+            "omw_local App-mode must not poll GitHub Releases automatically; \
+             users can still invoke Check for updates explicitly."
         );
     }
 

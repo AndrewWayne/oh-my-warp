@@ -183,7 +183,7 @@ async fn boot(kernel_path: PathBuf) -> Result<BootedServer, String> {
     // so a bare `Command::new("node")` ENOENTs at runtime even when the
     // user has Node installed. We bundle a Node binary at
     // Resources/bin/node and resolve it explicitly here.
-    let node_bin = locate_node().unwrap_or_else(|| PathBuf::from("node"));
+    let node_bin = locate_node().unwrap_or_else(|| PathBuf::from(platform_executable_name("node")));
     let node_str = node_bin.to_string_lossy().into_owned();
     let cfg = AgentProcessConfig {
         command: node_str.clone(),
@@ -226,8 +226,8 @@ async fn boot(kernel_path: PathBuf) -> Result<BootedServer, String> {
 /// the cargo-run fallback.
 fn locate(
     env_var: &str,
-    app_resources_rel: &str,
-    flat_rel: &str,
+    app_resources_rel: &Path,
+    flat_rel: &Path,
     workspace_walk_up: impl FnOnce(&Path) -> Option<PathBuf>,
 ) -> Option<PathBuf> {
     if let Some(env_path) = std::env::var_os(env_var) {
@@ -252,10 +252,14 @@ fn locate(
 fn locate_kernel_script() -> Option<PathBuf> {
     locate(
         "OMW_AGENT_BIN",
-        "../Resources/bin/omw-agent.mjs",
-        "bin/omw-agent.mjs",
+        Path::new("../Resources/bin/omw-agent.mjs"),
+        Path::new("bin/omw-agent.mjs"),
         walk_up_for_workspace_kernel,
     )
+}
+
+fn platform_executable_name(stem: &str) -> String {
+    format!("{stem}{}", std::env::consts::EXE_SUFFIX)
 }
 
 /// Resolve the `omw-keychain-helper` binary the kernel will spawn for
@@ -263,10 +267,12 @@ fn locate_kernel_script() -> Option<PathBuf> {
 /// `target/{release,debug}/omw-keychain-helper` so `cargo run` finds the
 /// binary you just built without manual env-var setup.
 fn locate_keychain_helper() -> Option<PathBuf> {
+    let helper_name = platform_executable_name("omw-keychain-helper");
+    let app_resources = Path::new("../Resources").join(&helper_name);
     locate(
         "OMW_KEYCHAIN_HELPER",
-        "../Resources/omw-keychain-helper",
-        "omw-keychain-helper",
+        &app_resources,
+        Path::new(&helper_name),
         walk_up_for_workspace_helper,
     )
 }
@@ -276,12 +282,10 @@ fn locate_keychain_helper() -> Option<PathBuf> {
 /// for `cargo run` from a shell with Node on PATH but FAILS for `.app`
 /// launches from Finder (inherited PATH excludes Homebrew).
 fn locate_node() -> Option<PathBuf> {
-    locate(
-        "OMW_AGENT_NODE",
-        "../Resources/bin/node",
-        "bin/node",
-        |_| None,
-    )
+    let node_name = platform_executable_name("node");
+    let app_resources = Path::new("../Resources/bin").join(&node_name);
+    let flat = Path::new("bin").join(&node_name);
+    locate("OMW_AGENT_NODE", &app_resources, &flat, |_| None)
 }
 
 fn walk_up_for_workspace_helper(start: &Path) -> Option<PathBuf> {
@@ -291,7 +295,7 @@ fn walk_up_for_workspace_helper(start: &Path) -> Option<PathBuf> {
             let candidate = current
                 .join("target")
                 .join(profile)
-                .join("omw-keychain-helper");
+                .join(platform_executable_name("omw-keychain-helper"));
             if candidate.exists() {
                 return Some(candidate);
             }
@@ -321,4 +325,14 @@ fn walk_up_for_workspace_kernel(start: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(any(test, feature = "test-exports"))]
+pub fn test_platform_executable_name(stem: &str) -> String {
+    platform_executable_name(stem)
+}
+
+#[cfg(any(test, feature = "test-exports"))]
+pub fn test_walk_up_for_workspace_helper(start: &Path) -> Option<PathBuf> {
+    walk_up_for_workspace_helper(start)
 }

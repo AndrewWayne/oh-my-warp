@@ -22,8 +22,9 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 use warp::test_exports::{
     apply_action, form_from_config, form_from_config_with_order, form_to_config,
-    validate_form, DefaultProviderDropdownState, FormError, OmwAgentForm,
-    OmwAgentPageAction, OmwAgentPageState, ProviderKindForm, ProviderRow,
+    provider_api_key_buffer_clear_slot, validate_form, DefaultProviderDropdownState, FormError,
+    OmwAgentForm, OmwAgentPageAction, OmwAgentPageState, ProviderKindForm, ProviderRow,
+    ProviderTestStatus,
 };
 
 fn empty_state() -> OmwAgentPageState {
@@ -34,6 +35,8 @@ fn empty_state() -> OmwAgentPageState {
         pending_secrets: BTreeMap::new(),
         is_dirty: false,
         last_save_error: None,
+        provider_test_status: BTreeMap::new(),
+        next_provider_test_request_id: 0,
         default_provider_dropdown: DefaultProviderDropdownState::default(),
         pending_renames: Vec::new(),
     }
@@ -49,6 +52,28 @@ fn form_from_default_config_has_no_providers_and_default_approval_mode() {
     assert!(f.default_provider.is_none());
     assert!(f.agent_enabled);
     assert_eq!(f.approval_mode, ApprovalMode::AskBeforeWrite);
+}
+
+#[test]
+fn provider_test_status_is_cleared_on_edit_and_remove() {
+    let mut state = empty_state();
+    apply_action(&mut state, OmwAgentPageAction::AddProvider);
+    apply_action(&mut state, OmwAgentPageAction::AddProvider);
+    state
+        .provider_test_status
+        .insert(0, ProviderTestStatus::Succeeded);
+    state
+        .provider_test_status
+        .insert(1, ProviderTestStatus::Failed("fixture failure".to_owned()));
+
+    apply_action(
+        &mut state,
+        OmwAgentPageAction::SetProviderModel(0, "changed-model".to_owned()),
+    );
+    assert!(!state.provider_test_status.contains_key(&0));
+
+    apply_action(&mut state, OmwAgentPageAction::RemoveProvider(0));
+    assert!(state.provider_test_status.is_empty());
 }
 
 #[test]
@@ -91,7 +116,9 @@ fn form_to_config_round_trip_with_ollama_no_key() {
     };
     let cfg = form_to_config(&form, &BTreeMap::new()).unwrap();
     assert!(matches!(
-        cfg.providers.get(&ProviderId::from_str("ollama-local").unwrap()).unwrap(),
+        cfg.providers
+            .get(&ProviderId::from_str("ollama-local").unwrap())
+            .unwrap(),
         ProviderConfig::Ollama { .. }
     ));
 }
@@ -138,7 +165,9 @@ fn validate_rejects_duplicate_provider_id() {
         agents_md_path: String::new(),
     };
     let err = validate_form(&form).unwrap_err();
-    assert!(err.iter().any(|e| matches!(e, FormError::DuplicateProviderId(_))));
+    assert!(err
+        .iter()
+        .any(|e| matches!(e, FormError::DuplicateProviderId(_))));
 }
 
 #[test]
@@ -158,7 +187,9 @@ fn validate_requires_base_url_for_openai_compatible() {
         agents_md_path: String::new(),
     };
     let err = validate_form(&form).unwrap_err();
-    assert!(err.iter().any(|e| matches!(e, FormError::BaseUrlRequired(_))));
+    assert!(err
+        .iter()
+        .any(|e| matches!(e, FormError::BaseUrlRequired(_))));
 }
 
 #[test]
@@ -171,7 +202,9 @@ fn validate_rejects_default_pointing_at_missing_provider() {
         agents_md_path: String::new(),
     };
     let err = validate_form(&form).unwrap_err();
-    assert!(err.iter().any(|e| matches!(e, FormError::DefaultProviderMissing(_))));
+    assert!(err
+        .iter()
+        .any(|e| matches!(e, FormError::DefaultProviderMissing(_))));
 }
 
 #[test]
@@ -191,7 +224,9 @@ fn validate_requires_key_for_openai_when_no_existing_keyref_and_no_paste() {
         agents_md_path: String::new(),
     };
     let err = validate_form(&form).unwrap_err();
-    assert!(err.iter().any(|e| matches!(e, FormError::ApiKeyRequired(_))));
+    assert!(err
+        .iter()
+        .any(|e| matches!(e, FormError::ApiKeyRequired(_))));
 }
 
 #[test]
@@ -242,7 +277,9 @@ fn validate_still_runs_syntactic_checks_on_non_default_rows() {
         agents_md_path: String::new(),
     };
     let err = validate_form(&form).unwrap_err();
-    assert!(err.iter().any(|e| matches!(e, FormError::InvalidProviderId(_))));
+    assert!(err
+        .iter()
+        .any(|e| matches!(e, FormError::InvalidProviderId(_))));
 }
 
 #[test]
@@ -272,7 +309,11 @@ fn form_to_config_skips_incomplete_non_default_rows() {
         agents_md_path: String::new(),
     };
     let cfg = form_to_config(&form, &BTreeMap::new()).unwrap();
-    assert_eq!(cfg.providers.len(), 1, "incomplete stub should not be serialized");
+    assert_eq!(
+        cfg.providers.len(),
+        1,
+        "incomplete stub should not be serialized"
+    );
     assert!(cfg
         .providers
         .contains_key(&ProviderId::from_str("complete").unwrap()));
@@ -316,7 +357,10 @@ fn apply_toggle_enabled_flips_field_and_marks_dirty() {
 #[test]
 fn apply_set_approval_mode_updates_form() {
     let mut s = empty_state();
-    apply_action(&mut s, OmwAgentPageAction::SetApprovalMode(ApprovalMode::Trusted));
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetApprovalMode(ApprovalMode::Trusted),
+    );
     assert_eq!(s.form.approval_mode, ApprovalMode::Trusted);
 }
 
@@ -350,7 +394,10 @@ fn apply_set_provider_id_renames_default_and_pending_secret() {
         OmwAgentPageAction::SetProviderId(0, "renamed".into()),
     );
     assert_eq!(s.form.default_provider.as_deref(), Some("renamed"));
-    assert_eq!(s.pending_secrets.get("renamed").map(|s| s.as_str()), Some("sk-test"));
+    assert_eq!(
+        s.pending_secrets.get("renamed").map(|s| s.as_str()),
+        Some("sk-test")
+    );
     assert!(!s.pending_secrets.contains_key(&old_id));
 }
 
@@ -359,8 +406,14 @@ fn apply_set_provider_api_key_records_pending_secret() {
     let mut s = empty_state();
     apply_action(&mut s, OmwAgentPageAction::AddProvider);
     let id = s.form.providers[0].id.clone();
-    apply_action(&mut s, OmwAgentPageAction::SetProviderApiKey(0, "sk-foo".into()));
-    assert_eq!(s.pending_secrets.get(&id).map(|s| s.as_str()), Some("sk-foo"));
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderApiKey(0, "sk-foo".into()),
+    );
+    assert_eq!(
+        s.pending_secrets.get(&id).map(|s| s.as_str()),
+        Some("sk-foo")
+    );
 }
 
 #[test]
@@ -391,10 +444,13 @@ fn apply_set_provider_kind_clears_key_fields_when_key_no_longer_required() {
     let id = s.form.providers[0].id.clone();
     s.pending_secrets.insert(id.clone(), "sk-typed".into());
 
-    apply_action(
-        &mut s,
-        OmwAgentPageAction::SetProviderKind(0, ProviderKindForm::Ollama),
+    let switch_to_ollama = OmwAgentPageAction::SetProviderKind(0, ProviderKindForm::Ollama);
+    assert_eq!(
+        provider_api_key_buffer_clear_slot(&s, &switch_to_ollama),
+        Some(0),
+        "the live password editor must be cleared before reducer state changes"
     );
+    apply_action(&mut s, switch_to_ollama);
 
     assert_eq!(s.form.providers[0].kind, ProviderKindForm::Ollama);
     assert!(s.form.providers[0].key_ref_token.is_empty());
@@ -411,10 +467,14 @@ fn apply_set_provider_kind_preserves_key_fields_across_key_required_kinds() {
     s.form.providers[0].kind = ProviderKindForm::OpenAi;
     s.form.providers[0].key_ref_token = "keychain:omw/foo".into();
 
-    apply_action(
-        &mut s,
-        OmwAgentPageAction::SetProviderKind(0, ProviderKindForm::Anthropic),
+    let switch_to_anthropic = OmwAgentPageAction::SetProviderKind(0, ProviderKindForm::Anthropic);
+    assert_eq!(
+        provider_api_key_buffer_clear_slot(&s, &switch_to_anthropic),
+        None,
+        "keyed-to-keyed transitions must preserve a newly typed secret"
     );
+
+    apply_action(&mut s, switch_to_anthropic);
 
     assert_eq!(s.form.providers[0].kind, ProviderKindForm::Anthropic);
     assert_eq!(s.form.providers[0].key_ref_token, "keychain:omw/foo");
@@ -461,8 +521,10 @@ fn apply_remove_provider_drops_matching_pending_rename() {
     );
     assert_eq!(s.pending_renames.len(), 1);
     apply_action(&mut s, OmwAgentPageAction::RemoveProvider(0));
-    assert!(s.pending_renames.is_empty(),
-            "removing the renamed row should drop its rename entry");
+    assert!(
+        s.pending_renames.is_empty(),
+        "removing the renamed row should drop its rename entry"
+    );
 }
 
 #[test]
@@ -597,12 +659,12 @@ fn flow_add_one_provider_set_default_persists_through_toml_roundtrip() {
         "cfg.default_provider must carry the user's selection"
     );
     let id = ProviderId::from_str("openai-prod").unwrap();
-    assert!(cfg.providers.contains_key(&id), "cfg should contain the row");
+    assert!(
+        cfg.providers.contains_key(&id),
+        "cfg should contain the row"
+    );
     match cfg.providers.get(&id).unwrap() {
-        ProviderConfig::OpenAi {
-            default_model,
-            ..
-        } => {
+        ProviderConfig::OpenAi { default_model, .. } => {
             assert_eq!(default_model.as_deref(), Some("gpt-5.5"));
         }
         other => panic!("expected OpenAi variant, got {other:?}"),
@@ -635,7 +697,10 @@ fn flow_two_providers_default_can_flip_between_them() {
     let mut s = empty_state();
 
     apply_action(&mut s, OmwAgentPageAction::AddProvider);
-    apply_action(&mut s, OmwAgentPageAction::SetProviderId(0, "deepseek".into()));
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderId(0, "deepseek".into()),
+    );
     apply_action(
         &mut s,
         OmwAgentPageAction::SetProviderKind(0, ProviderKindForm::OpenAiCompatible),
@@ -650,7 +715,10 @@ fn flow_two_providers_default_can_flip_between_them() {
     );
 
     apply_action(&mut s, OmwAgentPageAction::AddProvider);
-    apply_action(&mut s, OmwAgentPageAction::SetProviderId(1, "openai-crs".into()));
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderId(1, "openai-crs".into()),
+    );
     apply_action(
         &mut s,
         OmwAgentPageAction::SetProviderKind(1, ProviderKindForm::OpenAi),
@@ -732,8 +800,7 @@ fn flow_apply_preserves_user_authored_row_order() {
     );
 
     // Pre-Apply: form is in user-authored order (zebra, alpha).
-    let user_order: Vec<String> =
-        s.form.providers.iter().map(|r| r.id.clone()).collect();
+    let user_order: Vec<String> = s.form.providers.iter().map(|r| r.id.clone()).collect();
     assert_eq!(user_order, vec!["zebra".to_string(), "alpha".to_string()]);
 
     // Convert to typed cfg — providers BTreeMap is alphabetical.
@@ -749,8 +816,7 @@ fn flow_apply_preserves_user_authored_row_order() {
     // Rebuild form preserving user order — kinds must also stay attached
     // to the right id.
     let rebuilt = form_from_config_with_order(&cfg, &user_order);
-    let rebuilt_order: Vec<String> =
-        rebuilt.providers.iter().map(|r| r.id.clone()).collect();
+    let rebuilt_order: Vec<String> = rebuilt.providers.iter().map(|r| r.id.clone()).collect();
     assert_eq!(
         rebuilt_order, user_order,
         "form_from_config_with_order must respect preferred_order"
@@ -770,16 +836,10 @@ fn flow_apply_without_order_hint_reorders_alphabetically() {
     let mut s = empty_state();
     apply_action(&mut s, OmwAgentPageAction::AddProvider);
     apply_action(&mut s, OmwAgentPageAction::SetProviderId(0, "zebra".into()));
-    apply_action(
-        &mut s,
-        OmwAgentPageAction::SetProviderApiKey(0, "z".into()),
-    );
+    apply_action(&mut s, OmwAgentPageAction::SetProviderApiKey(0, "z".into()));
     apply_action(&mut s, OmwAgentPageAction::AddProvider);
     apply_action(&mut s, OmwAgentPageAction::SetProviderId(1, "alpha".into()));
-    apply_action(
-        &mut s,
-        OmwAgentPageAction::SetProviderApiKey(1, "a".into()),
-    );
+    apply_action(&mut s, OmwAgentPageAction::SetProviderApiKey(1, "a".into()));
 
     let mut persisted_secrets = BTreeMap::new();
     for (id, _) in &s.pending_secrets {
@@ -788,8 +848,7 @@ fn flow_apply_without_order_hint_reorders_alphabetically() {
     }
     let cfg = form_to_config(&s.form, &persisted_secrets).unwrap();
     let naive = form_from_config(&cfg);
-    let naive_order: Vec<String> =
-        naive.providers.iter().map(|r| r.id.clone()).collect();
+    let naive_order: Vec<String> = naive.providers.iter().map(|r| r.id.clone()).collect();
     assert_eq!(
         naive_order,
         vec!["alpha".to_string(), "zebra".to_string()],
@@ -803,7 +862,10 @@ fn apply_discard_resets_form_and_clears_pending() {
     let mut s = empty_state();
     apply_action(&mut s, OmwAgentPageAction::ToggleEnabled);
     apply_action(&mut s, OmwAgentPageAction::AddProvider);
-    apply_action(&mut s, OmwAgentPageAction::SetProviderApiKey(0, "sk-foo".into()));
+    apply_action(
+        &mut s,
+        OmwAgentPageAction::SetProviderApiKey(0, "sk-foo".into()),
+    );
     apply_action(&mut s, OmwAgentPageAction::Discard);
     assert!(s.form.providers.is_empty());
     assert!(s.form.agent_enabled);

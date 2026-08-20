@@ -37,6 +37,12 @@ interface JsonRpcFrame {
 interface MockServer {
 	server: Server;
 	url: string;
+	requests: Array<{
+		method: string | undefined;
+		path: string | undefined;
+		authorization: string | undefined;
+		xApiKey: string | undefined;
+	}>;
 	close: () => Promise<void>;
 }
 
@@ -46,14 +52,23 @@ interface MockServer {
 function startMockProvider(opts: {
 	chunks: string[];
 	delayBetweenMs?: number;
+	expectedPath?: string;
 }): Promise<MockServer> {
+	const requests: MockServer["requests"] = [];
 	return new Promise((resolve) => {
 		const server = createServer((req, res) => {
-			if (req.url !== "/chat/completions" || req.method !== "POST") {
+			if (req.url !== (opts.expectedPath ?? "/chat/completions") || req.method !== "POST") {
 				res.statusCode = 404;
 				res.end();
 				return;
 			}
+			requests.push({
+				method: req.method,
+				path: req.url,
+				authorization:
+					typeof req.headers.authorization === "string" ? req.headers.authorization : undefined,
+				xApiKey: typeof req.headers["x-api-key"] === "string" ? req.headers["x-api-key"] : undefined,
+			});
 			// Drain request body — the provider doesn't care about content
 			// but the SDK won't finish writing until the request is consumed.
 			req.on("data", () => undefined);
@@ -86,6 +101,7 @@ function startMockProvider(opts: {
 			resolve({
 				server,
 				url: `http://127.0.0.1:${addr.port}`,
+				requests,
 				close: () => new Promise((r) => server.close(() => r())),
 			});
 		});
@@ -262,6 +278,72 @@ describe("runStdioServer protocol round-trip", () => {
 		}
 	}, 15000);
 
+	it("persistent keyless Ollama reaches loopback without Authorization", async () => {
+		mock = await startMockProvider({
+			expectedPath: "/v1/chat/completions",
+			chunks: [deltaChunk("OMW02_E5BD_AGENT_OK"), deltaChunk("", "stop")],
+		});
+
+		let keychainLookups = 0;
+		const server = startServer({
+			getApiKey: async () => {
+				keychainLookups += 1;
+				return "must-not-be-used";
+			},
+		});
+		try {
+			send(server.stdin, {
+				jsonrpc: "2.0",
+				id: 1,
+				method: "session/create",
+				params: {
+					providerConfig: {
+						kind: "ollama",
+						base_url: `${mock.url}/v1`,
+					},
+					model: "omw02-e5bd-model",
+				},
+			});
+			const createReply = await server.pendingFrame();
+			const sessionId = (createReply.result as { sessionId: string }).sessionId;
+
+			send(server.stdin, {
+				jsonrpc: "2.0",
+				id: 2,
+				method: "session/prompt",
+				params: { sessionId, prompt: "network capture" },
+			});
+			const promptAck = await server.pendingFrame();
+			expect(promptAck.result).toEqual({ ok: true });
+
+			const deltas: string[] = [];
+			const errors: JsonRpcFrame[] = [];
+			let turnFinished: JsonRpcFrame | null = null;
+			while (turnFinished === null) {
+				const frame = await server.pendingFrame();
+				if (frame.method === "assistant/delta") {
+					deltas.push((frame.params as { delta: string }).delta);
+				} else if (frame.method === "error") {
+					errors.push(frame);
+				} else if (frame.method === "turn/finished") {
+					turnFinished = frame;
+				}
+			}
+
+			expect(errors).toEqual([]);
+			expect(deltas.join("")).toContain("OMW02_E5BD_AGENT_OK");
+			expect(turnFinished.params).toMatchObject({ sessionId, cancelled: false });
+			expect(keychainLookups).toBe(0);
+			expect(mock.requests).toEqual([
+				expect.objectContaining({ method: "POST", path: "/v1/chat/completions" }),
+			]);
+			expect(mock.requests[0].authorization).toBeUndefined();
+			expect(mock.requests[0].xApiKey).toBeUndefined();
+		} finally {
+			await server.stop();
+		}
+	}, 15000);
+
 	it("session/create rejects when providerConfig is malformed", async () => {
 		const server = startServer({ getApiKey: async () => undefined });
 		try {
@@ -379,6 +461,7 @@ function startMockProvider401(): Promise<MockServer> {
 			resolve({
 				server,
 				url: `http://127.0.0.1:${addr.port}`,
+				requests: [],
 				close: () => new Promise((r) => server.close(() => r())),
 			});
 		});

@@ -859,7 +859,9 @@ pub const DEBUG_FLAGS: &[FeatureFlag] = &[FeatureFlag::DebugMode, FeatureFlag::R
 /// omw_local builds don't pass `release_bundle` and don't include the `autoupdate`
 /// cargo feature, so `lib.rs::enabled_features` wouldn't add `FeatureFlag::Autoupdate`
 /// without this list. `bin/oss.rs` wires this into `ChannelState::additional_features`
-/// under `#[cfg(feature = "omw_local")]`. The regression test guards the contract.
+/// under `#[cfg(feature = "omw_local")]` so the explicit "Check for updates"
+/// action remains available. Automatic polling stays disabled by
+/// `AppExecutionMode::can_autoupdate`. The regression test guards the contract.
 pub const OMW_LOCAL_FLAGS: &[FeatureFlag] = &[FeatureFlag::Autoupdate];
 
 /// Features enabled for the development team.  The expectation is that, over

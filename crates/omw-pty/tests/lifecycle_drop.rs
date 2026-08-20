@@ -48,6 +48,22 @@ fn heartbeat_cmd(path: &str) -> PtyCommand {
     }
 }
 
+async fn wait_for_heartbeat(path: &std::path::Path) {
+    timeout(Duration::from_secs(15), async {
+        loop {
+            match std::fs::metadata(path) {
+                Ok(metadata) if metadata.len() > 0 => return,
+                Ok(_) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => panic!("read heartbeat metadata: {err}"),
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("heartbeat child did not become ready within 15s");
+}
+
 #[tokio::test]
 async fn drop_without_kill_or_wait_does_not_hang() {
     let pty = Pty::spawn(long_running_cmd())
@@ -82,17 +98,9 @@ async fn drop_actually_terminates_child() {
         .await
         .expect("spawn heartbeat child");
 
-    // Heartbeat warmup — child sleeps 1s between writes (POSIX `sleep`
-    // takes integer seconds), so 2s gives at least one write reliably.
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
-    let size_before_drop = std::fs::metadata(&path)
-        .expect("heartbeat file must exist before drop")
-        .len();
-    assert!(
-        size_before_drop > 0,
-        "heartbeat child should have written something before drop, but file is empty"
-    );
+    // Wait for an observable child write instead of assuming shell startup
+    // completes within a fixed delay on every Windows host.
+    wait_for_heartbeat(&path).await;
 
     let drop_task = tokio::task::spawn_blocking(move || drop(pty));
     timeout(Duration::from_secs(3), drop_task)

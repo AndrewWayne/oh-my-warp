@@ -11,10 +11,10 @@
 //!    print `not running` (exact substring required, lowercase) and exit 0.
 //!    Treat a stale pidfile as "not running" — do NOT exit non-zero.
 //! 3. (Live-process variant) When the daemon IS running, the message must
-//!    contain the substring `running` and the listen address. The
-//!    happy-path live test is gated behind `#[cfg(unix)]` and `#[ignore]`
-//!    on Windows because process-liveness checks via the pidfile are
-//!    flakier on Windows in CI; the negative test below is sufficient.
+//!    contain the substring `running` and the exact listen address. That
+//!    cross-platform lifecycle assertion lives in
+//!    `remote_start_stop::start_writes_pidfile_and_stop_terminates` so it can
+//!    reuse the same foreground daemon and guaranteed cleanup path.
 
 mod common;
 

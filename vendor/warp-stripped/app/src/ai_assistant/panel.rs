@@ -136,6 +136,11 @@ pub struct AIAssistantPanelView {
     /// Transcript model for the omw agent panel. Populated by `new_omw_panel`.
     #[cfg(feature = "omw_local")]
     omw_agent_transcript: super::omw_transcript::OmwAgentTranscriptModel,
+    /// Stable pointer state keyed by approval id. Button handles cannot be
+    /// recreated on every render because mouse-down itself may repaint.
+    #[cfg(feature = "omw_local")]
+    omw_approval_mouse_states:
+        std::collections::HashMap<String, super::omw_panel::ApprovalButtonMouseStates>,
 }
 
 #[derive(Debug, Clone)]
@@ -148,6 +153,12 @@ pub enum AIAssistantAction {
     CopyAnswerToClipboard(Arc<String>),
     FocusTerminalInput,
     FocusEditor,
+    #[cfg(feature = "omw_local")]
+    OmwApprovalDecision {
+        session_id: String,
+        approval_id: String,
+        decision: super::omw_protocol::ApprovalDecision,
+    },
 }
 
 pub fn init(app: &mut AppContext) {
@@ -260,6 +271,8 @@ impl AIAssistantPanelView {
             is_omw_placeholder: false,
             #[cfg(feature = "omw_local")]
             omw_agent_transcript: super::omw_transcript::OmwAgentTranscriptModel::new(),
+            #[cfg(feature = "omw_local")]
+            omw_approval_mouse_states: Default::default(),
         };
 
         panel.tick(ctx);
@@ -281,13 +294,63 @@ impl AIAssistantPanelView {
     ) -> Self {
         let mut panel = Self::new(server_api, ai_client, ctx);
         panel.is_omw_placeholder = true;
+        let agent_state = super::omw_agent_state::OmwAgentState::shared();
+        // Subscribe before starting the singleton session so an immediate
+        // connection/error event cannot race past the panel. Per-pane agent
+        // sessions also mirror their events onto this long-lived global bus,
+        // which lets inline `# prompt` approval cards appear here.
+        panel.pump_omw_agent_events(agent_state.subscribe_events(), ctx);
         // Best-effort session start. Panel mounts cleanly even if config is
         // missing or the agent is disabled — the transcript stays empty until
         // a session is established.
-        if let Err(e) = super::omw_agent_state::OmwAgentState::shared().start_with_config() {
+        if let Err(e) = agent_state.start_with_config() {
             log::debug!("omw agent start_with_config: {e}");
         }
         panel
+    }
+
+    /// Keep the omw transcript synchronized with the process-wide inbound
+    /// agent event bus. `broadcast::Receiver::recv` is runtime-independent,
+    /// so it can be awaited by the UI executor without blocking the render
+    /// thread. Re-arm after every event to hand mutation back to the view
+    /// context and request a repaint.
+    #[cfg(feature = "omw_local")]
+    fn pump_omw_agent_events(
+        &self,
+        mut events: tokio::sync::broadcast::Receiver<super::omw_protocol::OmwAgentEventDown>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        ctx.spawn(
+            async move {
+                loop {
+                    match events.recv().await {
+                        Ok(event) => return Some((events, event)),
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            log::warn!(
+                                "omw agent panel: skipped {skipped} transcript event(s)"
+                            );
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                    }
+                }
+            },
+            |view, next, ctx| {
+                let Some((events, event)) = next else {
+                    return;
+                };
+                if let super::omw_protocol::OmwAgentEventDown::ApprovalRequest {
+                    approval_id, ..
+                } = &event
+                {
+                    view.omw_approval_mouse_states
+                        .entry(approval_id.clone())
+                        .or_default();
+                }
+                view.omw_agent_transcript.apply_event(&event);
+                ctx.notify();
+                view.pump_omw_agent_events(events, ctx);
+            },
+        );
     }
 
     /// Kept for call-site compatibility while callers are migrated.
@@ -1112,6 +1175,51 @@ impl TypedActionView for AIAssistantPanelView {
                 self.focus_state = PanelFocusState::Editor;
                 ctx.focus_self();
             }
+            #[cfg(feature = "omw_local")]
+            OmwApprovalDecision {
+                session_id,
+                approval_id,
+                decision,
+            } => {
+                // The action can be queued more than once by a rapid
+                // double-click. Once the first send succeeds, update the
+                // model synchronously so every later action becomes a no-op
+                // before it can reach the kernel.
+                if !self
+                    .omw_agent_transcript
+                    .is_approval_pending(approval_id)
+                {
+                    return;
+                }
+
+                let state = super::omw_agent_state::OmwAgentState::shared();
+                let result = match state.pane_session_by_id(session_id) {
+                    Some((_, pane)) => {
+                        pane.send_approval_decision(approval_id.clone(), *decision)
+                    }
+                    None => state.send_approval_decision(approval_id.clone(), *decision),
+                };
+                match result {
+                    Ok(()) => {
+                        let status = match decision {
+                            super::omw_protocol::ApprovalDecision::Approve => {
+                                super::omw_transcript::ApprovalCardStatus::Approved
+                            }
+                            super::omw_protocol::ApprovalDecision::Reject => {
+                                super::omw_transcript::ApprovalCardStatus::Rejected
+                            }
+                            super::omw_protocol::ApprovalDecision::Cancel => {
+                                super::omw_transcript::ApprovalCardStatus::Cancelled
+                            }
+                        };
+                        self.omw_agent_transcript
+                            .update_approval(approval_id, status);
+                        self.omw_approval_mouse_states.remove(approval_id);
+                        ctx.notify();
+                    }
+                    Err(e) => log::warn!("omw approval: send decision failed: {e}"),
+                }
+            }
         }
     }
 }
@@ -1148,6 +1256,7 @@ impl View for AIAssistantPanelView {
             return super::omw_panel::render_omw_agent_panel(
                 &self.omw_agent_transcript,
                 appearance,
+                &self.omw_approval_mouse_states,
             );
         }
 

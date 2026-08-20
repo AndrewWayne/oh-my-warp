@@ -197,9 +197,15 @@ impl OmwAgentSessionParams {
 #[derive(Clone)]
 pub struct ActiveTerminalHandle {
     pub view_id: warpui::EntityId,
+    /// UI-thread command queue for approved local-agent commands. Production
+    /// panes provide this so broker execution goes through TerminalView's
+    /// normal ExecuteCommand event and is persisted in command history.
+    /// Synthetic broker tests may leave it unset and exercise the raw-PTY
+    /// fallback.
+    pub command_tx: Option<async_channel::Sender<String>>,
     /// Sender into the local-PTY event loop. The broker pushes
-    /// `Message::Input(bytes)` to inject the agent's command into the
-    /// pane's stdin.
+    /// response text into the pane and is retained as the test fallback for
+    /// command execution when `command_tx` is absent.
     pub event_loop_tx:
         std::sync::Arc<parking_lot::Mutex<crate::terminal::local_tty::mio_channel::Sender<crate::terminal::writeable_pty::Message>>>,
     /// Broadcast sender for raw PTY output bytes. The broker calls

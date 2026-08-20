@@ -6547,6 +6547,66 @@ impl TerminalView {
         &self.input
     }
 
+    /// Build the local-agent IO handle for this pane. Approved commands use a
+    /// UI-thread queue so they pass through the regular ExecuteCommand event,
+    /// which creates the block and command-history audit record. Agent output
+    /// capture continues to use the local PTY channels.
+    #[cfg(feature = "omw_local")]
+    fn omw_agent_terminal_handle(
+        &mut self,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<crate::ai_assistant::omw_agent_state::ActiveTerminalHandle> {
+        let (event_loop_tx, pty_reads_tx, _) =
+            crate::omw::pane_auto_share::local_io_handles_for(self, ctx)?;
+        let (command_tx, command_rx) = async_channel::bounded(8);
+        self.listen_for_omw_agent_commands(command_rx, ctx);
+        Some(
+            crate::ai_assistant::omw_agent_state::ActiveTerminalHandle {
+                view_id: self.view_id,
+                command_tx: Some(command_tx),
+                event_loop_tx,
+                pty_reads_tx,
+            },
+        )
+    }
+
+    #[cfg(feature = "omw_local")]
+    fn listen_for_omw_agent_commands(
+        &mut self,
+        command_rx: async_channel::Receiver<String>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        ctx.spawn(
+            async move {
+                let command = command_rx.recv().await;
+                (command, command_rx)
+            },
+            |me, (command, command_rx), ctx| {
+                let Ok(command) = command else {
+                    return;
+                };
+                me.execute_omw_agent_command(command, ctx);
+                me.listen_for_omw_agent_commands(command_rx, ctx);
+            },
+        );
+    }
+
+    #[cfg(feature = "omw_local")]
+    fn execute_omw_agent_command(&mut self, command: String, ctx: &mut ViewContext<Self>) {
+        let Some(session_id) = self.active_block_session_id() else {
+            log::warn!("omw command_broker: pane has no active terminal session");
+            return;
+        };
+        ctx.emit(Event::ExecuteCommand(ExecuteCommandEvent {
+            command,
+            session_id,
+            workflow_id: None,
+            workflow_command: None,
+            should_add_command_to_history: true,
+            source: CommandExecutionSource::OmwAgent,
+        }));
+    }
+
     pub fn input_config(&self, app: &AppContext) -> InputConfig {
         self.ai_input_model.as_ref(app).input_config()
     }
@@ -26043,16 +26103,8 @@ impl View for TerminalView {
             {
                 let agent_state =
                     crate::ai_assistant::omw_agent_state::OmwAgentState::shared();
-                if let Some((event_loop_tx, pty_reads_tx, _)) =
-                    crate::omw::pane_auto_share::local_io_handles_for(self, ctx)
-                {
-                    agent_state.register_active_terminal(
-                        crate::ai_assistant::omw_agent_state::ActiveTerminalHandle {
-                            view_id: ctx.view_id(),
-                            event_loop_tx,
-                            pty_reads_tx,
-                        },
-                    );
+                if let Some(handle) = self.omw_agent_terminal_handle(ctx) {
+                    agent_state.register_active_terminal(handle);
                 } else {
                     agent_state.clear_active_terminal();
                 }

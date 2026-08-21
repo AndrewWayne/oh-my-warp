@@ -216,6 +216,18 @@ fn initialize_app(app: &mut App) {
     app.update(workspace::init);
 }
 
+#[test]
+fn right_caption_controls_always_reserve_tab_bar_space() {
+    assert_eq!(
+        right_traffic_light_reserved_width(TrafficLightSide::Right, 136.),
+        Some(136.)
+    );
+    assert_eq!(
+        right_traffic_light_reserved_width(TrafficLightSide::Left, 64.),
+        None
+    );
+}
+
 fn mock_workspace(app: &mut App) -> ViewHandle<Workspace> {
     let global_resource_handles = GlobalResourceHandles::mock(app);
     let active_window_id = app.read(|ctx| ctx.windows().active_window());

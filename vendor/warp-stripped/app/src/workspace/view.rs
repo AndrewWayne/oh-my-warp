@@ -365,7 +365,6 @@ use crate::workspace::sync_inputs::SyncedInputState;
 use crate::workspace::toast_stack::{
     ToastStack as WorkspaceToastStack, ToastStackEvent as WorkspaceToastStackEvent,
 };
-#[cfg(not(feature = "omw_local"))]
 use crate::ai_assistant::panel::AIAssistantPanelEvent;
 use crate::{
     ai_assistant::{
@@ -1528,9 +1527,19 @@ impl Workspace {
         server_api: Arc<ServerApi>,
         ai_client: Arc<dyn AIClient>,
     ) -> ViewHandle<AIAssistantPanelView> {
-        ctx.add_typed_action_view(|ctx| {
+        let ai_assistant_panel = ctx.add_typed_action_view(|ctx| {
             AIAssistantPanelView::new_omw_panel(server_api, ai_client, ctx)
-        })
+        });
+
+        ctx.subscribe_to_view(&ai_assistant_panel, |me, _, event, ctx| {
+            if matches!(event, AIAssistantPanelEvent::ClosePanel) {
+                me.current_workspace_state.is_ai_assistant_panel_open = false;
+                me.focus_active_tab(ctx);
+                ctx.notify();
+            }
+        });
+
+        ai_assistant_panel
     }
 
     fn build_resource_center_view(
@@ -17478,18 +17487,15 @@ impl Workspace {
         let zoom_factor = WindowSettings::as_ref(ctx).zoom_level.as_zoom_factor();
         let traffic_light_data = traffic_light_data(ctx, self.window_id);
         if let Some(traffic_light_data) = traffic_light_data.as_ref() {
-            let vertical_tabs_active = FeatureFlag::VerticalTabs.is_enabled()
-                && *TabSettings::as_ref(ctx).use_vertical_tabs;
-            let right_panel_open = self.current_workspace_state.is_right_panel_open();
-            let should_reserve_right_traffic_light_space =
-                vertical_tabs_active || !right_panel_open;
-
-            if traffic_light_data.side == TrafficLightSide::Right
-                && should_reserve_right_traffic_light_space
-            {
+            // Native caption controls remain anchored to the full window. A
+            // right-side panel must not release their tab-bar safe area.
+            if let Some(reserved_width) = right_traffic_light_reserved_width(
+                traffic_light_data.side,
+                traffic_light_data.width(zoom_factor),
+            ) {
                 target.add_child(
                     ConstrainedBox::new(Empty::new().finish())
-                        .with_width(traffic_light_data.width(zoom_factor))
+                        .with_width(reserved_width)
                         .finish(),
                 );
             }
@@ -23231,6 +23237,10 @@ impl View for Workspace {
             active_session.close_workspace(window_id);
         })
     }
+}
+
+fn right_traffic_light_reserved_width(side: TrafficLightSide, width: f32) -> Option<f32> {
+    (side == TrafficLightSide::Right).then_some(width)
 }
 
 fn compute_default_panel_widths(

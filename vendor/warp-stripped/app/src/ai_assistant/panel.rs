@@ -33,7 +33,9 @@ use crate::send_telemetry_from_ctx;
 use crate::server::server_api::ai::AIClient;
 use crate::server::server_api::ServerApi;
 use crate::server::telemetry::{TelemetryEvent, WarpAIActionType};
-use crate::terminal::resizable_data::{ModalType, ResizableData, DEFAULT_WARP_AI_WIDTH};
+use crate::terminal::resizable_data::{
+    ModalType, ResizableData, DEFAULT_LEFT_PANEL_WIDTH, DEFAULT_WARP_AI_WIDTH,
+};
 use crate::ui_components::blended_colors;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 
@@ -61,7 +63,9 @@ pub const HEXAGON_ALERT_SVG_PATH: &str = "bundled/svg/alert-hexagon.svg";
 const EDITOR_SAVE_POSITION_ID: &str = "ai_assistant::editor";
 
 const MIN_PANEL_WIDTH: f32 = 300.;
-const MIN_REMAINING_WINDOW_SIZE: f32 = 200.;
+const MAX_PANEL_WIDTH: f32 = 600.;
+const MAX_PANEL_WINDOW_FRACTION: f32 = 0.45;
+const MIN_MAIN_WORKSPACE_WIDTH: f32 = 480.;
 const MAX_EDITOR_HEIGHT: f32 = 300.;
 const MAX_INPUT_SUGGESTIONS_HEIGHT: f32 = 200.;
 
@@ -83,6 +87,27 @@ const FILES_ZERO_STATE_PROMPT: &str = "How do I find all files containing specif
 // The placeholder texts are prepended with a space to give them cushion from the cursor.
 const INIT_PLACEHOLDER_TEXT: &str = " Ask a question...";
 const FOLLOWUP_PLACEHOLDER_TEXT: &str = " Type a response or click one above...";
+
+fn ai_assistant_panel_width_bounds(window_width: f32) -> (f32, f32) {
+    let window_width = if window_width.is_finite() {
+        window_width.max(0.)
+    } else {
+        0.
+    };
+
+    // The callback receives the full window width. Reserving the default left
+    // panel as well as a useful main surface keeps a terminal usable in the
+    // common explorer + terminal + Agent layout.
+    let max_for_remaining_workspace =
+        window_width - DEFAULT_LEFT_PANEL_WIDTH - MIN_MAIN_WORKSPACE_WIDTH;
+    let max_width = MAX_PANEL_WIDTH
+        .min(window_width * MAX_PANEL_WINDOW_FRACTION)
+        .min(max_for_remaining_workspace)
+        .max(MIN_PANEL_WIDTH);
+
+    (MIN_PANEL_WIDTH, max_width)
+}
+
 const RESTART_BUTTON_TEXT: &str = "Restart";
 
 const ASK_AI_BLOCK_INPUT_LIMIT: usize = 100;
@@ -808,6 +833,38 @@ impl AIAssistantPanelView {
 
 /// All rendering related capabilities.
 impl AIAssistantPanelView {
+    fn render_resizable_panel(&self, panel: Box<dyn Element>) -> Box<dyn Element> {
+        Resizable::new(self.resizable_state_handle.clone(), panel)
+            .on_resize(move |ctx, _| ctx.notify())
+            .with_dragbar_side(DragBarSide::Left)
+            .with_bounds_callback(Box::new(|window_bounds| {
+                ai_assistant_panel_width_bounds(window_bounds.x())
+            }))
+            .finish()
+    }
+
+    fn render_close_button(&self, appearance: &Appearance) -> Box<dyn Element> {
+        icon_button(
+            appearance,
+            crate::ui_components::icons::Icon::X,
+            false,
+            self.mouse_state_handles.close_panel_state.clone(),
+        )
+        .build()
+        .on_click(|ctx, _, _| ctx.dispatch_typed_action(AIAssistantAction::ClosePanel))
+        .with_cursor(Cursor::PointingHand)
+        .finish()
+    }
+
+    #[cfg(feature = "omw_local")]
+    fn render_omw_title_bar(&self, appearance: &Appearance) -> Box<dyn Element> {
+        Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_child(Shrinkable::new(1., Empty::new().finish()).finish())
+            .with_child(self.render_close_button(appearance))
+            .finish()
+    }
+
     fn render_title_bar(&self, appearance: &Appearance, app: &AppContext) -> Box<dyn Element> {
         let mut header = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -861,19 +918,7 @@ impl AIAssistantPanelView {
 
         // Add the close button
         header.add_child(
-            Container::new(
-                icon_button(
-                    appearance,
-                    crate::ui_components::icons::Icon::X,
-                    false,
-                    self.mouse_state_handles.close_panel_state.clone(),
-                )
-                .build()
-                .on_click(|ctx, _, _| ctx.dispatch_typed_action(AIAssistantAction::ClosePanel))
-                .with_cursor(Cursor::PointingHand)
-                .finish(),
-            )
-            .finish(),
+            Container::new(self.render_close_button(appearance)).finish(),
         );
 
         header.finish()
@@ -1253,11 +1298,29 @@ impl View for AIAssistantPanelView {
 
         #[cfg(feature = "omw_local")]
         if self.is_omw_placeholder {
-            return super::omw_panel::render_omw_agent_panel(
-                &self.omw_agent_transcript,
-                appearance,
-                &self.omw_approval_mouse_states,
-            );
+            let panel = Flex::column()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_child(
+                    ConstrainedBox::new(
+                        Container::new(self.render_omw_title_bar(appearance))
+                            .with_padding_top(HEADER_VERTICAL_PADDING)
+                            .with_padding_bottom(HEADER_VERTICAL_PADDING)
+                            .with_padding_left(PANEL_HORIZONTAL_PADDING)
+                            .with_padding_right(PANEL_HORIZONTAL_PADDING)
+                            .finish(),
+                    )
+                    .with_height(HEADER_HEIGHT)
+                    .finish(),
+                )
+                .with_child(Box::new(Shrinkable::new(
+                    1.,
+                    super::omw_panel::render_omw_agent_panel(
+                        &self.omw_agent_transcript,
+                        appearance,
+                        &self.omw_approval_mouse_states,
+                    ),
+                )));
+            return self.render_resizable_panel(panel.finish());
         }
 
         let mut panel = Flex::column().with_main_axis_size(MainAxisSize::Max);
@@ -1339,18 +1402,48 @@ impl View for AIAssistantPanelView {
                 DispatchEventResult::StopPropagation
             });
 
-        Resizable::new(
-            self.resizable_state_handle.clone(),
-            clickable_panel.finish(),
-        )
-        .on_resize(move |ctx, _| ctx.notify())
-        .with_dragbar_side(DragBarSide::Left)
-        .with_bounds_callback(Box::new(|window_bounds| {
-            (
-                MIN_PANEL_WIDTH,
-                (window_bounds.x() - MIN_REMAINING_WINDOW_SIZE).max(MIN_PANEL_WIDTH),
-            )
-        }))
-        .finish()
+        self.render_resizable_panel(clickable_panel.finish())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn panel_width_is_capped_on_large_windows() {
+        assert_eq!(
+            ai_assistant_panel_width_bounds(2304.),
+            (MIN_PANEL_WIDTH, MAX_PANEL_WIDTH)
+        );
+    }
+
+    #[test]
+    fn panel_width_preserves_the_main_workspace() {
+        assert_eq!(
+            ai_assistant_panel_width_bounds(1280.),
+            (MIN_PANEL_WIDTH, 560.)
+        );
+        assert_eq!(
+            ai_assistant_panel_width_bounds(1024.),
+            (MIN_PANEL_WIDTH, 304.)
+        );
+    }
+
+    #[test]
+    fn panel_width_clamps_restored_values_but_keeps_valid_preferences() {
+        let (min, max) = ai_assistant_panel_width_bounds(2304.);
+        assert_eq!(1260_f32.clamp(min, max), MAX_PANEL_WIDTH);
+        assert_eq!(DEFAULT_WARP_AI_WIDTH.clamp(min, max), DEFAULT_WARP_AI_WIDTH);
+    }
+
+    #[test]
+    fn panel_width_keeps_safe_bounds_for_invalid_or_narrow_windows() {
+        for width in [640., -1., f32::NAN, f32::INFINITY] {
+            assert_eq!(
+                ai_assistant_panel_width_bounds(width),
+                (MIN_PANEL_WIDTH, MIN_PANEL_WIDTH)
+            );
+        }
     }
 }

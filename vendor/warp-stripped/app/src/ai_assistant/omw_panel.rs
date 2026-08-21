@@ -33,7 +33,7 @@ use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use crate::appearance::Appearance;
 use super::omw_protocol::ApprovalDecision;
 use super::omw_transcript::{ApprovalCardStatus, OmwAgentMessage, OmwAgentTranscriptModel, ToolCallStatus};
-use super::omw_agent_state::OmwAgentState;
+use super::omw_agent_state::{OmwAgentState, OmwAgentStatus};
 use super::panel::AIAssistantAction;
 
 const BODY_FONT_SIZE: f32 = 13.;
@@ -59,7 +59,7 @@ pub(crate) fn render_omw_agent_panel(
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
 
-    let status_text = format!("Agent status: {:?}", OmwAgentState::shared().status());
+    let status_text = format_agent_status(&OmwAgentState::shared().status());
 
     let mut col = Flex::column().with_main_axis_size(MainAxisSize::Min);
 
@@ -67,7 +67,7 @@ pub(crate) fn render_omw_agent_panel(
     col.add_child(
         appearance
             .ui_builder()
-            .wrappable_text(status_text, false)
+            .wrappable_text(status_text, true)
             .with_style(UiComponentStyles {
                 font_family_id: Some(appearance.ui_font_family()),
                 font_size: Some(BODY_FONT_SIZE),
@@ -123,6 +123,16 @@ pub(crate) fn render_omw_agent_panel(
             .finish(),
     )
     .finish()
+}
+
+pub(crate) fn format_agent_status(status: &OmwAgentStatus) -> String {
+    match status {
+        OmwAgentStatus::Idle => "Agent status: Idle".to_owned(),
+        OmwAgentStatus::Starting => "Agent status: Starting".to_owned(),
+        OmwAgentStatus::Connected { .. } => "Agent status: Connected".to_owned(),
+        OmwAgentStatus::Streaming { .. } => "Agent status: Streaming".to_owned(),
+        OmwAgentStatus::Failed { error } => format!("Agent status: Failed - {error}"),
+    }
 }
 
 fn format_message_summary(message: &OmwAgentMessage) -> String {

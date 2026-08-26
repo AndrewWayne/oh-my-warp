@@ -54,6 +54,31 @@ use crate::test_util::{add_window_with_terminal, assert_eventually};
 
 use super::*;
 
+#[cfg(feature = "omw_local")]
+#[test]
+fn omw_phone_share_non_local_mock_manager_does_not_start_or_register() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.add_singleton_model(|_| crate::workspace::ToastStack);
+        let state = crate::omw::OmwRemoteState::shared();
+        state.stop().expect("reset phone daemon before test");
+
+        let terminal =
+            MockTerminalManager::create_new_terminal_view_window_for_test(&mut app, None);
+        terminal.update(&mut app, |view, ctx| {
+            assert!(!view.is_omw_phone_shareable(ctx));
+            assert!(view.omw_phone_share_presentation(ctx).is_none());
+            view.toggle_omw_phone_share(ctx);
+        });
+
+        assert!(matches!(
+            state.status(),
+            crate::omw::OmwRemoteStatus::Stopped
+        ));
+        assert_eq!(state.share_count(), 0);
+    });
+}
+
 /// Test to verify that blocks created through normal execution
 /// have the correct local status set
 #[test]

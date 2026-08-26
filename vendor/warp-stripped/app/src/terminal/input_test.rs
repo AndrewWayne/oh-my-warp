@@ -5438,6 +5438,322 @@ fn test_input_type_button_explicit_lock() {
     });
 }
 
+#[cfg(feature = "omw_local")]
+#[test]
+fn omw_local_input_routing_modes_and_submissions() {
+    App::test((), |mut app| async move {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use crate::ai_assistant::omw_agent_state::{ActiveTerminalHandle, OmwAgentState};
+        use crate::ai_assistant::omw_protocol::OmwAgentEventUp;
+        use crate::terminal::universal_developer_input::InputToggleMode;
+
+        let _agent_mode_flag = FeatureFlag::AgentMode.override_enabled(true);
+        let _agent_view_flag = FeatureFlag::AgentView.override_enabled(true);
+        initialize_app(&mut app);
+
+        AISettings::handle(&app).update(&mut app, |ai_settings, ctx| {
+            let _ = ai_settings
+                .ai_autodetection_enabled_internal
+                .set_value(true, ctx);
+            let _ = ai_settings
+                .nld_in_terminal_enabled_internal
+                .set_value(true, ctx);
+        });
+
+        let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+        let terminal_view_id = input.read(&app, |input, _| input.terminal_view_id);
+        let button_bar = input.read(&app, |input, _| {
+            input.universal_developer_input_button_bar().clone()
+        });
+
+        let agent_state = OmwAgentState::shared();
+        agent_state
+            .test_ensure_runtime()
+            .expect("test agent runtime should start");
+        agent_state.remove_pane_session(terminal_view_id);
+        agent_state.remove_pane_io(terminal_view_id);
+
+        let (event_loop_tx, _event_loop_rx) = crate::terminal::local_tty::mio_channel::channel();
+        let (pty_reads_tx, _pty_reads_rx) = async_broadcast::broadcast::<Arc<Vec<u8>>>(64);
+        agent_state.register_pane_io(ActiveTerminalHandle {
+            view_id: terminal_view_id,
+            command_tx: None,
+            event_loop_tx: Arc::new(parking_lot::Mutex::new(event_loop_tx)),
+            pty_reads_tx,
+        });
+
+        let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel(4);
+        let (_, replaced) = agent_state.test_install_pane_session(terminal_view_id, outbound_tx);
+        assert!(replaced.is_none());
+
+        let ai_query_executed = Arc::new(AtomicUsize::new(0));
+        let shell_command_executed = Arc::new(AtomicUsize::new(0));
+        app.update(|ctx| {
+            let ai_query_executed = ai_query_executed.clone();
+            let shell_command_executed = shell_command_executed.clone();
+            ctx.subscribe_to_view(&input, move |_, event, _| match event {
+                Event::ExecuteAIQuery => {
+                    ai_query_executed.fetch_add(1, Ordering::SeqCst);
+                }
+                Event::ExecuteCommand(_) => {
+                    shell_command_executed.fetch_add(1, Ordering::SeqCst);
+                }
+                _ => {}
+            });
+        });
+
+        button_bar.update(&mut app, |button_bar, ctx| {
+            button_bar.select_input_mode_for_test(InputToggleMode::AgentMode, ctx);
+        });
+
+        terminal.read(&app, |terminal, ctx| {
+            assert!(
+                !terminal.agent_view_controller().as_ref(ctx).is_active(),
+                "omw_local Agent mode must not enter upstream Agent View"
+            );
+        });
+        input.read(&app, |input, ctx| {
+            let config = input.ai_input_model().as_ref(ctx).input_config();
+            assert_eq!(config.input_type, InputType::AI);
+            assert!(config.is_locked);
+        });
+
+        let plain_agent_prompt = "Which agent are you using?";
+        input.update(&mut app, |input, ctx| {
+            input.editor.update(ctx, |editor, ctx| {
+                editor.set_buffer_text(plain_agent_prompt, ctx);
+            });
+            input.input_enter(ctx);
+        });
+
+        match outbound_rx
+            .try_recv()
+            .expect("Agent-mode plain text should reach the omw pane session")
+        {
+            OmwAgentEventUp::Prompt { prompt } => assert_eq!(prompt, plain_agent_prompt),
+            other => panic!("expected an omw prompt, got {other:?}"),
+        }
+        assert_eq!(ai_query_executed.load(Ordering::SeqCst), 1);
+        assert_eq!(shell_command_executed.load(Ordering::SeqCst), 0);
+        input.read(&app, |input, ctx| {
+            let config = input.ai_input_model().as_ref(ctx).input_config();
+            assert_eq!(config.input_type, InputType::AI);
+            assert!(
+                config.is_locked,
+                "an explicit Agent lock must survive a successful local prompt"
+            );
+            assert!(input.buffer_text(ctx).is_empty());
+        });
+
+        input.update(&mut app, |input, ctx| {
+            input.ai_input_model.update(ctx, |model, ctx| {
+                model.set_input_config(
+                    InputConfig {
+                        input_type: InputType::AI,
+                        is_locked: false,
+                    },
+                    true,
+                    ctx,
+                );
+            });
+            input.editor.update(ctx, |editor, ctx| {
+                editor.set_buffer_text("Explain this in Auto mode", ctx);
+            });
+            input.input_enter(ctx);
+        });
+        match outbound_rx
+            .try_recv()
+            .expect("Auto-classified AI text should reach the omw pane session")
+        {
+            OmwAgentEventUp::Prompt { prompt } => assert_eq!(prompt, "Explain this in Auto mode"),
+            other => panic!("expected an omw prompt, got {other:?}"),
+        }
+        assert_eq!(ai_query_executed.load(Ordering::SeqCst), 2);
+        assert_eq!(shell_command_executed.load(Ordering::SeqCst), 0);
+        input.read(&app, |input, ctx| {
+            let config = input.ai_input_model().as_ref(ctx).input_config();
+            assert_eq!(config.input_type, InputType::AI);
+            assert!(!config.is_locked, "Auto mode must remain unlocked");
+        });
+        button_bar.read(&app, |button_bar, ctx| {
+            assert_eq!(
+                button_bar.selected_input_mode(ctx),
+                InputToggleMode::AutoDetection
+            );
+        });
+
+        button_bar.update(&mut app, |button_bar, ctx| {
+            button_bar.select_input_mode_for_test(InputToggleMode::Terminal, ctx);
+        });
+        input.update(&mut app, |input, ctx| {
+            input.editor.update(ctx, |editor, ctx| {
+                editor.set_buffer_text("Write-Output terminal", ctx);
+            });
+            input.input_enter(ctx);
+        });
+        assert_eq!(shell_command_executed.load(Ordering::SeqCst), 1);
+        assert!(
+            outbound_rx.try_recv().is_err(),
+            "Terminal-mode plain text must not reach the local agent"
+        );
+
+        button_bar.update(&mut app, |button_bar, ctx| {
+            button_bar.select_input_mode_for_test(InputToggleMode::Terminal, ctx);
+        });
+        input.update(&mut app, |input, ctx| {
+            input.editor.update(ctx, |editor, ctx| {
+                editor.set_buffer_text("# Explain this command", ctx);
+            });
+            input.input_enter(ctx);
+        });
+        match outbound_rx
+            .try_recv()
+            .expect("Terminal-mode # prompt should reach the omw pane session")
+        {
+            OmwAgentEventUp::Prompt { prompt } => assert_eq!(prompt, "Explain this command"),
+            other => panic!("expected an omw prompt, got {other:?}"),
+        }
+        assert_eq!(shell_command_executed.load(Ordering::SeqCst), 1);
+
+        button_bar.update(&mut app, |button_bar, ctx| {
+            button_bar.select_input_mode_for_test(InputToggleMode::AgentMode, ctx);
+        });
+        button_bar.update(&mut app, |button_bar, ctx| {
+            button_bar.select_input_mode_for_test(InputToggleMode::Terminal, ctx);
+        });
+        input.update(&mut app, |input, ctx| {
+            input.editor.update(ctx, |editor, ctx| {
+                editor.set_buffer_text("Write-Output restored", ctx);
+            });
+            input.input_enter(ctx);
+        });
+        assert_eq!(shell_command_executed.load(Ordering::SeqCst), 2);
+        assert!(outbound_rx.try_recv().is_err());
+
+        agent_state.remove_pane_session(terminal_view_id);
+        agent_state.remove_pane_io(terminal_view_id);
+    });
+}
+
+#[cfg(feature = "omw_local")]
+#[test]
+fn omw_local_input_routing_reselection_tracks_nld_in_ui_and_model() {
+    App::test((), |mut app| async move {
+        use crate::terminal::universal_developer_input::InputToggleMode;
+
+        let _agent_mode_flag = FeatureFlag::AgentMode.override_enabled(true);
+        let _agent_view_flag = FeatureFlag::AgentView.override_enabled(true);
+        initialize_app(&mut app);
+
+        AISettings::handle(&app).update(&mut app, |settings, ctx| {
+            let _ = settings
+                .ai_autodetection_enabled_internal
+                .set_value(true, ctx);
+            let _ = settings
+                .nld_in_terminal_enabled_internal
+                .set_value(true, ctx);
+        });
+
+        let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+        let button_bar = input.read(&app, |input, _| {
+            input.universal_developer_input_button_bar().clone()
+        });
+
+        button_bar.update(&mut app, |button_bar, ctx| {
+            button_bar.select_input_mode_for_test(InputToggleMode::AgentMode, ctx);
+        });
+        button_bar.update(&mut app, |button_bar, ctx| {
+            button_bar.select_input_mode_for_test(InputToggleMode::AgentMode, ctx);
+        });
+        input.read(&app, |input, ctx| {
+            let config = input.ai_input_model().as_ref(ctx).input_config();
+            assert_eq!(config.input_type, InputType::Shell);
+            assert!(!config.is_locked);
+        });
+        button_bar.read(&app, |button_bar, ctx| {
+            assert_eq!(
+                button_bar.selected_input_mode(ctx),
+                InputToggleMode::AutoDetection
+            );
+        });
+
+        button_bar.update(&mut app, |button_bar, ctx| {
+            button_bar.select_input_mode_for_test(InputToggleMode::AgentMode, ctx);
+        });
+        AISettings::handle(&app).update(&mut app, |settings, ctx| {
+            let _ = settings
+                .nld_in_terminal_enabled_internal
+                .set_value(false, ctx);
+        });
+
+        button_bar.update(&mut app, |button_bar, ctx| {
+            button_bar.select_input_mode_for_test(InputToggleMode::AgentMode, ctx);
+        });
+        button_bar.update(&mut app, |button_bar, ctx| {
+            button_bar.select_input_mode_for_test(InputToggleMode::AutoDetection, ctx);
+        });
+        input.read(&app, |input, ctx| {
+            let config = input.ai_input_model().as_ref(ctx).input_config();
+            assert_eq!(config.input_type, InputType::AI);
+            assert!(config.is_locked);
+        });
+        button_bar.read(&app, |button_bar, ctx| {
+            assert_eq!(
+                button_bar.selected_input_mode(ctx),
+                InputToggleMode::AgentMode
+            );
+        });
+    });
+}
+
+#[cfg(feature = "omw_local")]
+#[test]
+fn omw_local_input_routing_rejected_transition_reverts_segmented_control() {
+    App::test((), |mut app| async move {
+        use crate::terminal::universal_developer_input::InputToggleMode;
+
+        let _agent_mode_flag = FeatureFlag::AgentMode.override_enabled(true);
+        initialize_app(&mut app);
+
+        let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+        let button_bar = input.read(&app, |input, _| {
+            input.universal_developer_input_button_bar().clone()
+        });
+
+        button_bar.update(&mut app, |button_bar, ctx| {
+            button_bar.select_input_mode_for_test(InputToggleMode::Terminal, ctx);
+        });
+        terminal.update(&mut app, |terminal, _| {
+            terminal
+                .model
+                .lock()
+                .set_shared_session_status(SharedSessionStatus::ActiveViewer {
+                    role: Role::Reader,
+                });
+        });
+
+        button_bar.update(&mut app, |button_bar, ctx| {
+            button_bar.select_input_mode_for_test(InputToggleMode::AgentMode, ctx);
+        });
+
+        input.read(&app, |input, ctx| {
+            let config = input.ai_input_model().as_ref(ctx).input_config();
+            assert_eq!(config.input_type, InputType::Shell);
+            assert!(config.is_locked);
+        });
+        button_bar.read(&app, |button_bar, ctx| {
+            assert_eq!(
+                button_bar.selected_input_mode(ctx),
+                InputToggleMode::Terminal
+            );
+        });
+    });
+}
+
 #[test]
 fn test_auto_detection_toggle() {
     App::test((), |mut app| async move {
@@ -6156,6 +6472,7 @@ fn test_agent_view_terminal_only_initial_input_config_unlocked_when_autodetectio
     });
 }
 
+#[cfg(not(feature = "omw_local"))]
 #[test]
 fn test_terminal_only_ai_enter_enters_agent_view_and_clears_buffer() {
     use crate::ai::blocklist::agent_view::AgentViewState;

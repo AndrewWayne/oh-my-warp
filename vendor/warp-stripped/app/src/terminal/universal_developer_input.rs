@@ -430,8 +430,9 @@ impl UniversalDeveloperInputButtonBar {
         });
 
         // Create segmented control options based on auto-detection setting
-        let ai_settings = AISettings::as_ref(ctx);
-        let is_autodetection_enabled = ai_settings.is_ai_autodetection_enabled(ctx);
+        let is_autodetection_enabled = input_model
+            .as_ref(ctx)
+            .is_autodetection_enabled_for_current_context(ctx);
 
         let mut options = vec![InputToggleMode::Terminal, InputToggleMode::AgentMode];
 
@@ -468,24 +469,38 @@ impl UniversalDeveloperInputButtonBar {
                 segmented_control_styles(ctx),
             )
         });
+        let input_model_for_selection = input_model.clone();
         // Subscribe to segmented control events
-        ctx.subscribe_to_view(&segmented_control_view, |_, _, event, ctx| match event {
-            SegmentedControlEvent::OptionSelected(input_mode) => match input_mode {
-                InputToggleMode::Terminal => {
-                    ctx.emit(UniversalDeveloperInputButtonBarEvent::InputTypeSelected(
-                        InputType::Shell,
-                    ));
-                }
-                InputToggleMode::AgentMode => {
-                    ctx.emit(UniversalDeveloperInputButtonBarEvent::InputTypeSelected(
-                        InputType::AI,
-                    ));
-                }
-                InputToggleMode::AutoDetection => {
-                    ctx.emit(UniversalDeveloperInputButtonBarEvent::EnableAutoDetection);
+        ctx.subscribe_to_view(
+            &segmented_control_view,
+            move |me, _, event, ctx| match event {
+                SegmentedControlEvent::OptionSelected(input_mode) => {
+                    match input_mode {
+                        InputToggleMode::Terminal => {
+                            ctx.emit(UniversalDeveloperInputButtonBarEvent::InputTypeSelected(
+                                InputType::Shell,
+                            ));
+                        }
+                        InputToggleMode::AgentMode => {
+                            ctx.emit(UniversalDeveloperInputButtonBarEvent::InputTypeSelected(
+                                InputType::AI,
+                            ));
+                        }
+                        InputToggleMode::AutoDetection => {
+                            ctx.emit(UniversalDeveloperInputButtonBarEvent::EnableAutoDetection);
+                        }
+                    }
+
+                    // The model owns routing state; undo the control's optimistic selection if
+                    // the requested transition was rejected.
+                    let authoritative_mode =
+                        InputToggleMode::from(input_model_for_selection.as_ref(ctx));
+                    me.segmented_control.update(ctx, |control, ctx| {
+                        control.set_selected_option(authoritative_mode, ctx);
+                    });
                 }
             },
-        });
+        );
 
         ctx.subscribe_to_model(&Appearance::handle(ctx), |me, _, _, ctx| {
             me.segmented_control.update(ctx, |segmented_control, ctx| {
@@ -494,14 +509,20 @@ impl UniversalDeveloperInputButtonBar {
             ctx.notify();
         });
 
-        ctx.subscribe_to_model(&AISettings::handle(ctx), |me, ai_settings, event, ctx| {
+        let input_model_for_settings = input_model.clone();
+        ctx.subscribe_to_model(&AISettings::handle(ctx), move |me, _, event, ctx| {
             // Re-render when AI settings change (like voice input enabled/disabled)
             // Also update segmented control options when auto-detection setting changes
-            if let AISettingsChangedEvent::AIAutoDetectionEnabled { .. } = event {
-                let is_autodection_enabled =
-                    ai_settings.as_ref(ctx).is_ai_autodetection_enabled(ctx);
+            if matches!(
+                event,
+                AISettingsChangedEvent::AIAutoDetectionEnabled { .. }
+                    | AISettingsChangedEvent::NLDInTerminalEnabled { .. }
+            ) {
+                let is_autodetection_enabled = input_model_for_settings
+                    .as_ref(ctx)
+                    .is_autodetection_enabled_for_current_context(ctx);
                 me.segmented_control.update(ctx, |segmented_control, ctx| {
-                    if is_autodection_enabled {
+                    if is_autodetection_enabled {
                         segmented_control.update_options(
                             vec![
                                 InputToggleMode::Terminal,
@@ -609,6 +630,27 @@ impl UniversalDeveloperInputButtonBar {
         me.update_segmented_control_disabled_state(ctx);
 
         me
+    }
+
+    #[cfg(test)]
+    pub(crate) fn selected_input_mode(&self, app: &AppContext) -> InputToggleMode {
+        self.segmented_control.as_ref(app).selected_option()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn select_input_mode_for_test(
+        &mut self,
+        input_mode: InputToggleMode,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.segmented_control.update(ctx, |control, ctx| {
+            control.handle_action(
+                &warpui::ui_components::segmented_control::SegmentedControlAction::SelectOption(
+                    input_mode,
+                ),
+                ctx,
+            );
+        });
     }
 
     pub fn set_voice_is_listening(&mut self, is_listening: bool, ctx: &mut ViewContext<Self>) {

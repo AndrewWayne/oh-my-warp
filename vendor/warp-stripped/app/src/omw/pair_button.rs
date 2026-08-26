@@ -11,13 +11,9 @@
 // published by the Free Software Foundation. See the LICENSE file at the
 // repository root for the full text.
 
-//! Phone-button label/tooltip helper used by the two footer surfaces that
-//! host an omw Phone button: the agent input footer (CLI-agent block toolbar)
-//! and the Warpify footer (subshell/SSH block toolbar). Pre v0.4-thin this
-//! lived inside the agent input footer module and the Warpify footer used
-//! hardcoded strings — that worked because both were keyed on a single
-//! process-global `OmwRemoteStatus`. v0.4-thin makes the labels per-pane:
-//! "Stop sharing" only for the pane whose `EntityId` is in the share map.
+//! Phone-action label and tooltip mapping for the persistent terminal pane
+//! header and its overflow-menu counterpart. Labels are per-pane: "Stop
+//! sharing" appears only for a pane whose `EntityId` is in the share map.
 //!
 //! Pure function with no warpui dependencies, so it stays trivially testable.
 //!
@@ -47,16 +43,11 @@ pub const TOOLTIP_FAILED: &str = "Pairing failed — click to retry";
 /// - daemon Running, !shared  → "Share with phone" (silent share, phone already paired)
 /// - daemon Running, shared   → "Stop sharing" (unshare THIS pane only)
 /// - daemon Failed            → "Retry pairing"
-pub fn pair_button_text(
-    status: &OmwRemoteStatus,
-    is_shared: bool,
-) -> (&'static str, &'static str) {
+pub fn pair_button_text(status: &OmwRemoteStatus, is_shared: bool) -> (&'static str, &'static str) {
     match status {
         OmwRemoteStatus::Stopped => (LABEL_SHARE, TOOLTIP_INITIAL),
         OmwRemoteStatus::Starting => (LABEL_STARTING, TOOLTIP_STARTING),
-        OmwRemoteStatus::Running { .. } if is_shared => {
-            (LABEL_STOP_SHARING, TOOLTIP_STOP_SHARING)
-        }
+        OmwRemoteStatus::Running { .. } if is_shared => (LABEL_STOP_SHARING, TOOLTIP_STOP_SHARING),
         OmwRemoteStatus::Running { .. } => (LABEL_SHARE, TOOLTIP_SHARE_THIS),
         OmwRemoteStatus::Failed { .. } => (LABEL_RETRY, TOOLTIP_FAILED),
     }
@@ -113,6 +104,9 @@ mod tests {
         let status = OmwRemoteStatus::Failed {
             error: "boom".to_string(),
         };
-        assert_eq!(pair_button_text(&status, false), (LABEL_RETRY, TOOLTIP_FAILED));
+        assert_eq!(
+            pair_button_text(&status, false),
+            (LABEL_RETRY, TOOLTIP_FAILED)
+        );
     }
 }

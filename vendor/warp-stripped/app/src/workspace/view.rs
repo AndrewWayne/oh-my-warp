@@ -545,6 +545,27 @@ const TAB_BAR_ICON_PADDING: f32 = 4.;
 
 const TAB_BAR_PILL_WIDTH: f32 = 100.;
 const PILL_FONT_SIZE: f32 = 12.;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SettingsToggleIntent {
+    Open,
+    Focus(PaneViewLocator),
+    Close(PaneViewLocator),
+}
+
+fn settings_toggle_intent(
+    locator: Option<PaneViewLocator>,
+    active_pane_group_id: EntityId,
+) -> SettingsToggleIntent {
+    match locator {
+        None => SettingsToggleIntent::Open,
+        Some(locator) if locator.pane_group_id == active_pane_group_id => {
+            SettingsToggleIntent::Close(locator)
+        }
+        Some(locator) => SettingsToggleIntent::Focus(locator),
+    }
+}
+
 // We use the word "Warp" in the Update Ready button to make it obvious that the terminal is Warp.
 // This can lead to free advertising when users screen-share Warp when an update is available.
 // omw_local builds rebrand per CLAUDE.md §5 — the literal `Warp` wordmark is forbidden in
@@ -9644,6 +9665,24 @@ impl Workspace {
         });
     }
 
+    fn close_pane_with_confirmation(
+        &mut self,
+        locator: PaneViewLocator,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(pane_group_view) = self.get_pane_group_view_with_id(locator.pane_group_id) else {
+            log::warn!("Tried to close a pane in a missing pane group");
+            return;
+        };
+        pane_group_view.update(ctx, |pane_group, ctx| {
+            if pane_group.pane_by_id(locator.pane_id).is_none() {
+                log::warn!("Tried to close a missing pane");
+                return;
+            }
+            pane_group.close_pane_with_confirmation(locator.pane_id, ctx);
+        });
+    }
+
     fn handle_close_session_confirmation_dialog_event(
         &mut self,
         event: &CloseSessionConfirmationEvent,
@@ -15513,6 +15552,27 @@ impl Workspace {
         self.show_settings_with_section(None, ctx);
     }
 
+    fn toggle_settings(&mut self, ctx: &mut ViewContext<Self>) {
+        self.close_all_overlays(ctx);
+        let locator = SettingsPaneManager::handle(ctx)
+            .as_ref(ctx)
+            .find_pane(ctx.window_id());
+        match settings_toggle_intent(locator, self.active_tab_pane_group().id()) {
+            SettingsToggleIntent::Open => self.open_settings_pane(None, None, ctx),
+            SettingsToggleIntent::Focus(locator) => self.focus_pane(locator, ctx),
+            SettingsToggleIntent::Close(locator) => {
+                self.close_pane_with_confirmation(locator, ctx)
+            }
+        }
+    }
+
+    fn settings_pane_is_in_active_tab(&self, app: &AppContext) -> bool {
+        SettingsPaneManager::handle(app)
+            .as_ref(app)
+            .find_pane(self.window_id)
+            .is_some_and(|locator| locator.pane_group_id == self.active_tab_pane_group().id())
+    }
+
     fn show_settings_with_section(
         &mut self,
         section: Option<SettingsSection>,
@@ -17459,7 +17519,7 @@ impl Workspace {
             }
 
             target.add_child(
-                Container::new(self.render_settings_button(appearance))
+                Container::new(self.render_settings_button(appearance, ctx))
                     .with_margin_left(TAB_BAR_PADDING_LEFT)
                     .finish(),
             );
@@ -17898,16 +17958,20 @@ impl Workspace {
         Align::new(button).finish()
     }
 
-    fn render_settings_button(&self, appearance: &Appearance) -> Box<dyn Element> {
+    fn render_settings_button(
+        &self,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
         Align::new(
             self.render_tab_bar_icon_button(
                 appearance,
                 icons::Icon::Gear,
                 &self.mouse_states.settings_icon,
-                WorkspaceAction::ShowSettings,
+                WorkspaceAction::ToggleSettings,
                 "Settings".to_string(),
                 self.cached_keybindings[SHOW_SETTINGS_KEYBINDING_NAME].clone(),
-                false,
+                self.settings_pane_is_in_active_tab(app),
                 false,
             )
             .finish(),
@@ -19966,6 +20030,7 @@ impl TypedActionView for Workspace {
             ToggleTabBarOverflowMenu => self.toggle_tab_bar_overflow_menu(ctx),
             ToggleBlockSnackbar => self.toggle_block_snackbar(ctx),
             ToggleWelcomeTips => self.toggle_welcome_tips_visiblity(ctx),
+            ClosePane(locator) => self.close_pane_with_confirmation(*locator, ctx),
             CloseTab(index) => self.close_tab(*index, false, true, ctx),
             CloseActiveTab => self.close_tab(self.active_tab_index, false, true, ctx),
             CloseOtherTabs(index) => self.close_other_tabs(*index, false, ctx),
@@ -20240,6 +20305,7 @@ impl TypedActionView for Workspace {
             ConfigureKeybindingSettings { keybinding_name } => {
                 self.show_keyboard_settings(keybinding_name.as_deref(), ctx)
             }
+            ToggleSettings => self.toggle_settings(ctx),
             ShowSettings => self.show_settings(ctx),
             ShowSettingsPage(section) => self.show_settings_with_section(Some(*section), ctx),
             ShowSettingsPageWithSearch {

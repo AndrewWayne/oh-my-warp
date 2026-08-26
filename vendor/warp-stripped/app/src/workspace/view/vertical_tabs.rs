@@ -82,12 +82,14 @@ use warpui::ui_components::text_input::TextInput;
 use warpui::{AppContext, EntityId, SingletonEntity, ViewHandle, WindowId};
 
 const PANEL_WIDTH: f32 = 248.;
-const MIN_PANEL_WIDTH: f32 = 200.;
+const MIN_PANEL_WIDTH: f32 = 120.;
 const MAX_PANEL_WIDTH_RATIO: f32 = 0.5;
 const DETAIL_SIDECAR_SECTION_PADDING: f32 = 12.;
 const DETAIL_SIDECAR_SECTION_GAP: f32 = 4.;
 const GROUP_HEADER_VERTICAL_PADDING: f32 = 4.;
 const GROUP_HORIZONTAL_PADDING: f32 = 8.;
+const ROW_CLOSE_ICON_SIZE: f32 = 12.;
+const ROW_CLOSE_BUTTON_PADDING: f32 = 2.;
 const GROUP_BODY_BOTTOM_PADDING: f32 = 8.;
 const GROUP_ITEM_SPACING: f32 = 4.;
 const TABS_MODE_ITEM_SPACING: f32 = 4.;
@@ -324,6 +326,8 @@ fn render_pane_row_element(
         pane_group_id,
         is_active_tab,
         mouse_state,
+        close_mouse_state,
+        close_tab_index,
         title_mouse_state: _,
         title: _,
         subtitle: _,
@@ -344,6 +348,55 @@ fn render_pane_row_element(
         pane_rename_editor: _,
     } = props;
     let is_selected = is_active_tab && is_focused;
+    let close_target = pane_row_close_target(
+        close_tab_index,
+        PaneViewLocator {
+            pane_group_id,
+            pane_id,
+        },
+    );
+    let close_button = EventHandler::new(
+        Hoverable::new(close_mouse_state, move |state| {
+            let mut container = Container::new(
+                ConstrainedBox::new(
+                    WarpIcon::X
+                        .to_warpui_icon(theme.sub_text_color(theme.background()))
+                        .finish(),
+                )
+                .with_width(ROW_CLOSE_ICON_SIZE)
+                .with_height(ROW_CLOSE_ICON_SIZE)
+                .finish(),
+            )
+            .with_padding(Padding::uniform(ROW_CLOSE_BUTTON_PADDING))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+            if state.is_hovered() {
+                container = container.with_background(internal_colors::fg_overlay_3(theme));
+            }
+            container.finish()
+        })
+        .with_cursor(Cursor::PointingHand)
+        .finish(),
+    )
+    .on_left_mouse_down(|_, _, _| DispatchEventResult::StopPropagation)
+    .on_left_mouse_up(move |ctx, _, _| {
+        match close_target {
+            PaneRowCloseTarget::Pane(locator) => {
+                ctx.dispatch_typed_action(WorkspaceAction::ClosePane(locator));
+            }
+            PaneRowCloseTarget::Tab(tab_index) => {
+                ctx.dispatch_typed_action(WorkspaceAction::CloseTab(tab_index));
+            }
+        }
+        DispatchEventResult::StopPropagation
+    })
+    .finish();
+    let content = Flex::row()
+        .with_main_axis_size(MainAxisSize::Max)
+        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_spacing(4.)
+        .with_child(Shrinkable::new(1., content).finish())
+        .with_child(close_button)
+        .finish();
     let mut row = Hoverable::new(mouse_state, move |state| {
         let mut container = Container::new(Clipped::new(content).finish())
             .with_padding(padding)
@@ -569,6 +622,7 @@ pub(super) struct VerticalTabsPanelState {
     resizable_state: ResizableStateHandle,
     group_mouse_states: RefCell<HashMap<EntityId, PaneGroupStateHandles>>,
     pane_row_mouse_states: RefCell<HashMap<PaneId, MouseStateHandle>>,
+    pane_close_mouse_states: RefCell<HashMap<PaneId, MouseStateHandle>>,
     pane_title_mouse_states: RefCell<HashMap<PaneId, MouseStateHandle>>,
     pane_badge_mouse_states: RefCell<HashMap<PaneId, PaneRowBadgeMouseStates>>,
     detail_pane_badge_mouse_states: RefCell<HashMap<PaneId, PaneRowBadgeMouseStates>>,
@@ -604,6 +658,7 @@ impl Default for VerticalTabsPanelState {
             resizable_state: resizable_state_handle(PANEL_WIDTH),
             group_mouse_states: RefCell::default(),
             pane_row_mouse_states: RefCell::default(),
+            pane_close_mouse_states: RefCell::default(),
             pane_title_mouse_states: RefCell::default(),
             pane_badge_mouse_states: RefCell::default(),
             detail_pane_badge_mouse_states: RefCell::default(),
@@ -686,6 +741,8 @@ struct PaneProps<'a> {
     pane_group_id: EntityId,
     is_active_tab: bool,
     mouse_state: MouseStateHandle,
+    close_mouse_state: MouseStateHandle,
+    close_tab_index: Option<usize>,
     title_mouse_state: Option<MouseStateHandle>,
     title: String,
     subtitle: String,
@@ -708,9 +765,26 @@ struct PaneProps<'a> {
 
 struct PaneRowState {
     mouse_state: MouseStateHandle,
+    close_mouse_state: MouseStateHandle,
+    close_tab_index: Option<usize>,
     title_mouse_state: Option<MouseStateHandle>,
     pane_color: Option<ThemeFill>,
     badge_mouse_states: PaneRowBadgeMouseStates,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PaneRowCloseTarget {
+    Pane(PaneViewLocator),
+    Tab(usize),
+}
+
+fn pane_row_close_target(
+    close_tab_index: Option<usize>,
+    pane_locator: PaneViewLocator,
+) -> PaneRowCloseTarget {
+    close_tab_index
+        .map(PaneRowCloseTarget::Tab)
+        .unwrap_or(PaneRowCloseTarget::Pane(pane_locator))
 }
 
 enum TerminalPrimaryLineData {
@@ -1030,6 +1104,8 @@ impl VerticalTabsPanelState {
                                 *tab_index == active_tab_index,
                                 PaneRowState {
                                     mouse_state: ms,
+                                    close_mouse_state: MouseStateHandle::default(),
+                                    close_tab_index: None,
                                     title_mouse_state: None,
                                     pane_color: None,
                                     badge_mouse_states: PaneRowBadgeMouseStates::default(),
@@ -1481,10 +1557,14 @@ fn render_vertical_tabs_panel(
             ctx.notify();
         })
         .with_bounds_callback(Box::new(|window_size| {
-            let max_width = window_size.x() * MAX_PANEL_WIDTH_RATIO;
-            (MIN_PANEL_WIDTH, max_width.max(MIN_PANEL_WIDTH))
+            vertical_tabs_panel_width_bounds(window_size.x())
         }))
         .finish()
+}
+
+fn vertical_tabs_panel_width_bounds(window_width: f32) -> (f32, f32) {
+    let max_width = window_width * MAX_PANEL_WIDTH_RATIO;
+    (MIN_PANEL_WIDTH, max_width.max(MIN_PANEL_WIDTH))
 }
 
 fn render_groups(
@@ -1565,6 +1645,8 @@ fn render_groups(
                                     tab_index == workspace.active_tab_index,
                                     PaneRowState {
                                         mouse_state: ms,
+                                        close_mouse_state: MouseStateHandle::default(),
+                                        close_tab_index: None,
                                         title_mouse_state: None,
                                         pane_color: None,
                                         badge_mouse_states: PaneRowBadgeMouseStates::default(),
@@ -1592,6 +1674,8 @@ fn render_groups(
                                 tab_index == workspace.active_tab_index,
                                 PaneRowState {
                                     mouse_state,
+                                    close_mouse_state: MouseStateHandle::default(),
+                                    close_tab_index: None,
                                     title_mouse_state: None,
                                     pane_color: None,
                                     badge_mouse_states: PaneRowBadgeMouseStates::default(),
@@ -1664,12 +1748,20 @@ fn render_groups(
         ));
     }
 
-    // Prune stale badge mouse states for panes that no longer exist.
+    // Keep per-row interaction handles only while their pane still exists.
     let all_pane_ids: std::collections::HashSet<PaneId> = workspace
         .tabs
         .iter()
         .flat_map(|tab| tab.pane_group.as_ref(app).visible_pane_ids())
         .collect();
+    state
+        .pane_row_mouse_states
+        .borrow_mut()
+        .retain(|id, _| all_pane_ids.contains(id));
+    state
+        .pane_close_mouse_states
+        .borrow_mut()
+        .retain(|id, _| all_pane_ids.contains(id));
     state
         .pane_badge_mouse_states
         .borrow_mut()
@@ -1761,6 +1853,18 @@ fn render_tab_group(
             (*pane_id, ms)
         })
         .collect();
+    let close_mouse_states: HashMap<PaneId, MouseStateHandle> = pane_ids_to_render
+        .iter()
+        .map(|pane_id| {
+            let ms = state
+                .pane_close_mouse_states
+                .borrow_mut()
+                .entry(*pane_id)
+                .or_default()
+                .clone();
+            (*pane_id, ms)
+        })
+        .collect();
     let is_active = tab_index == workspace.active_tab_index
         && !workspace
             .current_workspace_state
@@ -1818,6 +1922,11 @@ fn render_tab_group(
                     is_active,
                     PaneRowState {
                         mouse_state: row_mouse_state.clone(),
+                        close_mouse_state: close_mouse_states
+                            .get(pane_id)
+                            .cloned()
+                            .unwrap_or_default(),
+                        close_tab_index: Some(tab_index),
                         title_mouse_state: None,
                         pane_color,
                         badge_mouse_states,
@@ -1871,6 +1980,11 @@ fn render_tab_group(
                     is_active,
                     PaneRowState {
                         mouse_state: row_mouse_state.clone(),
+                        close_mouse_state: close_mouse_states
+                            .get(pane_id)
+                            .cloned()
+                            .unwrap_or_default(),
+                        close_tab_index: None,
                         title_mouse_state: title_mouse_states.get(pane_id).cloned(),
                         pane_color,
                         badge_mouse_states,
@@ -2769,6 +2883,8 @@ impl<'a> PaneProps<'a> {
             pane_group_id,
             is_active_tab,
             mouse_state: pane_row_state.mouse_state,
+            close_mouse_state: pane_row_state.close_mouse_state,
+            close_tab_index: pane_row_state.close_tab_index,
             title_mouse_state: pane_row_state.title_mouse_state,
             title: display_title,
             subtitle: display_subtitle,
@@ -5318,6 +5434,8 @@ fn detail_pane_props<'a>(
         false,
         PaneRowState {
             mouse_state: MouseStateHandle::default(),
+            close_mouse_state: MouseStateHandle::default(),
+            close_tab_index: None,
             title_mouse_state: None,
             pane_color: None,
             badge_mouse_states,

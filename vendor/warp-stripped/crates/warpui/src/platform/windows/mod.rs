@@ -4,6 +4,8 @@ use std::os::windows::ffi::OsStrExt as _;
 // Re-export a couple winit types and modules as the concrete implementations
 // for Windows.
 pub use crate::windowing::winit::app::App;
+#[cfg(feature = "test-util")]
+pub use crate::windowing::winit::fonts::FontDB;
 
 pub(crate) static DXC_PATH: std::sync::OnceLock<Option<DXCPath>> = std::sync::OnceLock::new();
 

@@ -218,9 +218,10 @@ fn render_approval_card(
         })
         .finish();
 
-    let buttons = Flex::row()
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_child(Container::new(approve_btn).with_margin_right(8.).finish())
+    let buttons = Flex::column()
+        .with_main_axis_size(MainAxisSize::Min)
+        .with_cross_axis_alignment(CrossAxisAlignment::Start)
+        .with_child(Container::new(approve_btn).with_margin_bottom(6.).finish())
         .with_child(reject_btn);
 
     Container::new(

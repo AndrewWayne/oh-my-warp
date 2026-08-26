@@ -26,6 +26,8 @@ use onboarding::callout::{FinalState, OnboardingCalloutViewEvent, OnboardingQuer
 use onboarding::{OnboardingCalloutView, OnboardingKeybindings};
 pub(crate) mod docker_sandbox;
 mod link_detection;
+#[cfg(feature = "omw_local")]
+pub(crate) mod omw_phone_share;
 mod open_in_warp;
 mod pane_impl;
 mod passive_suggestions;
@@ -2749,6 +2751,26 @@ pub struct TerminalView {
     cloud_mode_details_panel_toggle_mouse_state: warpui::elements::MouseStateHandle,
     /// Mouse state handle for the ambient agent cancel button in the pane header.
     ambient_agent_cancel_mouse_state: warpui::elements::MouseStateHandle,
+    /// Mouse state for the persistent per-pane phone-sharing header action.
+    #[cfg(feature = "omw_local")]
+    omw_phone_share_mouse_state: warpui::elements::MouseStateHandle,
+    /// Monotonic token used to invalidate deferred phone-share work.
+    #[cfg(feature = "omw_local")]
+    omw_phone_share_generation: u64,
+    /// The generation currently waiting on the zero-duration defer, if any.
+    #[cfg(feature = "omw_local")]
+    omw_phone_share_pending_generation: Option<u64>,
+    /// Whether the pending generation started a previously stopped daemon.
+    #[cfg(feature = "omw_local")]
+    omw_phone_share_pending_started_daemon: bool,
+    /// Cancellation marker shared with background daemon startup. This lets a
+    /// detached view roll back a start even if its UI callback is discarded.
+    #[cfg(feature = "omw_local")]
+    omw_phone_share_pending_active: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Keeps the daemon/share invalidation streams alive for exactly this
+    /// view's lifetime. Dropping the sender terminates both subscriptions.
+    #[cfg(feature = "omw_local")]
+    omw_phone_share_subscription_lifetime: Option<async_channel::Sender<()>>,
 
     /// First-time cloud agent setup view (full-screen overlay for creating initial environment).
     first_time_cloud_agent_setup_view: ViewHandle<ambient_agent::FirstTimeCloudAgentSetupView>,
@@ -4148,6 +4170,18 @@ impl TerminalView {
             #[cfg(not(target_arch = "wasm32"))]
             cloud_mode_details_panel_toggle_mouse_state: Default::default(),
             ambient_agent_cancel_mouse_state: Default::default(),
+            #[cfg(feature = "omw_local")]
+            omw_phone_share_mouse_state: Default::default(),
+            #[cfg(feature = "omw_local")]
+            omw_phone_share_generation: 0,
+            #[cfg(feature = "omw_local")]
+            omw_phone_share_pending_generation: None,
+            #[cfg(feature = "omw_local")]
+            omw_phone_share_pending_started_daemon: false,
+            #[cfg(feature = "omw_local")]
+            omw_phone_share_pending_active: None,
+            #[cfg(feature = "omw_local")]
+            omw_phone_share_subscription_lifetime: None,
             active_init_project_model: None,
             is_pending_aws_login: false,
             manual_pty_shutdown_requested: false,
@@ -4165,6 +4199,8 @@ impl TerminalView {
             active_viewer_driven_size: None,
         };
         terminal_view.register_subscriptions_for_use_agent_footer(ctx);
+        #[cfg(feature = "omw_local")]
+        terminal_view.register_omw_phone_share_subscriptions(ctx);
 
         // Forward RemoteServerManager setup events into the terminal event stream
         // so the ModelEventDispatcher can gate session initialization on them.
@@ -24428,6 +24464,17 @@ impl TypedActionView for TerminalView {
                 "Use file picker to select a git repository".to_owned(),
                 WarpA11yRole::PopoverRole,
             )),
+            #[cfg(feature = "omw_local")]
+            ToggleOmwPhoneShare => {
+                let label = self
+                    .omw_phone_share_presentation(ctx)
+                    .map(|presentation| presentation.label)
+                    .unwrap_or("Phone sharing is unavailable for this pane");
+                Custom(AccessibilityContent::new_without_help(
+                    label.to_owned(),
+                    WarpA11yRole::ButtonRole,
+                ))
+            }
             #[cfg(feature = "voice_input")]
             ToggleCLIAgentVoiceInput(_) => Empty,
             // Below are actions that are most likely irrelevant to users or are very noisy and the
@@ -25549,6 +25596,8 @@ impl TypedActionView for TerminalView {
                     recorder.toggle_recording(ctx);
                 });
             }
+            #[cfg(feature = "omw_local")]
+            ToggleOmwPhoneShare => self.toggle_omw_phone_share(ctx),
             OpenCLIAgentRichInput => {
                 if self.has_active_cli_agent_input_session(ctx) {
                     self.close_cli_agent_rich_input_and_disable_auto_toggle(ctx);

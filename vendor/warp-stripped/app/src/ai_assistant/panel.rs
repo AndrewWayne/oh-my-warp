@@ -62,10 +62,12 @@ pub const HEXAGON_ALERT_SVG_PATH: &str = "bundled/svg/alert-hexagon.svg";
 
 const EDITOR_SAVE_POSITION_ID: &str = "ai_assistant::editor";
 
-const MIN_PANEL_WIDTH: f32 = 300.;
+const MIN_PANEL_WIDTH: f32 = 120.;
 const MAX_PANEL_WIDTH: f32 = 600.;
 const MAX_PANEL_WINDOW_FRACTION: f32 = 0.45;
 const MIN_MAIN_WORKSPACE_WIDTH: f32 = 480.;
+const PANEL_DRAGBAR_WIDTH: f32 = 8.;
+const PANEL_DRAGBAR_VISUAL_WIDTH: f32 = 1.;
 const MAX_EDITOR_HEIGHT: f32 = 300.;
 const MAX_INPUT_SUGGESTIONS_HEIGHT: f32 = 200.;
 
@@ -833,10 +835,19 @@ impl AIAssistantPanelView {
 
 /// All rendering related capabilities.
 impl AIAssistantPanelView {
-    fn render_resizable_panel(&self, panel: Box<dyn Element>) -> Box<dyn Element> {
+    fn render_resizable_panel(
+        &self,
+        panel: Box<dyn Element>,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
         Resizable::new(self.resizable_state_handle.clone(), panel)
             .on_resize(move |ctx, _| ctx.notify())
             .with_dragbar_side(DragBarSide::Left)
+            .with_dragbar_width(PANEL_DRAGBAR_WIDTH)
+            .with_dragbar_visual_width(PANEL_DRAGBAR_VISUAL_WIDTH)
+            .with_dragbar_offset(PANEL_DRAGBAR_WIDTH / 2.)
+            .with_dragbar_color(Fill::Solid(appearance.theme().outline().into_solid()))
+            .with_dragbar_hover_color(Fill::Solid(appearance.theme().accent().into_solid()))
             .with_bounds_callback(Box::new(|window_bounds| {
                 ai_assistant_panel_width_bounds(window_bounds.x())
             }))
@@ -1320,7 +1331,7 @@ impl View for AIAssistantPanelView {
                         &self.omw_approval_mouse_states,
                     ),
                 )));
-            return self.render_resizable_panel(panel.finish());
+            return self.render_resizable_panel(panel.finish(), appearance);
         }
 
         let mut panel = Flex::column().with_main_axis_size(MainAxisSize::Max);
@@ -1402,13 +1413,20 @@ impl View for AIAssistantPanelView {
                 DispatchEventResult::StopPropagation
             });
 
-        self.render_resizable_panel(clickable_panel.finish())
+        self.render_resizable_panel(clickable_panel.finish(), appearance)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panel_width_contract_uses_compact_defaults() {
+        assert_eq!(DEFAULT_WARP_AI_WIDTH, 360.);
+        assert_eq!(MIN_PANEL_WIDTH, 120.);
+        assert_eq!(MAX_PANEL_WIDTH, 600.);
+    }
 
     #[test]
     fn panel_width_is_capped_on_large_windows() {
@@ -1445,5 +1463,7 @@ mod tests {
                 (MIN_PANEL_WIDTH, MIN_PANEL_WIDTH)
             );
         }
+
+        assert_eq!(ai_assistant_panel_width_bounds(960.), (120., 240.));
     }
 }

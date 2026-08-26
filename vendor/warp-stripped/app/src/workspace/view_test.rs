@@ -17,7 +17,7 @@ use crate::gpu_state::GPUState;
 use crate::network::NetworkStatus;
 use crate::notebooks::editor::keys::NotebookKeybindings;
 use crate::notebooks::notebook::NotebookView;
-use crate::pane_group::{Direction, PaneGroupAction, PaneId};
+use crate::pane_group::{Direction, PaneGroupAction, PaneId, SettingsPane};
 use crate::pricing::PricingInfoModel;
 use crate::suggestions::ignored_suggestions_model::IgnoredSuggestionsModel;
 #[cfg(feature = "local_fs")]
@@ -83,6 +83,32 @@ use terminal::view::ActiveSessionState;
 use warp_editor::editor::NavigationKey;
 use warpui::AddSingletonModel;
 use warpui::{platform::WindowStyle, App, ViewHandle};
+
+#[test]
+fn settings_toggle_opens_focuses_or_closes_from_tab_location() {
+    let active_pane_group_id = EntityId::from_usize(10);
+    let active_locator = PaneViewLocator {
+        pane_group_id: active_pane_group_id,
+        pane_id: TerminalPaneId::dummy_terminal_pane_id().into(),
+    };
+    let background_locator = PaneViewLocator {
+        pane_group_id: EntityId::from_usize(20),
+        pane_id: TerminalPaneId::dummy_terminal_pane_id().into(),
+    };
+
+    assert_eq!(
+        settings_toggle_intent(None, active_pane_group_id),
+        SettingsToggleIntent::Open
+    );
+    assert_eq!(
+        settings_toggle_intent(Some(background_locator), active_pane_group_id),
+        SettingsToggleIntent::Focus(background_locator)
+    );
+    assert_eq!(
+        settings_toggle_intent(Some(active_locator), active_pane_group_id),
+        SettingsToggleIntent::Close(active_locator)
+    );
+}
 
 fn initialize_app(app: &mut App) {
     initialize_settings_for_tests(app);
@@ -243,6 +269,165 @@ fn mock_workspace(app: &mut App) -> ViewHandle<Workspace> {
         )
     });
     workspace
+}
+
+#[test]
+fn toolbar_settings_toggle_opens_and_closes_while_show_settings_stays_open() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let window_id = workspace.update(&mut app, |_, ctx| ctx.window_id());
+        let original_pane_group_id =
+            workspace.read(&app, |workspace, _| workspace.active_tab_pane_group().id());
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(&WorkspaceAction::ToggleSettings, ctx);
+            let locator = SettingsPaneManager::handle(ctx)
+                .as_ref(ctx)
+                .find_pane(ctx.window_id())
+                .expect("the toolbar toggle should open Settings");
+            assert_eq!(workspace.tabs.len(), 2);
+            assert_eq!(workspace.active_tab_pane_group().id(), locator.pane_group_id);
+        });
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(&WorkspaceAction::ToggleSettings, ctx);
+        });
+        app.update(|_| ());
+        workspace.read(&app, |workspace, ctx| {
+            assert_eq!(workspace.tabs.len(), 1);
+            assert_eq!(workspace.active_tab_pane_group().id(), original_pane_group_id);
+            assert!(SettingsPaneManager::handle(ctx)
+                .as_ref(ctx)
+                .find_pane(window_id)
+                .is_none());
+        });
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(&WorkspaceAction::ShowSettings, ctx);
+            let first_locator = SettingsPaneManager::handle(ctx)
+                .as_ref(ctx)
+                .find_pane(ctx.window_id());
+            workspace.handle_action(&WorkspaceAction::ShowSettings, ctx);
+            assert_eq!(workspace.tabs.len(), 2);
+            assert_eq!(
+                SettingsPaneManager::handle(ctx)
+                    .as_ref(ctx)
+                    .find_pane(ctx.window_id()),
+                first_locator
+            );
+        });
+    });
+}
+
+#[test]
+fn toolbar_settings_toggle_focuses_a_background_settings_tab() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(&WorkspaceAction::ShowSettings, ctx);
+            let locator = SettingsPaneManager::handle(ctx)
+                .as_ref(ctx)
+                .find_pane(ctx.window_id())
+                .expect("Settings should be open");
+            workspace.activate_tab(0, ctx);
+            workspace.handle_action(&WorkspaceAction::ToggleSettings, ctx);
+
+            assert_eq!(workspace.tabs.len(), 2);
+            assert_eq!(workspace.active_tab_pane_group().id(), locator.pane_group_id);
+            assert_eq!(
+                SettingsPaneManager::handle(ctx)
+                    .as_ref(ctx)
+                    .find_pane(ctx.window_id()),
+                Some(locator)
+            );
+        });
+    });
+}
+
+#[test]
+fn toolbar_settings_toggle_closes_only_settings_in_a_split_tab() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let window_id = workspace.update(&mut app, |_, ctx| ctx.window_id());
+        let pane_group = workspace.read(&app, |workspace, _| {
+            workspace.active_tab_pane_group().clone()
+        });
+
+        workspace.update(&mut app, |workspace, ctx| {
+            let settings_pane =
+                SettingsPane::new(SettingsSection::default(), None, ctx.window_id(), ctx);
+            pane_group.update(ctx, |pane_group, ctx| {
+                pane_group.add_pane_with_direction(Direction::Right, settings_pane, true, ctx);
+            });
+            assert_eq!(pane_group.as_ref(ctx).visible_pane_count(), 2);
+
+            workspace.handle_action(&WorkspaceAction::ToggleSettings, ctx);
+        });
+        app.update(|_| ());
+
+        workspace.read(&app, |workspace, ctx| {
+            assert_eq!(workspace.tabs.len(), 1);
+            assert_eq!(pane_group.as_ref(ctx).visible_pane_count(), 1);
+            assert!(SettingsPaneManager::handle(ctx)
+                .as_ref(ctx)
+                .find_pane(window_id)
+                .is_none());
+        });
+    });
+}
+
+#[test]
+fn close_pane_action_closes_only_its_row_and_exits_the_final_pane_group() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let pane_group = workspace.read(&app, |workspace, _| {
+            workspace.active_tab_pane_group().clone()
+        });
+        let first_pane_id = pane_group.read(&app, |pane_group, _| {
+            pane_group
+                .pane_id_by_index(0)
+                .expect("the initial terminal pane should exist")
+        });
+        let second_pane_id = pane_group.update(&mut app, |pane_group, ctx| {
+            pane_group.add_terminal_pane(Direction::Right, None, ctx);
+            get_newly_created_pane_id(pane_group, &[first_pane_id])
+        });
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.add_terminal_tab(false, ctx);
+            workspace.activate_tab(0, ctx);
+            workspace.handle_action(
+                &WorkspaceAction::ClosePane(PaneViewLocator {
+                    pane_group_id: pane_group.id(),
+                    pane_id: second_pane_id,
+                }),
+                ctx,
+            );
+            assert_eq!(pane_group.as_ref(ctx).visible_pane_count(), 1);
+            assert!(pane_group.as_ref(ctx).has_pane_id(first_pane_id));
+            assert_eq!(workspace.tabs.len(), 2);
+        });
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(
+                &WorkspaceAction::ClosePane(PaneViewLocator {
+                    pane_group_id: pane_group.id(),
+                    pane_id: first_pane_id,
+                }),
+                ctx,
+            );
+        });
+        app.update(|_| ());
+        workspace.read(&app, |workspace, _| {
+            assert_eq!(workspace.tabs.len(), 1);
+            assert_ne!(workspace.active_tab_pane_group().id(), pane_group.id());
+        });
+    });
 }
 
 fn restored_workspace(

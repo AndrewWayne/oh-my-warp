@@ -130,12 +130,6 @@ const FAST_FORWARD_OFF_TOOLTIP: &str = "Auto-approve all agent actions for this 
 const START_REMOTE_CONTROL_TOOLTIP: &str = "Start remote control";
 const START_REMOTE_CONTROL_LOGIN_REQUIRED_TOOLTIP: &str = "Log in to use /remote-control";
 
-// v0.4-thin multi-pane share: Phone-button label/tooltip computation lives in
-// `crate::omw::pair_button` so the warpify_footer Phone button can share the
-// same logic. Pre-multipane, the labels were keyed only on the daemon status,
-// which made every non-shared pane's button incorrectly read "Stop pairing"
-// once any pane had been shared.
-
 const CLOUD_MODE_V2_FOOTER_GAP: f32 = 4.;
 
 /// Voice input state for the CLI agent footer. Unlike the editor-based voice
@@ -215,10 +209,6 @@ pub struct AgentInputFooter {
 
     // CLI agent-specific buttons (rendered when a CLI agent session is active).
     file_explorer_button: ViewHandle<ActionButton>,
-    /// Wiring 5: omw-remote (phone pairing) toggle button, rendered next to
-    /// the File Explorer button. Gated on the `omw_local` feature.
-    #[cfg(feature = "omw_local")]
-    omw_pair_button: ViewHandle<ActionButton>,
     rich_input_button: ViewHandle<ActionButton>,
     settings_button: ViewHandle<ActionButton>,
     install_plugin_button: ViewHandle<ActionButton>,
@@ -374,47 +364,6 @@ impl AgentInputFooter {
                     ctx.dispatch_typed_action(AgentInputFooterAction::ToggleFileExplorer);
                 })
         });
-        // Wiring 5: omw-remote (phone pairing) toggle button, rendered as a
-        // sibling of the File Explorer button so users can start/stop the
-        // embedded daemon from the CLI agent footer. Gated on `omw_local`.
-        // Gap 3: tooltip + label reflect `OmwRemoteState`'s current status.
-        // The initial values are derived from the live status snapshot so a
-        // button created mid-session (e.g. after a hot-reload) shows the
-        // correct text on first paint; transitions after construction are
-        // delivered via the watch-channel stream subscribed below.
-        #[cfg(feature = "omw_local")]
-        let omw_pair_button = ctx.add_typed_action_view(|_ctx| {
-            // Initial paint reads BOTH daemon status AND per-pane share state
-            // so a hot-reloaded view that lands mid-share renders the right
-            // label without waiting for the next watch tick.
-            let state = crate::omw::OmwRemoteState::shared();
-            let initial_status = state.status();
-            let initial_shared = state.is_pane_shared(terminal_view_id);
-            let (label, tooltip) =
-                crate::omw::pair_button::pair_button_text(&initial_status, initial_shared);
-            ActionButton::new(label, AgentInputButtonTheme)
-                .with_icon(Icon::Phone)
-                .with_tooltip(tooltip)
-                .with_size(cli_button_size)
-                .with_tooltip_alignment(TooltipAlignment::Left)
-                .on_click(|ctx| {
-                    ctx.dispatch_typed_action(AgentInputFooterAction::ToggleOmwPair);
-                })
-        });
-        // v0.4-thin multi-pane share: the button has TWO independent reactive
-        // streams — daemon status (was Gap 3) and the per-pane share-map
-        // counter. Both fire `sync_omw_pair_button`, which recomputes the
-        // (label, tooltip) tuple from the live (status, is_pane_shared(view_id))
-        // pair. If either bridge fails to spin up (extremely rare — would
-        // require the daemon runtime construction itself to fail), we fall
-        // back to the static initial paint set above; the click handler still
-        // calls `notify_and_notify_children` which catches direct user
-        // transitions.
-        #[cfg(feature = "omw_local")]
-        let omw_status_stream =
-            crate::omw::OmwRemoteState::shared().subscribe_status_stream();
-        #[cfg(feature = "omw_local")]
-        let omw_share_stream = crate::omw::OmwRemoteState::shared().subscribe_share_stream();
         let rich_input_button = ctx.add_typed_action_view(|ctx| {
             ActionButton::new("Rich Input", AgentInputButtonTheme)
                 .with_icon(Icon::TextInput)
@@ -776,8 +725,6 @@ impl AgentInputFooter {
             mic_button,
             file_button,
             file_explorer_button,
-            #[cfg(feature = "omw_local")]
-            omw_pair_button,
             rich_input_button,
             settings_button,
             start_remote_control_button,
@@ -819,46 +766,6 @@ impl AgentInputFooter {
         me.update_context_window_button(ctx);
         me.update_display_chips(&prompt, ctx);
         me.update_ftu_callout_render_state(ctx);
-
-        // v0.4-thin: drive the omw Phone button's (label, tooltip) from BOTH
-        // streams. Each stream's first item is the current value (so this also
-        // covers the initial paint, matching the snapshot the button was
-        // constructed with), and each subsequent item triggers a fresh
-        // recomputation from the live (status, is_pane_shared(view_id)) pair.
-        #[cfg(feature = "omw_local")]
-        match omw_status_stream {
-            Ok(stream) => {
-                ctx.spawn_stream_local(
-                    stream,
-                    |me, _status: crate::omw::OmwRemoteStatus, ctx| {
-                        me.sync_omw_pair_button(ctx);
-                    },
-                    |_, _| {},
-                );
-            }
-            Err(e) => {
-                log::warn!(
-                    "omw-remote: failed to subscribe Phone button to status stream: {e}"
-                );
-            }
-        }
-        #[cfg(feature = "omw_local")]
-        match omw_share_stream {
-            Ok(stream) => {
-                ctx.spawn_stream_local(
-                    stream,
-                    |me, _tick: u64, ctx| {
-                        me.sync_omw_pair_button(ctx);
-                    },
-                    |_, _| {},
-                );
-            }
-            Err(e) => {
-                log::warn!(
-                    "omw-remote: failed to subscribe Phone button to share stream: {e}"
-                );
-            }
-        }
 
         me
     }
@@ -1373,24 +1280,7 @@ impl AgentInputFooter {
                 self.cli_display_chip(chip_kind.clone(), app)
             }
             AgentToolbarItemKind::FileExplorer => {
-                // Wiring 5: when `omw_local` is enabled, render the omw
-                // Remote Control button immediately to the right of the
-                // File Explorer button so they live as visual siblings in
-                // the CLI footer toolbar.
-                #[cfg(feature = "omw_local")]
-                {
-                    let row = Flex::row()
-                        .with_spacing(4.)
-                        .with_main_axis_size(MainAxisSize::Min)
-                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                        .with_child(ChildView::new(&self.file_explorer_button).finish())
-                        .with_child(ChildView::new(&self.omw_pair_button).finish());
-                    Some(row.finish())
-                }
-                #[cfg(not(feature = "omw_local"))]
-                {
-                    Some(ChildView::new(&self.file_explorer_button).finish())
-                }
+                Some(ChildView::new(&self.file_explorer_button).finish())
             }
             AgentToolbarItemKind::RichInput => FeatureFlag::CLIAgentRichInput
                 .is_enabled()
@@ -1898,31 +1788,6 @@ impl AgentInputFooter {
         });
     }
 
-    /// v0.4-thin: refresh the omw Phone button's label and tooltip from the
-    /// LIVE pair of (daemon status, this-pane-shared). Called for every item
-    /// delivered on the status-stream OR share-stream subscribed at
-    /// view-creation time. The `active` flag now flips only when THIS pane is
-    /// the one being shared (not just whenever the daemon is up), so a
-    /// non-shared pane shows the inactive "Share with phone" affordance even
-    /// after the daemon's been started by a sibling pane.
-    #[cfg(feature = "omw_local")]
-    fn sync_omw_pair_button(&self, ctx: &mut ViewContext<Self>) {
-        let state = crate::omw::OmwRemoteState::shared();
-        let status = state.status();
-        let is_shared = state.is_pane_shared(self.terminal_view_id);
-        if let crate::omw::OmwRemoteStatus::Failed { error } = &status {
-            log::debug!("omw-remote: Phone button reflecting Failed state: {error}");
-        }
-        let (label, tooltip) =
-            crate::omw::pair_button::pair_button_text(&status, is_shared);
-        let active = matches!(status, crate::omw::OmwRemoteStatus::Running { .. }) && is_shared;
-        self.omw_pair_button.update(ctx, |button, ctx| {
-            button.set_label(label, ctx);
-            button.set_tooltip(Some(tooltip), ctx);
-            button.set_active(active, ctx);
-        });
-    }
-
     /// Disable the start-remote-control chip and swap its tooltip when the
     /// user is anonymous or logged out, since session sharing requires a
     /// real account.
@@ -2272,10 +2137,6 @@ pub enum AgentInputFooterAction {
     InsertFilePath(String),
     ToggleCodeReview,
     ToggleFileExplorer,
-    /// Wiring 5: toggle the embedded `omw-remote` daemon. Forwarded to
-    /// `UseAgentToolbar` via `AgentInputFooterEvent::ToggleOmwPair`.
-    #[cfg(feature = "omw_local")]
-    ToggleOmwPair,
     ToggleRichInput,
     ToggleAutodetectionSetting,
     DismissFtuModelCallout,
@@ -2346,10 +2207,6 @@ impl TypedActionView for AgentInputFooter {
                 if let Some(agent) = self.cli_agent(ctx) {
                     ctx.emit(AgentInputFooterEvent::ToggleFileExplorer(agent));
                 }
-            }
-            #[cfg(feature = "omw_local")]
-            AgentInputFooterAction::ToggleOmwPair => {
-                ctx.emit(AgentInputFooterEvent::ToggleOmwPair);
             }
             AgentInputFooterAction::ToggleRichInput => {
                 if self.has_active_cli_agent_input_session(ctx) {
@@ -2506,11 +2363,6 @@ pub enum AgentInputFooterEvent {
     InsertIntoCLIRichInput(String),
     ToggleCodeReviewPane(CLIAgent),
     ToggleFileExplorer(CLIAgent),
-    /// Wiring 5: user clicked the omw Remote Control button in the CLI
-    /// footer. Re-emitted by `UseAgentToolbar` as
-    /// `UseAgentToolbarEvent::ToggleOmwPair`.
-    #[cfg(feature = "omw_local")]
-    ToggleOmwPair,
     StartRemoteControl,
     StopRemoteControl,
     OpenRichInput,

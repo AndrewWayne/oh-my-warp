@@ -128,6 +128,7 @@ pub enum WorkspaceAction {
     TabHoverWidthEnd,
     ToggleTabBarOverflowMenu,
     ToggleWelcomeTips,
+    ClosePane(PaneViewLocator),
     CloseTab(usize),
     CloseActiveTab,
     CloseOtherTabs(usize),
@@ -165,6 +166,7 @@ pub enum WorkspaceAction {
     ConfigureKeybindingSettings {
         keybinding_name: Option<String>,
     },
+    ToggleSettings,
     ShowSettings,
     ShowSettingsPage(SettingsSection),
     ShowSettingsPageWithSearch {
@@ -721,6 +723,7 @@ impl WorkspaceAction {
             | ResetPaneName(_)
             | RenameActiveTab
             | SetActiveTabName(_)
+            | ClosePane(_)
             | CloseTab(_)
             | CloseActiveTab
             | CloseOtherTabs(_)
@@ -751,6 +754,7 @@ impl WorkspaceAction {
             | SummarizeAIConversation { .. }
             | OpenRepository { .. }
             | SelectTabConfig(_)
+            | ToggleSettings
             | ToggleVerticalTabsPanel => true, // actions that actually change a state of the state of user's
             // workspace would most likely require a save, so that if the app gets
             // restarted, the user can continue working

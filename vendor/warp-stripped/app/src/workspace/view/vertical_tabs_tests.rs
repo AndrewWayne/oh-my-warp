@@ -4,6 +4,7 @@ use crate::pane_group::{PaneId, TerminalPaneId};
 use crate::safe_triangle::SafeTriangle;
 use crate::terminal::CLIAgent;
 use crate::workspace::tab_settings::VerticalTabsDisplayGranularity;
+use crate::workspace::PaneViewLocator;
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
 use std::path::PathBuf;
@@ -15,15 +16,49 @@ use super::{
     compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
     detail_target_for_hovered_row, format_summary_primary_labels,
     non_terminal_search_text_fragments, pane_ids_for_display_granularity,
-    pane_search_text_fragments, preferred_agent_tab_titles, search_fragments_contain_query,
+    pane_row_close_target, pane_search_text_fragments, preferred_agent_tab_titles,
+    search_fragments_contain_query,
     select_summary_pane_kind_icons, should_keep_detail_sidecar_visible_for_mouse_position,
     summary_overflow_count, summary_search_text_fragments, terminal_kind_badge_label,
     terminal_primary_line_data, terminal_pull_request_badge_label, terminal_search_text_fragments,
     terminal_title_fallback_font, uses_outer_group_container, visible_pane_ids_for_detail_target,
-    vtab_diff_stats_text, AgentTabTextPreference, SummaryPaneKind, SummaryPaneKindIcons,
-    TerminalAgentText, TerminalPrimaryLineData, TerminalPrimaryLineFont, VerticalTabsDetailTarget,
-    VerticalTabsDetailTargetKind, VerticalTabsSummaryBranchEntry, VerticalTabsSummaryData,
+    vertical_tabs_panel_width_bounds, vtab_diff_stats_text, AgentTabTextPreference,
+    PaneRowCloseTarget, SummaryPaneKind, SummaryPaneKindIcons, TerminalAgentText,
+    TerminalPrimaryLineData,
+    TerminalPrimaryLineFont, VerticalTabsDetailTarget, VerticalTabsDetailTargetKind,
+    VerticalTabsSummaryBranchEntry, VerticalTabsSummaryData, MAX_PANEL_WIDTH_RATIO,
+    MIN_PANEL_WIDTH, PANEL_WIDTH,
 };
+
+#[test]
+fn vertical_tabs_panel_uses_compact_minimum_and_existing_default() {
+    assert_eq!(MIN_PANEL_WIDTH, 120.);
+    assert_eq!(PANEL_WIDTH, 248.);
+    assert_eq!(MAX_PANEL_WIDTH_RATIO, 0.5);
+}
+
+#[test]
+fn vertical_tabs_panel_width_bounds_clamp_narrow_and_large_windows() {
+    assert_eq!(vertical_tabs_panel_width_bounds(100.), (120., 120.));
+    assert_eq!(vertical_tabs_panel_width_bounds(800.), (120., 400.));
+}
+
+#[test]
+fn row_close_targets_the_pane_except_in_summary_mode() {
+    let locator = PaneViewLocator {
+        pane_group_id: EntityId::new(),
+        pane_id: pane_id(),
+    };
+
+    assert_eq!(
+        pane_row_close_target(None, locator),
+        PaneRowCloseTarget::Pane(locator)
+    );
+    assert_eq!(
+        pane_row_close_target(Some(3), locator),
+        PaneRowCloseTarget::Tab(3)
+    );
+}
 
 fn pane_id() -> PaneId {
     TerminalPaneId::dummy_terminal_pane_id().into()

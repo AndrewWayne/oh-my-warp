@@ -301,6 +301,14 @@ pub fn init(app: &mut AppContext) {
     .with_key_binding("ctrl-v")
     .with_context_predicate(id!("Terminal") & !id!("IMEOpen"))]);
 
+    #[cfg(feature = "omw_local")]
+    app.register_editable_bindings([EditableBinding::new(
+        "terminal:toggle_omw_phone_share",
+        "Share or stop sharing current pane with phone",
+        TerminalAction::ToggleOmwPhoneShare,
+    )
+    .with_context_predicate(id!("Terminal"))]);
+
     app.register_fixed_bindings([
         FixedBinding::new(
             "shift-left",
@@ -1186,4 +1194,51 @@ fn register_input_mode_bindings(app: &mut AppContext) {
             id!(flags::IS_ANY_AI_ENABLED) & !id!(LONG_RUNNING_AGENT_REQUESTED_COMMAND_CONTEXT_KEY),
         ),
     ]);
+}
+
+#[cfg(all(test, feature = "omw_local"))]
+mod omw_phone_share_tests {
+    use super::*;
+    use warpui::keymap::{Context, DescriptionContext, Trigger};
+    use warpui::App;
+
+    #[test]
+    fn omw_phone_share_command_palette_binding_is_stable_and_alt_screen_safe() {
+        App::test((), |mut app| async move {
+            app.update(init);
+
+            app.read(|ctx| {
+                let mut matching = ctx
+                    .editable_bindings()
+                    .filter(|binding| binding.name == "terminal:toggle_omw_phone_share");
+                let binding = matching.next().expect("phone-share editable binding");
+                assert!(matching.next().is_none(), "binding ID must be unique");
+                assert_eq!(
+                    binding.description.in_context(DescriptionContext::Default),
+                    "Share or Stop Sharing Current Pane With Phone"
+                );
+                assert!(matches!(binding.trigger, Trigger::Empty));
+                assert!(matches!(
+                    binding
+                        .action
+                        .as_ref()
+                        .as_any()
+                        .downcast_ref::<TerminalAction>(),
+                    Some(TerminalAction::ToggleOmwPhoneShare)
+                ));
+
+                let mut terminal = Context::default();
+                terminal.set.insert("Terminal");
+                assert!(binding.in_context(&terminal));
+
+                let mut terminal_alt_screen = terminal.clone();
+                terminal_alt_screen.set.insert("AltScreen");
+                assert!(binding.in_context(&terminal_alt_screen));
+
+                let mut alt_screen_only = Context::default();
+                alt_screen_only.set.insert("AltScreen");
+                assert!(!binding.in_context(&alt_screen_only));
+            });
+        });
+    }
 }

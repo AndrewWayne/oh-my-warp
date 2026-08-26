@@ -224,11 +224,101 @@ Expected control bytes:
 - Left: `[27,91,68]`
 - Right: `[27,91,67]`
 
+## Windows Packaged GUI Physical-Phone Lane
+
+Use this lane to verify the real embedded host and a newly opened ordinary
+Windows PowerShell pane, rather than the QA mock host. Start from the extracted
+package under test. Before launching it, record the executable path, SHA-256,
+file version, and matching source commit/build evidence so a stale binary is
+ruled out. Put `tailscale.exe` on the launch-time `PATH`, resolve this PC's
+Tailscale IPv4 address, and launch the packaged GUI from the same PowerShell
+process:
+
+```powershell
+$tailscale = 'D:\Program Files\Tailscale\tailscale.exe'
+$tailIp = (& $tailscale ip -4 | Select-Object -First 1).Trim()
+$env:Path = "D:\Program Files\Tailscale;$env:Path"
+$env:OMW_REMOTE_BIND = "${tailIp}:8787"
+$env:OMW_REMOTE_ALLOW_DEFAULT_WRITE = "1"
+$exe = 'D:\src\oh-my-warp\dist\staging-v0.0.12-dogfood.pane-phone.20260826-windows\omw-warp-oss.exe'
+$expectedExeHash = 'CBBF648558EE71555712D913F9622D282E3047513C560ABF913DBE65251650CA'
+$actualExeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
+if ($actualExeHash -cne $expectedExeHash) {
+    throw "Unexpected 0.0.12 executable hash: $actualExeHash"
+}
+(Get-Item -LiteralPath $exe).VersionInfo | Format-List FileVersion,ProductVersion
+& $exe
+```
+
+`OMW_REMOTE_ALLOW_DEFAULT_WRITE=1` is an explicit preview-only host opt-in:
+newly paired devices receive `pty:write` and can type into a shared pane. The
+embedded daemon is read-only by default. An unset variable and every value
+other than the exact string `1` (including `0`, `true`, and `yes`) omit
+`pty:write`. The GUI samples the variable when the embedded daemon starts, so
+fully stop the daemon or exit and relaunch the GUI after changing it. Do not put
+pair tokens or capability tokens in retained logs.
+
+For the interactive opt-in run:
+
+1. Open a fresh ordinary local PowerShell pane. Before starting Codex, Claude,
+   SSH, another coding agent, or a long-running command, require the persistent
+   pane-header phone action to be visible with the label `Share with phone`.
+   Disable the coding-agent toolbar and remove its File Explorer item if they
+   are enabled; neither change may remove the pane-header action. If this
+   checkpoint fails, stop and record the lane as failed.
+2. In that pane, record `$PID`, print a unique GUID marker, and capture the
+   scoped `pwsh.exe`, `powershell.exe`, and `cmd.exe` process inventory:
+
+   ```powershell
+   $marker = [guid]::NewGuid()
+   Write-Output "OMW12_PC_PANE pid=$PID marker=$marker"
+   ```
+
+3. Click the pane-header `Share with phone` action. Confirm it changes to
+   `Starting...` without accepting another activation, then to `Stop sharing`
+   for this pane only. Require the pair URL to begin with
+   `http://${tailIp}:8787/pair?t=`, open it in physical iPhone Safari, redeem
+   it, and select the already-shared pane.
+4. Confirm the phone displays the existing GUID marker. From the phone, enter
+   `Write-Output "OMW_SAME_PANE_OK pid=$PID"` and verify the original desktop
+   pane displays the same PowerShell PID. Capture another process inventory and
+   require that no sibling shell was created.
+5. Start normal `codex` without `--no-alt-screen`. While its alternate-screen
+   interface is active, require the persistent pane-header `Stop sharing`
+   action to remain reachable and the phone to display and control that same
+   Codex session.
+6. Verify desktop-to-phone output and phone-to-desktop input, disconnect Safari,
+   reconnect through the tokenless base URL, and require the same pane, PID,
+   Codex conversation, and per-pane sharing label.
+7. Activate `Stop sharing` from the pane header. Require the local pane, its
+   original PowerShell process, and the Codex process to remain alive. Confirm a
+   different ordinary local pane still shows `Share with phone` and was never
+   shared implicitly.
+
+Then prove the secure default separately. Exit the GUI, remove the opt-in, start
+the package again, and pair a fresh browser identity so a capability token from
+the interactive run cannot be reused:
+
+```powershell
+Remove-Item Env:OMW_REMOTE_ALLOW_DEFAULT_WRITE -ErrorAction SilentlyContinue
+& 'D:\src\oh-my-warp\dist\staging-v0.0.12-dogfood.pane-phone.20260826-windows\omw-warp-oss.exe'
+```
+
+From a fresh ordinary PowerShell pane, confirm the persistent pane-header action
+is present, share it, and record that the fresh pair response omits `pty:write`,
+that the pane is still readable, and that phone input is rejected and never
+reaches the PTY. Report explicit PASS/FAIL results for the ordinary-pane action,
+alternate-screen action, exact-value write opt-in, read-only default, same-pane
+identity, bidirectional I/O, reconnect, unshare behavior, and absence of a
+sibling shell. A source test, package build, or desktop-only run is not
+sufficient to mark the physical-phone lane complete.
+
 ## Known Limits
 
-This is a real iPhone Safari pass, but it is still a local mock-host pass. It
-does not prove production hosting, production TLS/CDN headers, installed PWA
-behavior, or the real desktop Phone button/QR cold path.
+The default Phone Pass uses real iPhone Safari but a local mock host. It does
+not prove production hosting, production TLS/CDN headers, installed PWA
+behavior, or the real desktop Phone button/QR cold path; use the Windows
+packaged-GUI lane for that host path.
 
 iPhone Mirroring can also route text through the Mac keyboard and active input
 method, so always do at least one physical-phone typing pass when keyboard

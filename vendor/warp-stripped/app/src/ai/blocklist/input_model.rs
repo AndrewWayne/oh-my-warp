@@ -19,7 +19,9 @@ use warpui::{AppContext, Entity, EntityId, ModelContext, ModelHandle, SingletonE
 
 pub use input_classifier::InputType;
 
-use super::agent_view::{AgentViewController, AgentViewControllerEvent, AgentViewEntryOrigin};
+use super::agent_view::AgentViewController;
+#[cfg(not(feature = "omw_local"))]
+use super::agent_view::{AgentViewControllerEvent, AgentViewEntryOrigin};
 use crate::terminal::cli_agent_sessions::{
     CLIAgentInputState, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
 };
@@ -93,12 +95,17 @@ impl InputConfig {
         is_in_fullscreen_agent_view: bool,
         app: &AppContext,
     ) -> Self {
+        let is_autodetection_enabled = if cfg!(feature = "omw_local") {
+            // Local NLD uses the on-device classifier and must not inherit the official-cloud
+            // availability gate from AISettings::is_nld_in_terminal_enabled.
+            *AISettings::as_ref(app).nld_in_terminal_enabled_internal
+        } else if !FeatureFlag::AgentView.is_enabled() || is_in_fullscreen_agent_view {
+            AISettings::as_ref(app).is_ai_autodetection_enabled(app)
+        } else {
+            AISettings::as_ref(app).is_nld_in_terminal_enabled(app)
+        };
         Self {
-            is_locked: if !FeatureFlag::AgentView.is_enabled() || is_in_fullscreen_agent_view {
-                !AISettings::as_ref(app).is_ai_autodetection_enabled(app)
-            } else {
-                !AISettings::as_ref(app).is_nld_in_terminal_enabled(app)
-            },
+            is_locked: !is_autodetection_enabled,
             ..self
         }
     }
@@ -194,7 +201,7 @@ impl BlocklistAIInputModel {
         ctx.subscribe_to_model(&AISettings::handle(ctx), move |me, event, ctx| {
             match event {
                 AISettingsChangedEvent::AIAutoDetectionEnabled { .. }
-                    if FeatureFlag::AgentView.is_enabled() =>
+                    if !cfg!(feature = "omw_local") && FeatureFlag::AgentView.is_enabled() =>
                 {
                     if me.agent_view_controller.as_ref(ctx).is_fullscreen() {
                         // Use context-specific check to determine if autodetection should be enabled
@@ -226,10 +233,11 @@ impl BlocklistAIInputModel {
                     );
                 }
                 AISettingsChangedEvent::NLDInTerminalEnabled { .. }
-                    if FeatureFlag::AgentView.is_enabled()
-                        && !me.agent_view_controller.as_ref(ctx).is_active() =>
+                    if cfg!(feature = "omw_local")
+                        || (FeatureFlag::AgentView.is_enabled()
+                            && !me.agent_view_controller.as_ref(ctx).is_active()) =>
                 {
-                    let is_nld_enabled = AISettings::as_ref(ctx).is_nld_in_terminal_enabled(ctx);
+                    let is_nld_enabled = me.is_autodetection_enabled_for_current_context(ctx);
                     me.set_input_config_internal(
                         InputConfig {
                             is_locked: !is_nld_enabled,
@@ -242,6 +250,7 @@ impl BlocklistAIInputModel {
             }
         });
 
+        #[cfg(not(feature = "omw_local"))]
         if FeatureFlag::AgentView.is_enabled() {
             ctx.subscribe_to_model(&agent_view_controller, |me, event, ctx| match event {
                 AgentViewControllerEvent::EnteredAgentView {
@@ -309,7 +318,9 @@ impl BlocklistAIInputModel {
             });
         }
 
-        let is_autodetection_enabled = if FeatureFlag::AgentView.is_enabled() {
+        let is_autodetection_enabled = if cfg!(feature = "omw_local") {
+            *AISettings::as_ref(ctx).nld_in_terminal_enabled_internal
+        } else if FeatureFlag::AgentView.is_enabled() {
             AISettings::as_ref(ctx).is_nld_in_terminal_enabled(ctx)
         } else {
             AISettings::as_ref(ctx).is_ai_autodetection_enabled(ctx)
@@ -392,7 +403,10 @@ impl BlocklistAIInputModel {
         // autodetected AI input will trigger entering the agent view with that query. In the CLI
         // agent rich input case, the input must be in AI mode to suppress shell decorations
         // (syntax highlighting, error underlining).
-        if FeatureFlag::AgentView.is_enabled()
+        // omw_local deliberately keeps explicit Agent input in the terminal so the local
+        // per-pane dispatcher can stream its response there without opening upstream Agent View.
+        if !cfg!(feature = "omw_local")
+            && FeatureFlag::AgentView.is_enabled()
             && !self.agent_view_controller.as_ref(ctx).is_active()
             && new_config.input_type.is_ai()
             && new_config.is_locked
@@ -489,7 +503,9 @@ impl BlocklistAIInputModel {
         }
 
         let ai_settings = AISettings::as_ref(app);
-        if FeatureFlag::AgentView.is_enabled() {
+        if cfg!(feature = "omw_local") {
+            *ai_settings.nld_in_terminal_enabled_internal
+        } else if FeatureFlag::AgentView.is_enabled() {
             if self.agent_view_controller.as_ref(app).is_fullscreen() {
                 ai_settings.is_ai_autodetection_enabled(app)
             } else {

@@ -36,10 +36,12 @@ use warpui::{
         new_scrollable::{NewScrollableElement, ScrollableAxis},
         Align, Axis, Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, Empty, F32Ext,
         Flex, MainAxisSize, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds,
-        Point, Radius, ScrollData, Stack, Text, ZIndex,
+        Point, Radius, ScrollData, Stack, Text, ZIndex, DEFAULT_UI_LINE_HEIGHT_RATIO,
     },
     event::DispatchedEvent,
-    fonts::FamilyId,
+    fonts::{Cache as FontCache, FamilyId, Properties},
+    platform::LineStyle,
+    text_layout::{ClipConfig, StyleAndFont, TextStyle, DEFAULT_TOP_BOTTOM_RATIO},
     ui_components::components::UiComponent,
     units::{IntoPixels, Pixels},
     AfterLayoutContext, AppContext, ClipBounds, Element, Event, EventContext, LayoutContext,
@@ -59,9 +61,77 @@ use crate::{
 use warp_core::features::FeatureFlag;
 use warpui::elements::{Hoverable, MouseStateHandle};
 
-pub const GUTTER_WIDTH: f32 = 94.;
+pub(crate) const GUTTER_HORIZONTAL_PADDING: f32 = 8.;
 const VERTICAL_DIFF_HUNK_INDICATOR_WIDTH: f32 = 3.;
-const VERTICAL_DIFF_HUNK_INDICATOR_HOVERED_WIDTH: f32 = 8.;
+pub(crate) const VERTICAL_DIFF_HUNK_INDICATOR_HOVERED_WIDTH: f32 = 8.;
+const GUTTER_BUTTON_CONTENT_PADDING: f32 = 2.;
+const GUTTER_BUTTON_BORDER_WIDTH: f32 = 1.;
+const GUTTER_BUTTON_DEFAULT_ICON_INSET: f32 = 4.;
+const GUTTER_BUTTON_INLINE_REVIEW_ICON_INSET: f32 = 2.;
+
+fn gutter_button_icon_size(button_size: f32, inline_code_review_enabled: bool) -> f32 {
+    let button_size = if button_size.is_finite() {
+        button_size.max(0.)
+    } else {
+        0.
+    };
+    let icon_inset = if inline_code_review_enabled {
+        GUTTER_BUTTON_INLINE_REVIEW_ICON_INSET
+    } else {
+        GUTTER_BUTTON_DEFAULT_ICON_INSET
+    };
+
+    (button_size - 2. * icon_inset).max(0.)
+}
+
+pub(crate) fn gutter_button_width(button_size: f32, inline_code_review_enabled: bool) -> f32 {
+    gutter_button_icon_size(button_size, inline_code_review_enabled)
+        + 2. * GUTTER_BUTTON_CONTENT_PADDING
+        + 2. * GUTTER_BUTTON_BORDER_WIDTH
+}
+
+pub(crate) fn line_number_text_width(
+    max_displayed_line_number: usize,
+    font_cache: &FontCache,
+    font_family: FamilyId,
+    font_properties: Properties,
+    font_size: f32,
+) -> f32 {
+    let text = max_displayed_line_number.max(1).to_string();
+    font_cache
+        .text_layout_system()
+        .layout_line(
+            &text,
+            LineStyle {
+                font_size,
+                line_height_ratio: DEFAULT_UI_LINE_HEIGHT_RATIO,
+                baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
+                fixed_width_tab_size: None,
+            },
+            &[(
+                0..text.chars().count(),
+                StyleAndFont::new(font_family, font_properties, TextStyle::new()),
+            )],
+            f32::MAX,
+            ClipConfig::default(),
+        )
+        .width
+}
+
+pub(crate) fn line_number_gutter_width(laid_out_number_width: f32, controls_min_width: f32) -> f32 {
+    let laid_out_number_width = if laid_out_number_width.is_finite() {
+        laid_out_number_width.max(0.)
+    } else {
+        0.
+    };
+    let controls_min_width = if controls_min_width.is_finite() {
+        controls_min_width.max(0.)
+    } else {
+        0.
+    };
+    let number_width = laid_out_number_width.ceil() + 2. * GUTTER_HORIZONTAL_PADDING;
+    number_width.max(controls_min_width)
+}
 
 fn highlight_element(appearance: &Appearance) -> Box<dyn Element> {
     let border_color = appearance.theme().accent();
@@ -160,6 +230,7 @@ impl<V: EditorView> Element for InnerEditor<V> {
 
 struct GutterElement {
     element: Box<dyn Element>,
+    gutter_width: f32,
     offset: Pixels,
     height: f32,
     hovered: bool,
@@ -192,7 +263,7 @@ impl GutterElement {
                     RectF::new(line_origin, line_size).contains_point(position)
                 } else {
                     // Hidden sections use the full gutter width
-                    let size = vec2f(GUTTER_WIDTH, self.height);
+                    let size = vec2f(self.gutter_width, self.height);
                     RectF::new(gutter_origin, size).contains_point(position)
                 };
                 if does_contain {
@@ -227,7 +298,7 @@ impl GutterElement {
                 } else {
                     // Check if position is in the full gutter width (but not in sliver)
                     let full_gutter_rect =
-                        RectF::new(gutter_origin, vec2f(GUTTER_WIDTH, self.height));
+                        RectF::new(gutter_origin, vec2f(self.gutter_width, self.height));
                     if full_gutter_rect.contains_point(position) {
                         Some(GutterRange::DiffHunk {
                             line: self.line.clone(),
@@ -246,7 +317,7 @@ impl GutterElement {
         match self.element_type {
             GutterElementType::HiddenSection { .. } => {
                 // Hidden section elements are always horizontal.
-                Some(vec2f(GUTTER_WIDTH, self.height))
+                Some(vec2f(self.gutter_width, self.height))
             }
             GutterElementType::DiffHunk { hunk: ref diff, .. } => {
                 let vertical_indicator_width = if gutter_element_is_hovered {
@@ -363,10 +434,12 @@ type EditorWrapperClickHandler = Box<dyn FnMut(GutterRange, &mut EventContext)>;
 /// UI Config for rendering line number.
 pub struct LineNumberConfig {
     pub font_family: FamilyId,
+    pub font_properties: Properties,
     pub font_size: f32,
     pub text_color: ColorU,
     pub highlight_text_color: ColorU,
     pub starting_line_number: Option<usize>,
+    pub gutter_width: f32,
 }
 
 struct CommentBox {
@@ -602,8 +675,9 @@ impl<V: EditorView> EditorWrapper<V> {
             let diff_hunk = self.diff_status.diff_hunk(line_count, appearance);
             let is_removal = matches!(diff_hunk, Some(DiffHunkDisplay::Remove(_)));
 
-            let current_line =
-                line_count.as_usize() + line_number_config.starting_line_number.unwrap_or(1);
+            let current_line = line_count
+                .as_usize()
+                .saturating_add(line_number_config.starting_line_number.unwrap_or(1));
 
             // If the block is temporary, don't render line number.
             // Currently, all temporary blocks are removal hunks, either from a deleted section,
@@ -691,6 +765,7 @@ impl<V: EditorView> EditorWrapper<V> {
 
                     elements.push(GutterElement {
                         element,
+                        gutter_width: line_number_config.gutter_width,
                         height,
                         offset,
                         hovered: range_hovered,
@@ -879,6 +954,7 @@ impl<V: EditorView> EditorWrapper<V> {
             };
             elements.push(GutterElement {
                 element,
+                gutter_width: line_number_config.gutter_width,
                 height,
                 offset,
                 hovered: range_hovered,
@@ -928,7 +1004,7 @@ impl<V: EditorView> EditorWrapper<V> {
         let element = Container::new(
             ConstrainedBox::new(Align::new(icon).finish())
                 .with_height(height)
-                .with_width(GUTTER_WIDTH)
+                .with_width(line_number_config.gutter_width)
                 .finish(),
         )
         .with_background_color(gutter_background_color.into())
@@ -936,6 +1012,7 @@ impl<V: EditorView> EditorWrapper<V> {
 
         GutterElement {
             element,
+            gutter_width: line_number_config.gutter_width,
             offset,
             height,
             hovered: range_hovered,
@@ -953,14 +1030,10 @@ impl<V: EditorView> EditorWrapper<V> {
         appearance: &Appearance,
         gutter_button: &dyn GutterButton,
     ) -> Box<dyn Element> {
-        let vertical_padding = if FeatureFlag::InlineCodeReview.is_enabled() {
-            2.
-        } else {
-            4.
-        };
-
-        let button_size = gutter_element_height;
-        let icon_size = button_size - (vertical_padding * 2.);
+        let icon_size = gutter_button_icon_size(
+            gutter_element_height,
+            FeatureFlag::InlineCodeReview.is_enabled(),
+        );
         let enabled = gutter_button.is_enabled();
 
         let mut button = Hoverable::new(mouse_state, |state| {
@@ -977,12 +1050,13 @@ impl<V: EditorView> EditorWrapper<V> {
                 .with_height(icon_size)
                 .finish(),
             )
-            .with_uniform_padding(2.)
+            .with_uniform_padding(GUTTER_BUTTON_CONTENT_PADDING)
             .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
             .with_background(button_background);
 
             let container = if let Some(border) = border {
-                container.with_border(Border::all(1.0).with_border_fill(border))
+                container
+                    .with_border(Border::all(GUTTER_BUTTON_BORDER_WIDTH).with_border_fill(border))
             } else {
                 container
             };
@@ -1141,16 +1215,14 @@ impl<V: EditorView> EditorWrapper<V> {
                 } else {
                     line_number_config.text_color
                 };
-                Align::new(
-                    Text::new_inline(
-                        line.to_string(),
-                        line_number_config.font_family,
-                        line_number_config.font_size,
-                    )
-                    .with_selectable(true)
-                    .with_color(text_color)
-                    .finish(),
+                Text::new_inline(
+                    line.to_string(),
+                    line_number_config.font_family,
+                    line_number_config.font_size,
                 )
+                .with_style(line_number_config.font_properties)
+                .with_selectable(true)
+                .with_color(text_color)
                 .finish()
             }
             None => {
@@ -1159,10 +1231,15 @@ impl<V: EditorView> EditorWrapper<V> {
             }
         };
 
-        let constrained_base = ConstrainedBox::new(base_content)
-            .with_height(gutter_element_height)
-            .with_width(GUTTER_WIDTH)
-            .finish();
+        let constrained_base = ConstrainedBox::new(
+            Container::new(Align::new(base_content).right().finish())
+                .with_padding_left(GUTTER_HORIZONTAL_PADDING)
+                .with_padding_right(GUTTER_HORIZONTAL_PADDING)
+                .finish(),
+        )
+        .with_height(gutter_element_height)
+        .with_width(line_number_config.gutter_width)
+        .finish();
 
         let show_add_as_context_button = self.add_hunk_as_context_button.is_some();
         let show_revert_diff_hunk =
@@ -1269,12 +1346,274 @@ impl<V: EditorView> EditorWrapper<V> {
     }
 
     fn size_buffer(&self) -> Vector2F {
-        let is_gutter_present = self.line_number_config.is_some();
-        if is_gutter_present {
-            GUTTER_WIDTH.along(Axis::Horizontal)
-        } else {
-            Vector2F::zero()
+        self.line_number_config
+            .as_ref()
+            .map(|config| config.gutter_width.along(Axis::Horizontal))
+            .unwrap_or_else(Vector2F::zero)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        line_number_gutter_width, line_number_text_width, EditorLineLocation, ExpansionType,
+        GutterElement, GutterElementType, GutterRange, LineCount, GUTTER_HORIZONTAL_PADDING,
+    };
+    use pathfinder_geometry::vector::{vec2f, Vector2F};
+    use warpui::{
+        elements::{Element, Empty},
+        units::Pixels,
+    };
+
+    #[cfg(target_os = "windows")]
+    fn load_real_hack_font_cache() -> (warpui::fonts::Cache, warpui::fonts::FamilyId) {
+        use std::{fs::read, path::PathBuf};
+
+        let font_files = [
+            "Hack-Regular.ttf",
+            "Hack-Italic.ttf",
+            "Hack-Bold.ttf",
+            "Hack-BoldItalic.ttf",
+        ];
+        let font_bytes = font_files
+            .iter()
+            .map(|font_file| {
+                let path = [
+                    env!("CARGO_MANIFEST_DIR"),
+                    "assets",
+                    "bundled",
+                    "fonts",
+                    "hack",
+                    font_file,
+                ]
+                .iter()
+                .collect::<PathBuf>();
+                read(path).expect("bundled Hack font should be readable")
+            })
+            .collect();
+
+        let mut font_cache =
+            warpui::fonts::Cache::new(Box::new(warpui::platform::current::FontDB::new()));
+        let family = font_cache
+            .load_family_from_bytes("Hack", font_bytes)
+            .expect("bundled Hack font should load");
+        (font_cache, family)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn layout_real_number(
+        font_cache: &warpui::fonts::Cache,
+        family: warpui::fonts::FamilyId,
+        font_size: f32,
+        number: &str,
+        max_width: f32,
+    ) -> warpui::text_layout::Line {
+        use warpui::{
+            elements::DEFAULT_UI_LINE_HEIGHT_RATIO,
+            fonts::Properties,
+            platform::LineStyle,
+            text_layout::{ClipConfig, StyleAndFont, TextStyle, DEFAULT_TOP_BOTTOM_RATIO},
+        };
+
+        font_cache.text_layout_system().layout_line(
+            number,
+            LineStyle {
+                font_size,
+                line_height_ratio: DEFAULT_UI_LINE_HEIGHT_RATIO,
+                baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
+                fixed_width_tab_size: None,
+            },
+            &[(
+                0..number.chars().count(),
+                StyleAndFont::new(family, Properties::default(), TextStyle::new()),
+            )],
+            max_width,
+            ClipConfig::default(),
+        )
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn line_number_gutter_real_hack_width_does_not_clip_digits() {
+        let (font_cache, family) = load_real_hack_font_cache();
+        let font_size = 13.25;
+        let em_width = font_cache.em_width(family, font_size);
+        let properties = warpui::fonts::Properties::default();
+        let mut clipped_numbers = Vec::new();
+        let mut previous_gutter_width: Option<(&str, f32)> = None;
+
+        for number in ["9", "10", "99", "100", "999", "1000"] {
+            let parsed_number = number.parse().expect("number fixture should parse");
+            let laid_out_width =
+                line_number_text_width(parsed_number, &font_cache, family, properties, font_size);
+            let old_available_width = (number.len() as f32 * em_width).ceil();
+            let gutter_width = line_number_gutter_width(laid_out_width, 0.);
+            let available_width = gutter_width - 2. * GUTTER_HORIZONTAL_PADDING;
+            eprintln!(
+                "number={number} em_width={em_width:.6} laid_out_width={laid_out_width:.6} old_available_width={old_available_width:.6} available_width={available_width:.6} gutter_width={gutter_width:.6}"
+            );
+            if laid_out_width > available_width {
+                clipped_numbers.push(format!(
+                    "{number} requires {laid_out_width}px but the current gutter provides {available_width}px"
+                ));
+            }
+
+            let digits_left = gutter_width - GUTTER_HORIZONTAL_PADDING - laid_out_width;
+            assert!(
+                digits_left + pathfinder_geometry::util::EPSILON >= GUTTER_HORIZONTAL_PADDING,
+                "{number} should retain at least 8px of left padding"
+            );
+
+            if let Some((previous_number, previous_width)) = previous_gutter_width {
+                if previous_number.len() == number.len() {
+                    assert_eq!(previous_width, gutter_width);
+                } else {
+                    assert!(
+                        gutter_width > previous_width,
+                        "gutter should grow at {previous_number}->{number}"
+                    );
+                }
+            }
+            previous_gutter_width = Some((number, gutter_width));
+
+            let line = layout_real_number(&font_cache, family, font_size, number, available_width);
+            assert!(line.width <= available_width);
+            let last_glyph_right = line
+                .runs
+                .iter()
+                .flat_map(|run| run.glyphs.iter())
+                .map(|glyph| glyph.position_along_baseline.x() + glyph.width)
+                .fold(0., f32::max);
+            assert!(
+                last_glyph_right <= available_width + pathfinder_geometry::util::EPSILON,
+                "every glyph in {number} should remain inside the number area"
+            );
+
+            let mut scene = warpui::scene::Scene::new(1.25, Default::default());
+            line.paint(
+                pathfinder_geometry::rect::RectF::new(
+                    Vector2F::zero(),
+                    vec2f(available_width, line.height()),
+                ),
+                &warpui::text_layout::PaintStyleOverride::default(),
+                pathfinder_color::ColorU::white(),
+                &font_cache,
+                &mut scene,
+            );
+            let painted_glyphs = scene
+                .layers()
+                .flat_map(|layer| layer.glyphs.iter())
+                .collect::<Vec<_>>();
+            assert_eq!(painted_glyphs.len(), number.len());
+            assert!(painted_glyphs.iter().all(|glyph| glyph.fade.is_none()));
         }
+
+        assert!(clipped_numbers.is_empty(), "{}", clipped_numbers.join("; "));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn line_number_gutter_line_100_paints_without_fade_in_a_120_line_gutter() {
+        let (font_cache, family) = load_real_hack_font_cache();
+        let font_size = 13.25;
+        let number_width = line_number_text_width(
+            120,
+            &font_cache,
+            family,
+            warpui::fonts::Properties::default(),
+            font_size,
+        );
+        let gutter_width = line_number_gutter_width(number_width, 0.);
+        let available_width = gutter_width - 2. * GUTTER_HORIZONTAL_PADDING;
+        let line = layout_real_number(&font_cache, family, font_size, "100", available_width);
+        let mut scene = warpui::scene::Scene::new(1.25, Default::default());
+
+        line.paint(
+            pathfinder_geometry::rect::RectF::new(
+                Vector2F::zero(),
+                vec2f(available_width, line.height()),
+            ),
+            &warpui::text_layout::PaintStyleOverride::default(),
+            pathfinder_color::ColorU::white(),
+            &font_cache,
+            &mut scene,
+        );
+
+        let painted_glyphs = scene
+            .layers()
+            .flat_map(|layer| layer.glyphs.iter())
+            .collect::<Vec<_>>();
+        assert_eq!(painted_glyphs.len(), 3);
+        assert!(painted_glyphs.iter().all(|glyph| glyph.fade.is_none()));
+        assert!(line.width <= available_width);
+    }
+
+    #[test]
+    fn line_number_gutter_width_tracks_digit_boundaries() {
+        assert_eq!(line_number_gutter_width(0., 0.), 16.);
+        assert_eq!(line_number_gutter_width(8., 0.), 24.);
+        assert_eq!(line_number_gutter_width(16., 0.), 32.);
+        assert_eq!(line_number_gutter_width(24., 0.), 40.);
+        assert_eq!(line_number_gutter_width(32., 0.), 48.);
+    }
+
+    #[test]
+    fn line_number_gutter_width_rounds_fractional_character_widths_up() {
+        assert_eq!(line_number_gutter_width(7.25, 0.), 24.);
+        assert_eq!(line_number_gutter_width(14.5, 0.), 31.);
+        assert_eq!(line_number_gutter_width(21.75, 0.), 38.);
+        assert_eq!(line_number_gutter_width(29., 0.), 45.);
+    }
+
+    #[test]
+    fn line_number_gutter_keeps_every_digit_inside_the_padding_bounds() {
+        for digits_width in [7.25, 14.5, 21.75, 29.] {
+            let gutter_width = line_number_gutter_width(digits_width, 0.);
+            let digits_right = gutter_width - GUTTER_HORIZONTAL_PADDING;
+            let digits_left = digits_right - digits_width;
+
+            assert!(digits_left >= GUTTER_HORIZONTAL_PADDING);
+            assert!(digits_right <= gutter_width - GUTTER_HORIZONTAL_PADDING);
+        }
+    }
+
+    #[test]
+    fn line_number_gutter_width_reserves_stable_space_for_controls() {
+        assert_eq!(line_number_gutter_width(8., 68.), 68.);
+        assert_eq!(line_number_gutter_width(64., 68.), 80.);
+    }
+
+    #[test]
+    fn line_number_gutter_width_sanitizes_invalid_measurements() {
+        assert_eq!(line_number_gutter_width(f32::NAN, f32::NAN), 16.);
+        assert_eq!(line_number_gutter_width(-8., -1.), 16.);
+    }
+
+    #[test]
+    fn line_number_gutter_hidden_section_layout_and_hit_testing_use_the_dynamic_width() {
+        let gutter = GutterElement {
+            element: Empty::new().finish(),
+            gutter_width: 32.,
+            offset: Pixels::zero(),
+            height: 20.,
+            hovered: false,
+            line: EditorLineLocation::Collapsed {
+                line_range: LineCount::from(1)..LineCount::from(2),
+            },
+            element_type: GutterElementType::HiddenSection {
+                expansion_type: ExpansionType::Both,
+            },
+            overlay: None,
+        };
+
+        assert!(matches!(
+            gutter.contains_position(vec2f(31., 10.), Vector2F::zero(), vec2f(200., 20.), false,),
+            Some(GutterRange::HiddenSection { .. })
+        ));
+        assert!(gutter
+            .contains_position(vec2f(33., 10.), Vector2F::zero(), vec2f(200., 20.), false,)
+            .is_none());
+        assert_eq!(gutter.diff_hunk_size(false), Some(vec2f(32., 20.)));
     }
 }
 

@@ -2543,12 +2543,26 @@ impl crate::terminal::TerminalManager for TerminalManager {
 
     fn on_view_detached(
         &self,
-        // The detach type is intentionally ignored: a sharer always stops sharing immediately,
-        // even on a reversible `HiddenForClose` detach. This is desirable for security — a sharer
-        // should not continue accepting commands from viewers while the session is not visible.
-        _detach_type: crate::pane_group::pane::DetachType,
+        detach_type: crate::pane_group::pane::DetachType,
         app: &mut AppContext,
     ) {
+        #[cfg(feature = "omw_local")]
+        {
+            if crate::terminal::view::omw_phone_share::should_unshare_for_detach(detach_type) {
+                self.view.update(app, |view, _ctx| {
+                    view.cancel_pending_omw_phone_share();
+                });
+            }
+            crate::terminal::view::omw_phone_share::unshare_phone_pane_after_detach(
+                self.view.id(),
+                detach_type,
+            );
+        }
+        #[cfg(not(feature = "omw_local"))]
+        let _ = detach_type;
+
+        // Upstream session sharing always stops immediately, including on a
+        // reversible `HiddenForClose` detach.
         let shared_session_status = self.model.lock().shared_session_status().clone();
         if shared_session_status.is_sharer() {
             let is_confirm_close_session =

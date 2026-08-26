@@ -22,7 +22,15 @@
 
 ## Install
 
-Download the latest `.dmg` from [Releases](https://github.com/AndrewWayne/oh-my-warp/releases), then:
+Download the latest release from [Releases](https://github.com/AndrewWayne/oh-my-warp/releases).
+
+On Windows, run the `x86_64-pc-windows-msvc-setup.exe` artifact. It installs
+for the current user, adds Start Menu and Apps & Features entries, and does not
+require administrator access. Preview installers are unsigned, so Windows may
+show a SmartScreen warning. The portable `.zip` remains available for users who
+do not want an installed application.
+
+On macOS, download the `.dmg`, then:
 
 ```bash
 # drag omw-warp-oss.app into /Applications, then:
@@ -30,7 +38,9 @@ xattr -d com.apple.quarantine /Applications/omw-warp-oss.app
 open /Applications/omw-warp-oss.app
 ```
 
-The `xattr` step is required because preview builds are unsigned.
+The `xattr` step is required because preview builds are unsigned. See
+[Windows installation](./docs/windows-installation.md) for installer,
+uninstaller, upgrade, and silent-deployment details.
 
 ## What works today
 
@@ -41,7 +51,7 @@ The `xattr` step is required because preview builds are unsigned.
 
 ## Limitations
 
-- **macOS arm64 only, unsigned.** No Windows or Linux build yet. The `xattr` step above is the unsigned-binary workaround.
+- **Unsigned previews.** macOS is arm64-only; Windows is x86_64-only. Windows may show SmartScreen and macOS requires the `xattr` workaround above. Linux packaging is not available yet.
 - **First-key-save on the bundled `.app`** may silently fail to write to the macOS Keychain on some machines (an ad-hoc-signed bundle ACL issue — Apply now surfaces this as an error rather than swallowing it). If it happens, save the key once from a terminal:
   ```bash
   security add-generic-password -s "omw/<provider-id>" -a "<provider-id>" -w "<your-key>" -A
@@ -59,6 +69,14 @@ The `xattr` step is required because preview builds are unsigned.
 bash scripts/build-mac-dmg.sh <version>
 ```
 
+Windows release builds use the portable payload as the single source for both
+artifacts:
+
+```powershell
+pwsh -File scripts/build-windows-zip.ps1 -Version <version>
+pwsh -File scripts/build-windows-installer.ps1 -Version <version>
+```
+
 See [`specs/fork-strategy.md`](./specs/fork-strategy.md) for the upstream-sync workflow.
 
 ## Docs
@@ -67,6 +85,7 @@ See [`specs/fork-strategy.md`](./specs/fork-strategy.md) for the upstream-sync w
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — how to contribute
 - [Mobile Web Controller Phone QA](./docs/mobile-web-controller-phone-qa.md) — mobile Web Controller QA ladder
 - [Mobile Remote-Control QA](./docs/mobile-remote-control-qa.md) — full Simulator and phone QA for real shell, Claude Code, and Codex CLI flows
+- [Windows installation](./docs/windows-installation.md) — installer, upgrades, uninstall, and retained user data
 - [`specs/`](./specs/) — protocol specs, test plan, fork strategy
 
 ## License

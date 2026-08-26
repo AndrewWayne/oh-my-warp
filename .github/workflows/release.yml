@@ -1,6 +1,7 @@
 name: Release
 
-# Builds + publishes omw-local-preview artifacts (Mac .dmg, Windows .zip)
+# Builds + publishes omw-local-preview artifacts (Mac .dmg, Windows portable
+# .zip, and Windows per-user installer/uninstaller)
 # for the given tag. Triggered automatically on tag push, or manually
 # via workflow_dispatch with a tag input (used to backfill artifacts
 # onto a tag that was pushed before this workflow existed).
@@ -172,7 +173,26 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: vendor/warp-stripped
-      - name: Build .zip
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          $logDir = "artifacts/windows-release"
+          New-Item -ItemType Directory -Force $logDir | Out-Null
+          & choco install nsis -y --no-progress 2>&1 |
+            Tee-Object -FilePath "$logDir/nsis-install.log"
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+
+          $makensis = @(
+            "${env:ProgramFiles(x86)}\NSIS\makensis.exe",
+            "$env:ProgramFiles\NSIS\makensis.exe"
+          ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+            Select-Object -First 1
+          if (-not $makensis) { throw "makensis.exe not found after NSIS installation" }
+          "MAKENSIS=$makensis" >> $env:GITHUB_ENV
+          & $makensis /VERSION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build Windows portable ZIP and installer
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
@@ -185,13 +205,40 @@ jobs:
           $code = $LASTEXITCODE
           if ($code -ne 0) { exit $code }
 
+          & pwsh -NoProfile -File scripts/build-windows-installer.ps1 `
+            -Version $env:RELEASE_VERSION `
+            -MakensisPath $env:MAKENSIS 2>&1 |
+            Tee-Object -FilePath "$logDir/build-installer.log"
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+
           $zip = "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc.zip"
-          if (-not (Test-Path -LiteralPath $zip)) { throw "missing Windows ZIP: $zip" }
-          $sidecar = "$zip.sha256"
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
-          $checksumLine = "$hash  $([IO.Path]::GetFileName($zip))`n"
-          [IO.File]::WriteAllText($sidecar, $checksumLine, [Text.Encoding]::ASCII)
-          Copy-Item -LiteralPath $sidecar -Destination $logDir
+          $installer = "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc-setup.exe"
+          foreach ($artifact in @($zip, $installer)) {
+            if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
+              throw "missing Windows artifact: $artifact"
+            }
+            $sidecar = "$artifact.sha256"
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifact).Hash.ToLowerInvariant()
+            $checksumLine = "$hash  $([IO.Path]::GetFileName($artifact))`n"
+            [IO.File]::WriteAllText($sidecar, $checksumLine, [Text.Encoding]::ASCII)
+            Copy-Item -LiteralPath $sidecar -Destination $logDir -Force
+          }
+      - name: Smoke test Windows installer and uninstaller
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $logDir = "artifacts/windows-release"
+          $installer = "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc-setup.exe"
+          $staging = "dist/staging-v$env:RELEASE_VERSION-windows"
+          & pwsh -NoProfile -File scripts/test-windows-installer.ps1 `
+            -InstallerPath $installer `
+            -StagingDirectory $staging `
+            -Version $env:RELEASE_VERSION 2>&1 |
+            Tee-Object -FilePath "$logDir/installer-smoke.log"
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
       - name: Upload Windows build and audit evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -210,4 +257,6 @@ jobs:
           gh release upload "$env:RELEASE_REF" `
             "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc.zip" `
             "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc.zip.sha256" `
+            "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc-setup.exe" `
+            "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc-setup.exe.sha256" `
             --clobber

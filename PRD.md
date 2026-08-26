@@ -76,6 +76,11 @@ What MUST work for v1.0 to ship. If it's not on this list, it's **Beyond v1** (�
 - Real-time cost surface in CLI and GUI.
 - Append-only audit log with hash-chain integrity.
 - Homebrew install on macOS.
+- Windows preview distribution: a self-contained x64 portable ZIP plus an
+  unsigned per-user installer/uninstaller, gated by archive-manifest and
+  install/upgrade/uninstall verification. This is an explicit August 2026
+  scope expansion; production-signed Windows distribution and Linux packaging
+  remain Beyond v1.
 
 ### 3.2 Non-Goals (v1.0)
 
@@ -227,7 +232,9 @@ What MUST work for v1.0 to ship. If it's not on this list, it's **Beyond v1** (�
 
 ### FR-1 Installation & Onboarding
 
-- FR-1.1 One-line install: `brew install omw` (Linux/Windows packaging is Beyond v1).
+- FR-1.1 Supported install paths: `brew install omw` on macOS; a self-contained
+  portable ZIP and unsigned per-user installer/uninstaller for the Windows
+  preview. Linux packaging and production Windows code signing are Beyond v1.
 - FR-1.2 Post-install wizard (CLI): provider setup, optional remote enable, optional pairing.
 - FR-1.3 First-run check: detects existing keys in keychain (e.g. from `gh`, `op`, env), offers to import.
 - FR-1.4 Sane defaults: GUI opens to a local profile with a default provider configured to Ollama if detected, else prompts.
@@ -395,7 +402,7 @@ Listed for vision. v1 supports the use case via separate Web Controller installs
 | `omw-cli` | Rust | `omw` umbrella CLI wrapping subcommands | ✓ |
 | `omw-config` | Rust | Config loading, schema, validation | ✓ |
 | `omw-policy` | Rust | Approval/permission engine (library, no state) | ✓ |
-| `omw-keychain` | Rust | OS keychain wrapper (macOS first; Linux/Windows Beyond v1) | ✓ |
+| `omw-keychain` | Rust | OS credential wrapper (macOS Keychain and Windows Credential Manager; Linux Beyond v1) | ✓ |
 | `omw-pty` | Rust | PTY/portable-pty wrapper (used by remote) | ✓ |
 | `omw-acp` | Rust | ACP protocol bindings | ✓ |
 | `omw-audit` | Rust | Audit schema, hash chain, redaction (library) | ✓ |
@@ -769,9 +776,9 @@ Sequenced after v0.2 (policy + audit) and v0.3 (stripped GUI + omw-server) land.
 
 ### v1.0 — Polish & ship
 
-First-run wizard (`omw setup`). Homebrew formula. Docs site. Screencasts of Journey A and Journey B. **External implementation security review.** Resolve all sev-1 findings.
+First-run wizard (`omw setup`). Homebrew formula. Maintain the manifest-verified Windows preview ZIP and installer/uninstaller release lane. Docs site. Screencasts of Journey A and Journey B. **External implementation security review.** Resolve all sev-1 findings.
 
-**Exit:** v1.0 tag; Homebrew install on a fresh Mac; Journey A and Journey B (single-host) demoable end-to-end.
+**Exit:** v1.0 tag; Homebrew install on a fresh Mac; Windows preview install, upgrade, and uninstall pass on a fresh standard-user environment; Journey A and Journey B (single-host) demoable end-to-end.
 
 ### 13.x — Beyond v1 (vision, not committed)
 
@@ -787,7 +794,7 @@ Listed for direction; not in v1.0 scope.
 - Plugin/themes system.
 - Optional non-Tailscale path (Cloudflare Tunnel + auth) — only if user demand justifies.
 - Workspace/profile-scoped settings.
-- Linux/Windows packaging.
+- Linux packaging and production-signed Windows distribution.
 - Hardware-key-backed approvals.
 - Route B migration (clean fork of cloud paths) if any trigger hits.
 

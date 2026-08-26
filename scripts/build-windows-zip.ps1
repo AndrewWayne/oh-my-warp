@@ -201,6 +201,159 @@ function Invoke-ProbeProcess {
     }
 }
 
+function Assert-SafeArchivePath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or $Path.Contains('\')) {
+        throw "unsafe ZIP path: $Path"
+    }
+
+    $isDirectory = $Path.EndsWith('/')
+    $canonical = if ($isDirectory) { $Path.Substring(0, $Path.Length - 1) } else { $Path }
+    if ([string]::IsNullOrWhiteSpace($canonical) -or
+        $canonical.StartsWith('/') -or
+        $canonical -match '^[A-Za-z]:' -or
+        $canonical -match '[<>:"|?*\x00-\x1F\x7F]') {
+        throw "unsafe ZIP path: $Path"
+    }
+
+    foreach ($segment in $canonical.Split('/')) {
+        if ([string]::IsNullOrEmpty($segment) -or
+            $segment -eq '.' -or
+            $segment -eq '..' -or
+            $segment.TrimEnd([char[]]" .") -ne $segment) {
+            throw "unsafe ZIP path: $Path"
+        }
+
+        $deviceName = $segment.Split('.')[0]
+        if ($deviceName -match '^(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$') {
+            throw "unsafe ZIP path: $Path"
+        }
+    }
+
+    return $canonical
+}
+
+function Test-WindowsZipArchive {
+    param(
+        [Parameter(Mandatory = $true)][string]$ArchivePath,
+        [Parameter(Mandatory = $true)][string[]]$RequiredEntries
+    )
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+    $allPaths = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $fileEntries = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::OrdinalIgnoreCase)
+    $expectedPaths = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $directoryCount = 0
+        foreach ($entry in $archive.Entries) {
+            $rawPath = $entry.FullName
+            $canonical = Assert-SafeArchivePath $rawPath
+            if (-not $allPaths.Add($canonical)) {
+                throw "duplicate ZIP path: $rawPath"
+            }
+
+            if ($rawPath.EndsWith('/')) {
+                if ($entry.Length -ne 0) {
+                    throw "ZIP directory entry contains data: $rawPath"
+                }
+                $directoryCount++
+            }
+            else {
+                $fileEntries.Add($canonical, $entry)
+            }
+        }
+
+        foreach ($requiredEntry in $RequiredEntries) {
+            $canonical = Assert-SafeArchivePath $requiredEntry
+            if (-not $fileEntries.ContainsKey($canonical)) {
+                throw "ZIP is missing required entry $requiredEntry"
+            }
+        }
+
+        if (-not $fileEntries.ContainsKey('SHA256SUMS')) {
+            throw "ZIP is missing SHA256SUMS"
+        }
+
+        $manifestStream = $fileEntries['SHA256SUMS'].Open()
+        $manifestReader = [System.IO.StreamReader]::new($manifestStream, [Text.Encoding]::ASCII, $false)
+        try {
+            $manifestText = $manifestReader.ReadToEnd()
+        }
+        finally {
+            $manifestReader.Dispose()
+        }
+
+        $lineReader = [System.IO.StringReader]::new($manifestText)
+        try {
+            $lineNumber = 0
+            $manifestByteCount = [int64]0
+            while (($line = $lineReader.ReadLine()) -ne $null) {
+                $lineNumber++
+                $match = [regex]::Match($line, '^([0-9a-fA-F]{64})  ([^\r\n]+)$')
+                if (-not $match.Success) {
+                    throw "invalid SHA256SUMS line $lineNumber in ZIP"
+                }
+
+                $expectedHash = $match.Groups[1].Value
+                $manifestRawPath = $match.Groups[2].Value
+                if ($manifestRawPath.EndsWith('/')) {
+                    throw "SHA256SUMS contains a directory path: $manifestRawPath"
+                }
+                $manifestPath = Assert-SafeArchivePath $manifestRawPath
+                if ($manifestPath -ieq 'SHA256SUMS') {
+                    throw "SHA256SUMS must not contain itself"
+                }
+                if (-not $expectedPaths.Add($manifestPath)) {
+                    throw "duplicate path in ZIP SHA256SUMS: $manifestPath"
+                }
+                if (-not $fileEntries.ContainsKey($manifestPath)) {
+                    throw "manifest entry is missing from ZIP: $manifestPath"
+                }
+
+                $entry = $fileEntries[$manifestPath]
+                $entryStream = $entry.Open()
+                try {
+                    $hashBytes = $sha256.ComputeHash($entryStream)
+                }
+                finally {
+                    $entryStream.Dispose()
+                }
+                $actualHash = [BitConverter]::ToString($hashBytes).Replace('-', '').ToLowerInvariant()
+                if ($actualHash -ine $expectedHash) {
+                    throw "ZIP payload hash mismatch for $manifestPath"
+                }
+                $manifestByteCount += $entry.Length
+            }
+        }
+        finally {
+            $lineReader.Dispose()
+        }
+
+        foreach ($archivePath in $fileEntries.Keys) {
+            if ($archivePath -ine 'SHA256SUMS' -and -not $expectedPaths.Contains($archivePath)) {
+                throw "ZIP file is absent from SHA256SUMS: $archivePath"
+            }
+        }
+        if (($fileEntries.Count - 1) -ne $expectedPaths.Count) {
+            throw "ZIP file count does not match SHA256SUMS"
+        }
+
+        return [pscustomobject]@{
+            FileCount = $expectedPaths.Count
+            DirectoryCount = $directoryCount
+            ByteCount = $manifestByteCount
+        }
+    }
+    finally {
+        $sha256.Dispose()
+        $archive.Dispose()
+    }
+}
+
 foreach ($requiredDir in @($vendorDir, $agentDir)) {
     if (-not (Test-Path -LiteralPath $requiredDir -PathType Container)) {
         throw "missing required directory $requiredDir"
@@ -427,7 +580,6 @@ if (Test-Path -LiteralPath $zipPath) {
 Write-Host "==> Creating ZIP at $zipPath ..."
 Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $zipPath
 
-Add-Type -AssemblyName System.IO.Compression.FileSystem
 $requiredZipEntries = @(
     "omw-warp-oss.exe",
     "omw-keychain-helper.exe",
@@ -446,18 +598,9 @@ $requiredZipEntries = @(
     "third_party/node/LICENSE",
     "SHA256SUMS"
 )
-$archive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
-try {
-    $entryNames = @($archive.Entries | ForEach-Object { $_.FullName.Replace("\", "/") })
-    foreach ($requiredEntry in $requiredZipEntries) {
-        if ($entryNames -notcontains $requiredEntry) {
-            throw "ZIP is missing required entry $requiredEntry"
-        }
-    }
-}
-finally {
-    $archive.Dispose()
-}
+Write-Host "==> Verifying ZIP paths, manifest, and archived payload hashes ..."
+$zipVerification = Test-WindowsZipArchive $zipPath $requiredZipEntries
+Write-Host "    verified $($zipVerification.FileCount) files, $($zipVerification.DirectoryCount) directories, and $($zipVerification.ByteCount) payload bytes"
 
 Remove-Item -LiteralPath $isolatedAgent -Recurse -Force
 

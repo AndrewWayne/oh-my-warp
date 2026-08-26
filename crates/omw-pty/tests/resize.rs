@@ -248,11 +248,23 @@ fn strip_ansi(s: &str) -> String {
                 j += 1;
             }
             i = j;
+        } else if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b']' {
+            // OSC: consume through BEL or the two-byte ST terminator (ESC \).
+            i += 2;
+            while i < bytes.len() {
+                if bytes[i] == 0x07 {
+                    i += 1;
+                    break;
+                }
+                if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                    i += 2;
+                    break;
+                }
+                i += 1;
+            }
         } else if bytes[i] == 0x1b {
-            // Bare ESC or other escape (e.g. ESC ] OSC ... BEL). Skip the ESC
-            // plus the next byte if it looks like the start of an OSC, then
-            // walk to BEL or ST. Conservative: just drop the ESC and continue.
-            i += 1;
+            // Drop an unsupported escape introducer and its command byte.
+            i += usize::from(i + 1 < bytes.len()) + 1;
         } else {
             // Safe because we only land here on a non-ESC byte; UTF-8 multi-
             // byte continuation bytes are >= 0x80, which is fine to push as
@@ -267,6 +279,14 @@ fn strip_ansi(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(windows)]
+#[test]
+fn strip_ansi_removes_csi_and_osc_sequences() {
+    let input = "\x1b[?25l\x1b[2J\x1b]0;PowerShell\x0780x24\x1b[K";
+    assert_eq!(strip_ansi(input), "80x24");
+    assert_eq!(strip_ansi("\x1b]0;PowerShell\x1b\\120x40"), "120x40");
 }
 
 #[cfg(windows)]
@@ -337,7 +357,12 @@ async fn resize_changes_observed_terminal_size_windows() {
         })
         .await;
 
-        collected.expect("probe did not yield a WIDTHxHEIGHT line within 10s")
+        collected.unwrap_or_else(|err| {
+            panic!(
+                "probe did not yield a WIDTHxHEIGHT line within 10s: {err}; output was {:?}",
+                String::from_utf8_lossy(accumulator)
+            )
+        })
     }
 
     let mut acc = Vec::<u8>::new();

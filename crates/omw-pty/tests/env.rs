@@ -9,11 +9,11 @@ async fn env_remove_strips_inherited_env() {
     std::env::set_var(key, "leaked");
 
     let cmd = if cfg!(windows) {
-        PtyCommand::new("powershell")
+        PtyCommand::new("cmd")
             .args([
-                "-NoProfile",
-                "-Command",
-                "if ($env:OMW_PTY_ENV_REMOVE_TEST) { Write-Output $env:OMW_PTY_ENV_REMOVE_TEST } else { Write-Output unset }",
+                "/d",
+                "/c",
+                "if defined OMW_PTY_ENV_REMOVE_TEST (echo leaked) else (echo unset)",
             ])
             .env_remove(key)
     } else {

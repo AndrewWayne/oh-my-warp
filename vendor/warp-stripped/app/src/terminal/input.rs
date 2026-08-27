@@ -861,6 +861,12 @@ pub enum CommandExecutionSource {
         metadata: AgentInteractionMetadata,
     },
 
+    /// A command approved through the local omw agent panel. Unlike the
+    /// official Warp AI path, this has no cloud conversation/action IDs, but
+    /// it must still be recorded as agent-executed in local command history.
+    #[cfg(feature = "omw_local")]
+    OmwAgent,
+
     /// A command execution request in a shared session (by a viewer or sharer).
     ///
     /// For a sharer, this will be processed similar to [`CommandExecutionSource::User`]
@@ -892,14 +898,16 @@ impl CommandExecutionSource {
     pub fn is_ai_command(&self) -> bool {
         // TODO: at some point we will want to couple both of these cases
         // into one source variant, as they are both AI sources.
-        matches!(
-            self,
-            CommandExecutionSource::AI { .. }
-                | CommandExecutionSource::SharedSession {
-                    ai_metadata: Some(_),
-                    ..
-                }
-        )
+        match self {
+            CommandExecutionSource::AI { .. } => true,
+            #[cfg(feature = "omw_local")]
+            CommandExecutionSource::OmwAgent => true,
+            CommandExecutionSource::SharedSession {
+                ai_metadata: Some(_),
+                ..
+            } => true,
+            _ => false,
+        }
     }
 }
 
@@ -2246,10 +2254,6 @@ impl Input {
                 | AgentInputFooterEvent::InsertIntoCLIRichInput(_)
                 | AgentInputFooterEvent::ToggleCodeReviewPane(_)
                 | AgentInputFooterEvent::ToggleFileExplorer(_) => {}
-                #[cfg(feature = "omw_local")]
-                AgentInputFooterEvent::ToggleOmwPair => {
-                    // Handled by UseAgentToolbar's subscription, not here.
-                }
                 AgentInputFooterEvent::ToggledChipMenu { open } => {
                     me.handle_prompt_event(&PromptDisplayEvent::ToggleMenu { open: *open }, ctx);
                 }
@@ -5380,16 +5384,11 @@ impl Input {
             return;
         }
 
-        let ai_settings = AISettings::as_ref(ctx);
-        if FeatureFlag::AgentView.is_enabled() {
-            if self.agent_view_controller.as_ref(ctx).is_fullscreen() {
-                if !ai_settings.is_ai_autodetection_enabled(ctx) {
-                    return;
-                }
-            } else if !ai_settings.is_nld_in_terminal_enabled(ctx) {
-                return;
-            }
-        } else if !ai_settings.is_ai_autodetection_enabled(ctx) {
+        if !self
+            .ai_input_model
+            .as_ref(ctx)
+            .is_autodetection_enabled_for_current_context(ctx)
+        {
             return;
         }
 
@@ -5446,33 +5445,31 @@ impl Input {
 
                 self.focus_input_box(ctx);
 
-                let is_input_buffer_empty = self.editor.as_ref(ctx).buffer_text(ctx).is_empty();
-
-                let switch_to_auto = self.ai_input_model.update(ctx, |model, ctx| {
-                    let is_autodetection_enabled =
-                        AISettings::as_ref(ctx).is_ai_autodetection_enabled(ctx);
-                    let input_type = *input_type;
-
+                let switch_to_auto = self.ai_input_model.read(ctx, |model, ctx| {
                     // If the user clicked on the button to "unlock" the current mode,
                     // we want to enable autodetection.
-                    if input_type == model.input_type()
-                        && is_autodetection_enabled
+                    *input_type == model.input_type()
+                        && model.is_autodetection_enabled_for_current_context(ctx)
                         && model.is_input_type_locked()
-                    {
-                        true
-                    } else {
-                        let new_config = InputConfig {
-                            input_type,
-                            is_locked: true,
-                        };
-                        model.set_input_config(new_config, is_input_buffer_empty, ctx);
-                        false
-                    }
                 });
 
                 if switch_to_auto {
-                    self.set_input_mode_natural_language_detection(ctx);
-                } else if *input_type == InputType::AI {
+                    self.enable_auto_detection(ctx);
+                } else {
+                    let is_input_buffer_empty = self.editor.as_ref(ctx).buffer_text(ctx).is_empty();
+                    self.ai_input_model.update(ctx, |model, ctx| {
+                        model.set_input_config(
+                            InputConfig {
+                                input_type: *input_type,
+                                is_locked: true,
+                            },
+                            is_input_buffer_empty,
+                            ctx,
+                        );
+                    });
+                }
+
+                if !switch_to_auto && *input_type == InputType::AI {
                     send_telemetry_from_ctx!(
                         TelemetryEvent::AgentModeClickedEntrypoint {
                             entrypoint: AgentModeEntrypoint::UDITerminalInputSwitcher,
@@ -5973,110 +5970,101 @@ impl Input {
         #[cfg(feature = "omw_local")]
         {
             if let Some(prompt) = parse_inline_agent_prompt(command) {
-                log::info!(
-                    "omw# input: intercepting prompt={prompt:?} (terminal_view_id={:?})",
-                    self.terminal_view_id
-                );
-                let state = crate::ai_assistant::omw_agent_state::OmwAgentState::shared();
-                // Look up by THIS Input's own terminal_view_id rather
-                // than the global "active terminal" — the pressed-Enter
-                // keystroke routes to whichever Input has focus, so
-                // `self.terminal_view_id` is by construction the pane
-                // the user typed in. Consulting the global instead used
-                // to mis-dispatch to whichever pane was last
-                // "TerminalView::on_focus"-ed (typically the one a
-                // command was last run in) when focus moved through an
-                // Input child without bubbling.
-                let view_id = self.terminal_view_id;
-                let active = state.pane_io_clone(view_id);
-                let Some(handle) = active.clone() else {
-                    log::warn!(
-                        "omw# input: no io handles for terminal_view_id={view_id:?}; \
-                         pane is remote or hasn't initialized yet"
-                    );
-                    self.editor.update(ctx, |ed, ctx| {
-                        ed.set_buffer_text(
-                            &format!(
-                                "# {prompt}    ⚠ this pane is not a local terminal — \
-                                 # only works in local panes"
-                            ),
-                            ctx,
-                        );
-                    });
-                    return true;
-                };
-                let existing = state.pane_session(view_id);
-                log::info!(
-                    "omw# input: view_id={view_id:?} pane_session_present={}",
-                    existing.is_some()
-                );
-
-                // Per-pane session model: each pane has its own kernel
-                // session so its conversation history doesn't leak
-                // into other panes. Provision lazily on first `#` per
-                // pane.
-                if existing.is_none() {
-                    log::info!("omw# input: pane has no session; calling start_pane_session");
-                    let params = match build_session_params_from_config() {
-                        Ok(p) => p,
-                        Err(e) => {
-                            log::warn!("omw# input: load config failed: {e}");
-                            let msg =
-                                format!("\r\n\x1b[31momw # prompt failed: {e}\x1b[0m\r\n");
-                            let _ = handle.event_loop_tx.lock().send(
-                                crate::terminal::writeable_pty::Message::InjectBytes(
-                                    std::borrow::Cow::Owned(msg.into_bytes()),
-                                ),
-                            );
-                            self.editor.update(ctx, |ed, ctx| {
-                                ed.set_buffer_text("", ctx);
-                            });
-                            return true;
-                        }
-                    };
-                    if let Err(e) = state.start_pane_session(view_id, params) {
-                        log::warn!("omw# input: start_pane_session failed: {e}");
-                        let msg = format!("\r\n\x1b[31momw # prompt failed: {e}\x1b[0m\r\n");
-                        let _ = handle.event_loop_tx.lock().send(
-                            crate::terminal::writeable_pty::Message::InjectBytes(
-                                std::borrow::Cow::Owned(msg.into_bytes()),
-                            ),
-                        );
-                        self.editor.update(ctx, |ed, ctx| {
-                            ed.set_buffer_text("", ctx);
-                        });
-                        return true;
-                    }
-                }
-
-                let send_result = state.send_prompt_inline_for_pane(prompt.to_string(), handle);
-                if let Err(e) = send_result {
-                    log::warn!("omw# input: send failed: {e}");
-                    if let Some(h) = active.as_ref() {
-                        let line = format!("\r\n\x1b[31momw # prompt send failed: {e}\x1b[0m\r\n");
-                        let _ = h.pty_reads_tx.try_broadcast(std::sync::Arc::new(line.into_bytes()));
-                    }
-                    self.editor.update(ctx, |ed, ctx| {
-                        ed.set_buffer_text("", ctx);
-                    });
-                    return true;
-                }
-                log::info!("omw# input: send dispatch OK; clearing editor");
-                // Clear the input box so the prompt doesn't linger.
-                self.editor.update(ctx, |ed, ctx| {
-                    ed.set_buffer_text("", ctx);
-                });
+                self.submit_omw_agent_prompt(prompt, ctx);
                 return true;
             }
         }
         self.try_execute_command_inner(command, ctx)
     }
 
-    fn try_execute_command_inner(
-        &mut self,
-        command: &str,
-        ctx: &mut ViewContext<Self>,
-    ) -> bool {
+    #[cfg(feature = "omw_local")]
+    fn submit_omw_agent_prompt(&mut self, prompt: &str, ctx: &mut ViewContext<Self>) -> bool {
+        log::info!(
+            "omw# input: intercepting prompt={prompt:?} (terminal_view_id={:?})",
+            self.terminal_view_id
+        );
+        let state = crate::ai_assistant::omw_agent_state::OmwAgentState::shared();
+        // Route by this Input's pane rather than whichever terminal was globally focused last.
+        let view_id = self.terminal_view_id;
+        let active = state.pane_io_clone(view_id);
+        let Some(handle) = active.clone() else {
+            log::warn!(
+                "omw# input: no io handles for terminal_view_id={view_id:?}; \
+                 pane is remote or hasn't initialized yet"
+            );
+            self.editor.update(ctx, |ed, ctx| {
+                ed.set_buffer_text(
+                    &format!(
+                        "# {prompt}    ⚠ this pane is not a local terminal — \
+                         # only works in local panes"
+                    ),
+                    ctx,
+                );
+            });
+            return false;
+        };
+        let existing = state.pane_session(view_id);
+        log::info!(
+            "omw# input: view_id={view_id:?} pane_session_present={}",
+            existing.is_some()
+        );
+
+        // Each pane gets its own agent session so conversation context cannot leak between panes.
+        if existing.is_none() {
+            log::info!("omw# input: pane has no session; calling start_pane_session");
+            let params = match build_session_params_from_config() {
+                Ok(p) => p,
+                Err(e) => {
+                    log::warn!("omw# input: load config failed: {e}");
+                    let msg = format!("\r\n\x1b[31momw # prompt failed: {e}\x1b[0m\r\n");
+                    let _ = handle.event_loop_tx.lock().send(
+                        crate::terminal::writeable_pty::Message::InjectBytes(
+                            std::borrow::Cow::Owned(msg.into_bytes()),
+                        ),
+                    );
+                    self.editor.update(ctx, |ed, ctx| {
+                        ed.set_buffer_text("", ctx);
+                    });
+                    return false;
+                }
+            };
+            if let Err(e) = state.start_pane_session(view_id, params) {
+                log::warn!("omw# input: start_pane_session failed: {e}");
+                let msg = format!("\r\n\x1b[31momw # prompt failed: {e}\x1b[0m\r\n");
+                let _ = handle.event_loop_tx.lock().send(
+                    crate::terminal::writeable_pty::Message::InjectBytes(std::borrow::Cow::Owned(
+                        msg.into_bytes(),
+                    )),
+                );
+                self.editor.update(ctx, |ed, ctx| {
+                    ed.set_buffer_text("", ctx);
+                });
+                return false;
+            }
+        }
+
+        if let Err(e) = state.send_prompt_inline_for_pane(prompt.to_string(), handle) {
+            log::warn!("omw# input: send failed: {e}");
+            if let Some(h) = active.as_ref() {
+                let line = format!("\r\n\x1b[31momw # prompt send failed: {e}\x1b[0m\r\n");
+                let _ = h
+                    .pty_reads_tx
+                    .try_broadcast(std::sync::Arc::new(line.into_bytes()));
+            }
+            self.editor.update(ctx, |ed, ctx| {
+                ed.set_buffer_text("", ctx);
+            });
+            return false;
+        }
+
+        log::info!("omw# input: send dispatch OK; clearing editor");
+        self.editor.update(ctx, |ed, ctx| {
+            ed.set_buffer_text("", ctx);
+        });
+        true
+    }
+
+    fn try_execute_command_inner(&mut self, command: &str, ctx: &mut ViewContext<Self>) -> bool {
         let shared_session_status = self.model.lock().shared_session_status().clone();
         if shared_session_status.is_sharer_or_viewer() {
             // If this is a viewer who isn't also an executor, they should not
@@ -11890,7 +11878,24 @@ impl Input {
                 view.accept_selected_item(false, ctx);
             });
             return;
-        } else if self.maybe_queue_input_for_in_progress_conversation(ctx)
+        } else if cfg!(feature = "omw_local")
+            && self.ai_input_model.as_ref(ctx).is_ai_input_enabled()
+        {
+            #[cfg(feature = "omw_local")]
+            {
+                let prompt = command.trim();
+                if prompt.is_empty() {
+                    return;
+                }
+
+                if self.submit_omw_agent_prompt(prompt, ctx) {
+                    // The local dispatch already happened; this event updates terminal UI state.
+                    ctx.emit(Event::ExecuteAIQuery);
+                }
+            }
+            return;
+        } else if (!cfg!(feature = "omw_local")
+            && self.maybe_queue_input_for_in_progress_conversation(ctx))
             || self.maybe_handle_enter_for_slash_command(ctx)
         {
             return;
@@ -13000,10 +13005,10 @@ impl Input {
         }
 
         let is_input_buffer_empty = self.editor.as_ref(ctx).buffer_text(ctx).is_empty();
-
         // When AgentView is enabled, reverting to AI mode in an active agent view with an empty
         // buffer should unlock (re-enable autodetection) - semantically like clearing the "!".
-        let should_unlock = FeatureFlag::AgentView.is_enabled()
+        let should_unlock = !cfg!(feature = "omw_local")
+            && FeatureFlag::AgentView.is_enabled()
             && self.agent_view_controller.as_ref(ctx).is_fullscreen()
             && is_input_buffer_empty
             && AISettings::as_ref(ctx).is_ai_autodetection_enabled(ctx);

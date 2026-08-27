@@ -46,7 +46,13 @@ use crate::terminal::terminal_manager::TerminalManager;
 use crate::terminal::TerminalView;
 
 pub(crate) type LocalIoHandles = (
-    Arc<parking_lot::Mutex<crate::terminal::local_tty::mio_channel::Sender<crate::terminal::writeable_pty::Message>>>,
+    Arc<
+        parking_lot::Mutex<
+            crate::terminal::local_tty::mio_channel::Sender<
+                crate::terminal::writeable_pty::Message,
+            >,
+        >,
+    >,
     async_broadcast::Sender<Arc<Vec<u8>>>,
     crate::terminal::SizeInfo,
 );
@@ -56,15 +62,28 @@ pub(crate) type LocalIoHandles = (
 /// shared-session-viewer panes, mock managers, and detached views (no
 /// pane_stack). The downcast happens against the concrete impl in
 /// `terminal::local_tty::terminal_manager::TerminalManager`.
-pub(crate) fn local_io_handles_for(
-    tv: &TerminalView,
-    ctx: &AppContext,
-) -> Option<LocalIoHandles> {
+pub(crate) fn local_io_handles_for(tv: &TerminalView, ctx: &AppContext) -> Option<LocalIoHandles> {
     let stack: ModelHandle<PaneStack<TerminalView>> = tv.pane_stack_handle(ctx)?;
     let manager_handle = stack.as_ref(ctx).active_data().clone();
     let manager_box: &Box<dyn TerminalManager> = manager_handle.as_ref(ctx);
     let local: &LocalTtyManager = manager_box.as_any().downcast_ref::<LocalTtyManager>()?;
-    Some((local.event_loop_tx(), local.pty_reads_tx(), local.current_size_info()))
+    Some((
+        local.event_loop_tx(),
+        local.pty_reads_tx(),
+        local.current_size_info(),
+    ))
+}
+
+/// Cheap capability check used while rendering pane chrome. Unlike
+/// [`local_io_handles_for`], this does not snapshot terminal size or lock the
+/// terminal model on every header paint.
+pub(crate) fn has_local_tty_manager(tv: &TerminalView, ctx: &AppContext) -> bool {
+    let Some(stack): Option<ModelHandle<PaneStack<TerminalView>>> = tv.pane_stack_handle(ctx)
+    else {
+        return false;
+    };
+    let manager_handle = stack.as_ref(ctx).active_data().clone();
+    manager_handle.as_ref(ctx).as_any().is::<LocalTtyManager>()
 }
 
 /// Share JUST the supplied `TerminalView`'s pane (no workspace iteration).

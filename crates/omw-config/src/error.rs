@@ -35,7 +35,7 @@ pub enum ConfigError {
     TomlEdit {
         path: std::path::PathBuf,
         #[source]
-        source: toml_edit::TomlError,
+        source: Box<toml_edit::TomlError>,
     },
 }
 

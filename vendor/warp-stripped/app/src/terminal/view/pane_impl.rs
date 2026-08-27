@@ -106,15 +106,7 @@ impl TerminalView {
         {
             let agent_state =
                 crate::ai_assistant::omw_agent_state::OmwAgentState::shared();
-            if let Some((event_loop_tx, pty_reads_tx, _)) =
-                crate::omw::pane_auto_share::local_io_handles_for(self, ctx)
-            {
-                let handle =
-                    crate::ai_assistant::omw_agent_state::ActiveTerminalHandle {
-                        view_id: self.view_id,
-                        event_loop_tx,
-                        pty_reads_tx,
-                    };
+            if let Some(handle) = self.omw_agent_terminal_handle(ctx) {
                 agent_state.register_pane_io(handle.clone());
                 if self.is_pane_focused(ctx) {
                     agent_state.register_active_terminal(handle);
@@ -424,6 +416,16 @@ impl TerminalView {
 
         let mut icon_button_count: u32 = 0;
 
+        #[cfg(feature = "omw_local")]
+        if let Some(button) = self.render_omw_phone_share_button(app) {
+            icon_button_count += 1;
+            left_of_overflow = Some(if let Some(existing) = left_of_overflow {
+                Flex::row().with_child(existing).with_child(button).finish()
+            } else {
+                button
+            });
+        }
+
         if FeatureFlag::CloudMode.is_enabled() {
             let ambient_agent_model = self.ambient_agent_view_model.as_ref(app);
             let button_element = if ambient_agent_model.is_ambient_agent()
@@ -616,6 +618,16 @@ impl BackingView for TerminalView {
         let mut items = vec![];
         let source = SharedSessionActionSource::PaneHeader;
 
+        #[cfg(feature = "omw_local")]
+        if let Some(presentation) = self.omw_phone_share_presentation(ctx) {
+            items.push(
+                MenuItemFields::new(presentation.label)
+                    .with_disabled(presentation.disabled)
+                    .with_on_select_action(TerminalAction::ToggleOmwPhoneShare)
+                    .into_item(),
+            );
+        }
+
         // Shared-session related items.
         let shared_session_status = model.shared_session_status();
         let is_ambient_agent = FeatureFlag::CloudMode.is_enabled()
@@ -685,8 +697,14 @@ impl BackingView for TerminalView {
             .is_sharer_or_viewer();
         let is_fullscreen_agent_view = FeatureFlag::AgentView.is_enabled()
             && self.agent_view_controller.as_ref(app).is_fullscreen();
+        #[cfg(feature = "omw_local")]
+        let has_omw_phone_action = self.is_omw_phone_shareable(app)
+            || crate::omw::OmwRemoteState::shared().is_pane_shared(self.view_id());
+        #[cfg(not(feature = "omw_local"))]
+        let has_omw_phone_action = false;
         is_shared
             || is_fullscreen_agent_view
+            || has_omw_phone_action
             || FeatureFlag::ContextWindowUsageV2.is_enabled()
                 && self.split_pane_state(app).is_in_split_pane()
     }
@@ -718,6 +736,50 @@ impl BackingView for TerminalView {
 }
 
 impl TerminalView {
+    #[cfg(feature = "omw_local")]
+    fn render_omw_phone_share_button(&self, app: &AppContext) -> Option<Box<dyn Element>> {
+        let presentation = self.omw_phone_share_presentation(app)?;
+        let appearance = Appearance::as_ref(app);
+        let theme = appearance.theme();
+        let ui_builder = appearance.ui_builder().clone();
+        let tooltip = presentation.tooltip.to_owned();
+
+        let button = icon_button_with_color(
+            appearance,
+            icons::Icon::Phone,
+            presentation.active,
+            self.omw_phone_share_mouse_state.clone(),
+            blended_colors::text_sub(theme, theme.background()).into(),
+        )
+        .with_tooltip(move || ui_builder.tool_tip(tooltip).build().finish());
+        let button = if presentation.disabled {
+            button.disabled()
+        } else {
+            button
+        };
+        let element = button
+            .build()
+            .on_click(|ctx, _, _| {
+                ctx.dispatch_typed_action::<PaneHeaderAction<TerminalAction, TerminalAction>>(
+                    PaneHeaderAction::CustomAction(TerminalAction::ToggleOmwPhoneShare),
+                );
+            })
+            .finish();
+
+        if FeatureFlag::AgentView.is_enabled()
+            && self.agent_view_controller.as_ref(app).is_fullscreen()
+        {
+            Some(
+                ConstrainedBox::new(element)
+                    .with_width(24.0)
+                    .with_height(24.0)
+                    .finish(),
+            )
+        } else {
+            Some(element)
+        }
+    }
+
     /// Render the cancel button for cancelling the ambient agent task while it's loading.
     fn render_ambient_agent_cancel_button(&self, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);

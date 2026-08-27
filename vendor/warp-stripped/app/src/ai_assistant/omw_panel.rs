@@ -16,14 +16,14 @@
 //! `render_omw_agent_panel` is the single entry point: panel.rs calls it
 //! instead of the old `is_omw_placeholder` text block. The render is
 //! mostly text rows; the Phase 4c4 approval card adds Approve/Reject
-//! buttons whose `on_click` handlers call into
-//! [`OmwAgentState::send_approval_decision`] directly (no view-context
-//! action plumbing needed because the agent state is a process-wide
-//! singleton).
+//! buttons whose `on_click` handlers dispatch a typed action to the owning
+//! panel, which routes the decision to the correct per-pane session.
 //!
 //! The L3a tests in `omw_agent_panel_test.rs` exercise
 //! `OmwAgentTranscriptModel::apply_event` directly and do not call into
 //! this render function, so the render only needs to compile cleanly.
+
+use std::collections::HashMap;
 
 use warpui::elements::{Align, Container, CrossAxisAlignment, Flex, MainAxisSize, MouseStateHandle, ParentElement, Shrinkable};
 use warpui::elements::Element;
@@ -33,22 +33,33 @@ use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use crate::appearance::Appearance;
 use super::omw_protocol::ApprovalDecision;
 use super::omw_transcript::{ApprovalCardStatus, OmwAgentMessage, OmwAgentTranscriptModel, ToolCallStatus};
-use super::omw_agent_state::OmwAgentState;
+use super::omw_agent_state::{OmwAgentState, OmwAgentStatus};
+use super::panel::AIAssistantAction;
 
 const BODY_FONT_SIZE: f32 = 13.;
 const PANEL_PADDING: f32 = 16.;
+
+/// Stable pointer state for one approval card. These handles must outlive a
+/// render: mouse-down can trigger a repaint before mouse-up, and recreating the
+/// handles during that repaint prevents the button from completing its click.
+#[derive(Clone, Default)]
+pub(crate) struct ApprovalButtonMouseStates {
+    approve: MouseStateHandle,
+    reject: MouseStateHandle,
+}
 
 /// Render the agent panel.
 ///
 /// Minimal v0 render: status line + transcript messages as text rows.
 /// Prompt editor and click handlers are scoped for Task 11.
-pub fn render_omw_agent_panel(
+pub(crate) fn render_omw_agent_panel(
     transcript: &OmwAgentTranscriptModel,
     appearance: &Appearance,
+    approval_mouse_states: &HashMap<String, ApprovalButtonMouseStates>,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
 
-    let status_text = format!("Agent status: {:?}", OmwAgentState::shared().status());
+    let status_text = format_agent_status(&OmwAgentState::shared().status());
 
     let mut col = Flex::column().with_main_axis_size(MainAxisSize::Min);
 
@@ -56,7 +67,7 @@ pub fn render_omw_agent_panel(
     col.add_child(
         appearance
             .ui_builder()
-            .wrappable_text(status_text, false)
+            .wrappable_text(status_text, true)
             .with_style(UiComponentStyles {
                 font_family_id: Some(appearance.ui_font_family()),
                 font_size: Some(BODY_FONT_SIZE),
@@ -79,7 +90,14 @@ pub fn render_omw_agent_panel(
             decision: ApprovalCardStatus::Pending,
         } = message
         {
-            col.add_child(render_approval_card(appearance, id, session_id, summary));
+            let mouse_states = approval_mouse_states.get(id).cloned().unwrap_or_default();
+            col.add_child(render_approval_card(
+                appearance,
+                id,
+                session_id,
+                summary,
+                mouse_states,
+            ));
             continue;
         }
 
@@ -105,6 +123,16 @@ pub fn render_omw_agent_panel(
             .finish(),
     )
     .finish()
+}
+
+pub(crate) fn format_agent_status(status: &OmwAgentStatus) -> String {
+    match status {
+        OmwAgentStatus::Idle => "Agent status: Idle".to_owned(),
+        OmwAgentStatus::Starting => "Agent status: Starting".to_owned(),
+        OmwAgentStatus::Connected { .. } => "Agent status: Connected".to_owned(),
+        OmwAgentStatus::Streaming { .. } => "Agent status: Streaming".to_owned(),
+        OmwAgentStatus::Failed { error } => format!("Agent status: Failed - {error}"),
+    }
 }
 
 fn format_message_summary(message: &OmwAgentMessage) -> String {
@@ -133,18 +161,15 @@ fn format_message_summary(message: &OmwAgentMessage) -> String {
 }
 
 /// Render the approval card row for a pending decision. Two buttons —
-/// `Approve` and `Reject` — call into the kernel session that issued the
-/// `approval/request`. When that session is a per-pane `# foo` session
-/// the decision routes via [`PaneSession::send_approval_decision`]; the
-/// AI-panel singleton session falls back to
-/// [`OmwAgentState::send_approval_decision`]. We don't optimistically
-/// update the local transcript model here; the kernel resolves the
-/// decision and the next turn surfaces any follow-up state.
+/// `Approve` and `Reject` — dispatch a typed action to the owning panel.
+/// The panel sends the decision on the correct session and synchronously
+/// marks the card resolved, which also makes rapid duplicate clicks no-ops.
 fn render_approval_card(
     appearance: &Appearance,
     approval_id: &str,
     session_id: &str,
     summary: &str,
+    mouse_states: ApprovalButtonMouseStates,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
     let summary_text = format!("Approval needed: {}", summary);
@@ -165,11 +190,15 @@ fn render_approval_card(
     let approve_session = session_id.to_string();
     let approve_btn = appearance
         .ui_builder()
-        .button(ButtonVariant::Accent, MouseStateHandle::default())
+        .button(ButtonVariant::Accent, mouse_states.approve)
         .with_text_label("Approve".to_owned())
         .build()
-        .on_click(move |_ctx, _app, _pt| {
-            send_decision(&approve_session, &approve_id, ApprovalDecision::Approve);
+        .on_click(move |ctx, _app, _pt| {
+            ctx.dispatch_typed_action(AIAssistantAction::OmwApprovalDecision {
+                session_id: approve_session.clone(),
+                approval_id: approve_id.clone(),
+                decision: ApprovalDecision::Approve,
+            });
         })
         .finish();
 
@@ -177,17 +206,22 @@ fn render_approval_card(
     let reject_session = session_id.to_string();
     let reject_btn = appearance
         .ui_builder()
-        .button(ButtonVariant::Text, MouseStateHandle::default())
+        .button(ButtonVariant::Text, mouse_states.reject)
         .with_text_label("Reject".to_owned())
         .build()
-        .on_click(move |_ctx, _app, _pt| {
-            send_decision(&reject_session, &reject_id, ApprovalDecision::Reject);
+        .on_click(move |ctx, _app, _pt| {
+            ctx.dispatch_typed_action(AIAssistantAction::OmwApprovalDecision {
+                session_id: reject_session.clone(),
+                approval_id: reject_id.clone(),
+                decision: ApprovalDecision::Reject,
+            });
         })
         .finish();
 
-    let buttons = Flex::row()
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_child(Container::new(approve_btn).with_margin_right(8.).finish())
+    let buttons = Flex::column()
+        .with_main_axis_size(MainAxisSize::Min)
+        .with_cross_axis_alignment(CrossAxisAlignment::Start)
+        .with_child(Container::new(approve_btn).with_margin_bottom(6.).finish())
         .with_child(reject_btn);
 
     Container::new(
@@ -200,20 +234,4 @@ fn render_approval_card(
     .with_margin_top(6.)
     .with_margin_bottom(6.)
     .finish()
-}
-
-/// Pick the right WS for the approval and dispatch the decision. Per-pane
-/// sessions own their own outbound mpsc (each `# foo` flow); the
-/// singleton [`OmwAgentState`] outbound is only correct for the AI-panel
-/// session. Looking up by `session_id` ensures the kernel session that
-/// asked for approval is the one that hears the answer.
-fn send_decision(session_id: &str, approval_id: &str, decision: ApprovalDecision) {
-    let state = OmwAgentState::shared();
-    let result = match state.pane_session_by_id(session_id) {
-        Some((_, pane)) => pane.send_approval_decision(approval_id.to_string(), decision),
-        None => state.send_approval_decision(approval_id.to_string(), decision),
-    };
-    if let Err(e) = result {
-        log::warn!("omw approval: send decision failed: {e}");
-    }
 }

@@ -365,7 +365,6 @@ use crate::workspace::sync_inputs::SyncedInputState;
 use crate::workspace::toast_stack::{
     ToastStack as WorkspaceToastStack, ToastStackEvent as WorkspaceToastStackEvent,
 };
-#[cfg(not(feature = "omw_local"))]
 use crate::ai_assistant::panel::AIAssistantPanelEvent;
 use crate::{
     ai_assistant::{
@@ -546,6 +545,27 @@ const TAB_BAR_ICON_PADDING: f32 = 4.;
 
 const TAB_BAR_PILL_WIDTH: f32 = 100.;
 const PILL_FONT_SIZE: f32 = 12.;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SettingsToggleIntent {
+    Open,
+    Focus(PaneViewLocator),
+    Close(PaneViewLocator),
+}
+
+fn settings_toggle_intent(
+    locator: Option<PaneViewLocator>,
+    active_pane_group_id: EntityId,
+) -> SettingsToggleIntent {
+    match locator {
+        None => SettingsToggleIntent::Open,
+        Some(locator) if locator.pane_group_id == active_pane_group_id => {
+            SettingsToggleIntent::Close(locator)
+        }
+        Some(locator) => SettingsToggleIntent::Focus(locator),
+    }
+}
+
 // We use the word "Warp" in the Update Ready button to make it obvious that the terminal is Warp.
 // This can lead to free advertising when users screen-share Warp when an update is available.
 // omw_local builds rebrand per CLAUDE.md §5 — the literal `Warp` wordmark is forbidden in
@@ -1528,9 +1548,19 @@ impl Workspace {
         server_api: Arc<ServerApi>,
         ai_client: Arc<dyn AIClient>,
     ) -> ViewHandle<AIAssistantPanelView> {
-        ctx.add_typed_action_view(|ctx| {
+        let ai_assistant_panel = ctx.add_typed_action_view(|ctx| {
             AIAssistantPanelView::new_omw_panel(server_api, ai_client, ctx)
-        })
+        });
+
+        ctx.subscribe_to_view(&ai_assistant_panel, |me, _, event, ctx| {
+            if matches!(event, AIAssistantPanelEvent::ClosePanel) {
+                me.current_workspace_state.is_ai_assistant_panel_open = false;
+                me.focus_active_tab(ctx);
+                ctx.notify();
+            }
+        });
+
+        ai_assistant_panel
     }
 
     fn build_resource_center_view(
@@ -4381,6 +4411,7 @@ impl Workspace {
     }
 
     fn toggle_ai_assistant_panel(&mut self, ctx: &mut ViewContext<Self>) {
+        #[cfg(not(feature = "omw_local"))]
         if !ChannelState::official_cloud_services_enabled() {
             return;
         }
@@ -9631,6 +9662,24 @@ impl Workspace {
         };
         pane_group_view.update(ctx, |pane_group, ctx| {
             pane_group.close_pane(pane_id, ctx);
+        });
+    }
+
+    fn close_pane_with_confirmation(
+        &mut self,
+        locator: PaneViewLocator,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(pane_group_view) = self.get_pane_group_view_with_id(locator.pane_group_id) else {
+            log::warn!("Tried to close a pane in a missing pane group");
+            return;
+        };
+        pane_group_view.update(ctx, |pane_group, ctx| {
+            if pane_group.pane_by_id(locator.pane_id).is_none() {
+                log::warn!("Tried to close a missing pane");
+                return;
+            }
+            pane_group.close_pane_with_confirmation(locator.pane_id, ctx);
         });
     }
 
@@ -15503,6 +15552,27 @@ impl Workspace {
         self.show_settings_with_section(None, ctx);
     }
 
+    fn toggle_settings(&mut self, ctx: &mut ViewContext<Self>) {
+        self.close_all_overlays(ctx);
+        let locator = SettingsPaneManager::handle(ctx)
+            .as_ref(ctx)
+            .find_pane(ctx.window_id());
+        match settings_toggle_intent(locator, self.active_tab_pane_group().id()) {
+            SettingsToggleIntent::Open => self.open_settings_pane(None, None, ctx),
+            SettingsToggleIntent::Focus(locator) => self.focus_pane(locator, ctx),
+            SettingsToggleIntent::Close(locator) => {
+                self.close_pane_with_confirmation(locator, ctx)
+            }
+        }
+    }
+
+    fn settings_pane_is_in_active_tab(&self, app: &AppContext) -> bool {
+        SettingsPaneManager::handle(app)
+            .as_ref(app)
+            .find_pane(self.window_id)
+            .is_some_and(|locator| locator.pane_group_id == self.active_tab_pane_group().id())
+    }
+
     fn show_settings_with_section(
         &mut self,
         section: Option<SettingsSection>,
@@ -17404,13 +17474,18 @@ impl Workspace {
             }
         }
 
-        // Legacy AI assistant button (non-agent-mode only)
-        if is_online
-            && ChannelState::official_cloud_services_enabled()
-            && !FeatureFlag::AgentMode.is_enabled()
-            && !is_web_anonymous_user
-            && !self.current_workspace_state.is_ai_assistant_panel_open
-        {
+        // The omw-local assistant is local even when official cloud services are
+        // disabled, and remains its approval surface when Agent Mode is enabled.
+        let should_show_legacy_ai_assistant = if cfg!(feature = "omw_local") {
+            !self.current_workspace_state.is_ai_assistant_panel_open
+        } else {
+            is_online
+                && ChannelState::official_cloud_services_enabled()
+                && !FeatureFlag::AgentMode.is_enabled()
+                && !is_web_anonymous_user
+                && !self.current_workspace_state.is_ai_assistant_panel_open
+        };
+        if should_show_legacy_ai_assistant {
             target.add_child(
                 Container::new(
                     SavePosition::new(
@@ -17444,7 +17519,7 @@ impl Workspace {
             }
 
             target.add_child(
-                Container::new(self.render_settings_button(appearance))
+                Container::new(self.render_settings_button(appearance, ctx))
                     .with_margin_left(TAB_BAR_PADDING_LEFT)
                     .finish(),
             );
@@ -17472,18 +17547,15 @@ impl Workspace {
         let zoom_factor = WindowSettings::as_ref(ctx).zoom_level.as_zoom_factor();
         let traffic_light_data = traffic_light_data(ctx, self.window_id);
         if let Some(traffic_light_data) = traffic_light_data.as_ref() {
-            let vertical_tabs_active = FeatureFlag::VerticalTabs.is_enabled()
-                && *TabSettings::as_ref(ctx).use_vertical_tabs;
-            let right_panel_open = self.current_workspace_state.is_right_panel_open();
-            let should_reserve_right_traffic_light_space =
-                vertical_tabs_active || !right_panel_open;
-
-            if traffic_light_data.side == TrafficLightSide::Right
-                && should_reserve_right_traffic_light_space
-            {
+            // Native caption controls remain anchored to the full window. A
+            // right-side panel must not release their tab-bar safe area.
+            if let Some(reserved_width) = right_traffic_light_reserved_width(
+                traffic_light_data.side,
+                traffic_light_data.width(zoom_factor),
+            ) {
                 target.add_child(
                     ConstrainedBox::new(Empty::new().finish())
-                        .with_width(traffic_light_data.width(zoom_factor))
+                        .with_width(reserved_width)
                         .finish(),
                 );
             }
@@ -17886,16 +17958,20 @@ impl Workspace {
         Align::new(button).finish()
     }
 
-    fn render_settings_button(&self, appearance: &Appearance) -> Box<dyn Element> {
+    fn render_settings_button(
+        &self,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
         Align::new(
             self.render_tab_bar_icon_button(
                 appearance,
                 icons::Icon::Gear,
                 &self.mouse_states.settings_icon,
-                WorkspaceAction::ShowSettings,
+                WorkspaceAction::ToggleSettings,
                 "Settings".to_string(),
                 self.cached_keybindings[SHOW_SETTINGS_KEYBINDING_NAME].clone(),
-                false,
+                self.settings_pane_is_in_active_tab(app),
                 false,
             )
             .finish(),
@@ -19784,6 +19860,14 @@ fn is_omw_local_hidden_settings_section(_section: Option<SettingsSection>) -> bo
 fn is_official_cloud_workspace_action(action: &WorkspaceAction) -> bool {
     use WorkspaceAction::*;
 
+    // The omw agent panel intentionally reuses these two legacy workspace
+    // actions while being backed exclusively by the local agent state. They
+    // must remain dispatchable even though official cloud services are off.
+    #[cfg(feature = "omw_local")]
+    if matches!(action, ClickedAIAssistantIcon | ToggleAIAssistant) {
+        return false;
+    }
+
     // NOTE: autoupdate-related actions (AutoupdateFailureLink, ApplyUpdate,
     // DownloadNewVersion, CheckForUpdate) are intentionally NOT in this list.
     // They go through omw's own GitHub-Releases autoupdate path
@@ -19946,6 +20030,7 @@ impl TypedActionView for Workspace {
             ToggleTabBarOverflowMenu => self.toggle_tab_bar_overflow_menu(ctx),
             ToggleBlockSnackbar => self.toggle_block_snackbar(ctx),
             ToggleWelcomeTips => self.toggle_welcome_tips_visiblity(ctx),
+            ClosePane(locator) => self.close_pane_with_confirmation(*locator, ctx),
             CloseTab(index) => self.close_tab(*index, false, true, ctx),
             CloseActiveTab => self.close_tab(self.active_tab_index, false, true, ctx),
             CloseOtherTabs(index) => self.close_other_tabs(*index, false, ctx),
@@ -20220,6 +20305,7 @@ impl TypedActionView for Workspace {
             ConfigureKeybindingSettings { keybinding_name } => {
                 self.show_keyboard_settings(keybinding_name.as_deref(), ctx)
             }
+            ToggleSettings => self.toggle_settings(ctx),
             ShowSettings => self.show_settings(ctx),
             ShowSettingsPage(section) => self.show_settings_with_section(Some(*section), ctx),
             ShowSettingsPageWithSearch {
@@ -20801,7 +20887,7 @@ impl TypedActionView for Workspace {
                 );
             }
             ClickedAIAssistantIcon => {
-                if !FeatureFlag::AgentMode.is_enabled() {
+                if cfg!(feature = "omw_local") || !FeatureFlag::AgentMode.is_enabled() {
                     self.toggle_ai_assistant_panel(ctx);
                     if self.current_workspace_state.is_ai_assistant_panel_open {
                         send_telemetry_from_ctx!(
@@ -23217,6 +23303,10 @@ impl View for Workspace {
             active_session.close_workspace(window_id);
         })
     }
+}
+
+fn right_traffic_light_reserved_width(side: TrafficLightSide, width: f32) -> Option<f32> {
+    (side == TrafficLightSide::Right).then_some(width)
 }
 
 fn compute_default_panel_widths(

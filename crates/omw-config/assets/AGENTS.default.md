@@ -29,6 +29,7 @@ reading over guessing. Check exit codes. Quote paths with spaces.
 ## Editing this prompt
 
 This file is your system prompt, loaded on every agent session. Edit
-`~/Library/Application Support/omw.local.warpOss/AGENTS.md` directly, or
+the canonical `AGENTS.md` shown in Settings (under `%LOCALAPPDATA%` on
+Windows or `~/Library/Application Support` on macOS) directly, or
 point Settings → Agent → "AGENTS.md source path" at your own file. Changes
 take effect on the next session.

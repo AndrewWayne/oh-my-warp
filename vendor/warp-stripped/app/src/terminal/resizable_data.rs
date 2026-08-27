@@ -9,7 +9,7 @@ use warpui::WindowId;
 use crate::app_state::WindowSnapshot;
 
 pub const DEFAULT_UNIVERSAL_SEARCH_WIDTH: f32 = 700.;
-pub const DEFAULT_WARP_AI_WIDTH: f32 = 410.;
+pub const DEFAULT_WARP_AI_WIDTH: f32 = 360.;
 pub const DEFAULT_VOLTRON_WIDTH: f32 = 700.;
 pub const DEFAULT_WARP_DRIVE_INDEX_WIDTH: f32 = 300.;
 pub const DEFAULT_SETTINGS_PANEL_WIDTH: f32 = 194.;

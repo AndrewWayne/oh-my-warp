@@ -22,13 +22,15 @@ fn unparseable_input_returns_none() {
     assert!(derive_http_origin_from_ws_url("https://app.warp.dev").is_none());
 }
 
-/// Regression guard for the v0.0.6/v0.0.7/v0.0.8 inert-autoupdate bug.
+/// Regression guard for the explicit omw_local update surface.
 ///
-/// Mirrors what `bin/oss.rs::main` does for the additional-features wiring:
+/// Exercises the `OMW_LOCAL_FLAGS` half of the wiring used by `bin/oss.rs`:
 /// take a fresh `ChannelState` and call `with_additional_features(OMW_LOCAL_FLAGS)`.
-/// If anyone drops that call from the binary or removes `Autoupdate` from
-/// `OMW_LOCAL_FLAGS`, this test fails. Operates on the local state instance
-/// rather than the global via `ChannelState::set`, so the test is parallel-safe.
+/// If anyone removes `Autoupdate` from that slice, this test fails. Operates on
+/// the local state instance rather than the global via `ChannelState::set`, so
+/// the test is parallel-safe. The flag keeps the command/apply update bindings
+/// available; it does not enable background polling, which is controlled by
+/// `AppExecutionMode::can_autoupdate`.
 #[cfg(feature = "omw_local")]
 #[test]
 fn omw_local_channel_state_enables_autoupdate() {
@@ -38,7 +40,7 @@ fn omw_local_channel_state_enables_autoupdate() {
             .additional_features_set()
             .contains(&FeatureFlag::Autoupdate),
         "omw_local builds must wire Autoupdate into ChannelState::additional_features \
-         via OMW_LOCAL_FLAGS; without it, the poll loop at autoupdate/mod.rs::register \
-         and the workspace:check_for_updates binding never start."
+         via OMW_LOCAL_FLAGS; without it, the workspace:check_for_updates and \
+         update-apply bindings never register."
     );
 }

@@ -51,18 +51,40 @@ pub const DEFAULT_AGENTS_MD: &str = include_str!("../assets/AGENTS.default.md");
 /// Resolve the canonical AGENTS.md path used by the inline agent.
 ///
 /// Resolution order: `OMW_AGENTS_MD_PATH` env var (if non-empty) →
-/// `~/Library/Application Support/omw.local.warpOss/AGENTS.md` (macOS).
-/// Mirrors the `OMW_CONFIG` override pattern from [`config_path`] —
-/// tests + power users can redirect with the env var.
+/// the platform app-data directory:
 ///
-/// The canonical path matches the app data dir from `CLAUDE.md §5.1`.
-/// Linux/Windows resolution is deferred until those targets ship.
+/// - Windows: `%LOCALAPPDATA%\omw.local.warpOss\AGENTS.md`
+/// - other platforms: `~/Library/Application Support/omw.local.warpOss/AGENTS.md`
+///
+/// Mirrors the `OMW_CONFIG` override pattern from [`config_path`] — tests
+/// and power users can redirect with the env var. On Windows, a missing or
+/// empty `LOCALAPPDATA` falls back to `%USERPROFILE%\AppData\Local`.
 pub fn agents_md_path() -> Result<PathBuf, ConfigError> {
     if let Some(p) = std::env::var_os("OMW_AGENTS_MD_PATH") {
         if !p.is_empty() {
             return Ok(PathBuf::from(p));
         }
     }
+
+    default_agents_md_path()
+}
+
+#[cfg(windows)]
+fn default_agents_md_path() -> Result<PathBuf, ConfigError> {
+    let app_data = match std::env::var_os("LOCALAPPDATA") {
+        Some(path) if !path.is_empty() => PathBuf::from(path),
+        _ => match std::env::var_os("USERPROFILE") {
+            Some(path) if !path.is_empty() => PathBuf::from(path),
+            _ => home_dir()?,
+        }
+        .join("AppData")
+        .join("Local"),
+    };
+    Ok(app_data.join("omw.local.warpOss").join("AGENTS.md"))
+}
+
+#[cfg(not(windows))]
+fn default_agents_md_path() -> Result<PathBuf, ConfigError> {
     Ok(home_dir()?
         .join("Library")
         .join("Application Support")

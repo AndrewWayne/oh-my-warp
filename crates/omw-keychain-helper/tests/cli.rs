@@ -194,15 +194,14 @@ fn t5_no_subcommand() {
     );
 }
 
-/// Backend-unavailable applies on platforms with no OS-keychain impl
-/// (Windows, as of the Linux Secret Service support added in #68).
-/// Skipped on macOS and Linux because the OS backend exists there — on
+/// Backend-unavailable applies on platforms with no OS-keychain impl.
+/// Skipped on macOS, Linux, and Windows because the OS backend exists there — on
 /// Linux the outcome depends on whether a Secret Service daemon is
 /// reachable (headless CI: `Os` error; desktop session: `NotFound`),
 /// so there is no single result to assert.
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 #[test]
-fn t6_backend_unavailable_on_linux_windows() {
+fn t6_backend_unavailable_on_unsupported_platform() {
     let assert = helper()
         .env("OMW_KEYCHAIN_BACKEND", "os")
         .args(["get", "keychain:omw/x"])

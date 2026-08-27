@@ -33,7 +33,9 @@ use crate::send_telemetry_from_ctx;
 use crate::server::server_api::ai::AIClient;
 use crate::server::server_api::ServerApi;
 use crate::server::telemetry::{TelemetryEvent, WarpAIActionType};
-use crate::terminal::resizable_data::{ModalType, ResizableData, DEFAULT_WARP_AI_WIDTH};
+use crate::terminal::resizable_data::{
+    ModalType, ResizableData, DEFAULT_LEFT_PANEL_WIDTH, DEFAULT_WARP_AI_WIDTH,
+};
 use crate::ui_components::blended_colors;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 
@@ -60,8 +62,12 @@ pub const HEXAGON_ALERT_SVG_PATH: &str = "bundled/svg/alert-hexagon.svg";
 
 const EDITOR_SAVE_POSITION_ID: &str = "ai_assistant::editor";
 
-const MIN_PANEL_WIDTH: f32 = 300.;
-const MIN_REMAINING_WINDOW_SIZE: f32 = 200.;
+const MIN_PANEL_WIDTH: f32 = 120.;
+const MAX_PANEL_WIDTH: f32 = 600.;
+const MAX_PANEL_WINDOW_FRACTION: f32 = 0.45;
+const MIN_MAIN_WORKSPACE_WIDTH: f32 = 480.;
+const PANEL_DRAGBAR_WIDTH: f32 = 8.;
+const PANEL_DRAGBAR_VISUAL_WIDTH: f32 = 1.;
 const MAX_EDITOR_HEIGHT: f32 = 300.;
 const MAX_INPUT_SUGGESTIONS_HEIGHT: f32 = 200.;
 
@@ -83,6 +89,27 @@ const FILES_ZERO_STATE_PROMPT: &str = "How do I find all files containing specif
 // The placeholder texts are prepended with a space to give them cushion from the cursor.
 const INIT_PLACEHOLDER_TEXT: &str = " Ask a question...";
 const FOLLOWUP_PLACEHOLDER_TEXT: &str = " Type a response or click one above...";
+
+fn ai_assistant_panel_width_bounds(window_width: f32) -> (f32, f32) {
+    let window_width = if window_width.is_finite() {
+        window_width.max(0.)
+    } else {
+        0.
+    };
+
+    // The callback receives the full window width. Reserving the default left
+    // panel as well as a useful main surface keeps a terminal usable in the
+    // common explorer + terminal + Agent layout.
+    let max_for_remaining_workspace =
+        window_width - DEFAULT_LEFT_PANEL_WIDTH - MIN_MAIN_WORKSPACE_WIDTH;
+    let max_width = MAX_PANEL_WIDTH
+        .min(window_width * MAX_PANEL_WINDOW_FRACTION)
+        .min(max_for_remaining_workspace)
+        .max(MIN_PANEL_WIDTH);
+
+    (MIN_PANEL_WIDTH, max_width)
+}
+
 const RESTART_BUTTON_TEXT: &str = "Restart";
 
 const ASK_AI_BLOCK_INPUT_LIMIT: usize = 100;
@@ -136,6 +163,11 @@ pub struct AIAssistantPanelView {
     /// Transcript model for the omw agent panel. Populated by `new_omw_panel`.
     #[cfg(feature = "omw_local")]
     omw_agent_transcript: super::omw_transcript::OmwAgentTranscriptModel,
+    /// Stable pointer state keyed by approval id. Button handles cannot be
+    /// recreated on every render because mouse-down itself may repaint.
+    #[cfg(feature = "omw_local")]
+    omw_approval_mouse_states:
+        std::collections::HashMap<String, super::omw_panel::ApprovalButtonMouseStates>,
 }
 
 #[derive(Debug, Clone)]
@@ -148,6 +180,12 @@ pub enum AIAssistantAction {
     CopyAnswerToClipboard(Arc<String>),
     FocusTerminalInput,
     FocusEditor,
+    #[cfg(feature = "omw_local")]
+    OmwApprovalDecision {
+        session_id: String,
+        approval_id: String,
+        decision: super::omw_protocol::ApprovalDecision,
+    },
 }
 
 pub fn init(app: &mut AppContext) {
@@ -260,6 +298,8 @@ impl AIAssistantPanelView {
             is_omw_placeholder: false,
             #[cfg(feature = "omw_local")]
             omw_agent_transcript: super::omw_transcript::OmwAgentTranscriptModel::new(),
+            #[cfg(feature = "omw_local")]
+            omw_approval_mouse_states: Default::default(),
         };
 
         panel.tick(ctx);
@@ -281,13 +321,63 @@ impl AIAssistantPanelView {
     ) -> Self {
         let mut panel = Self::new(server_api, ai_client, ctx);
         panel.is_omw_placeholder = true;
+        let agent_state = super::omw_agent_state::OmwAgentState::shared();
+        // Subscribe before starting the singleton session so an immediate
+        // connection/error event cannot race past the panel. Per-pane agent
+        // sessions also mirror their events onto this long-lived global bus,
+        // which lets inline `# prompt` approval cards appear here.
+        panel.pump_omw_agent_events(agent_state.subscribe_events(), ctx);
         // Best-effort session start. Panel mounts cleanly even if config is
         // missing or the agent is disabled — the transcript stays empty until
         // a session is established.
-        if let Err(e) = super::omw_agent_state::OmwAgentState::shared().start_with_config() {
+        if let Err(e) = agent_state.start_with_config() {
             log::debug!("omw agent start_with_config: {e}");
         }
         panel
+    }
+
+    /// Keep the omw transcript synchronized with the process-wide inbound
+    /// agent event bus. `broadcast::Receiver::recv` is runtime-independent,
+    /// so it can be awaited by the UI executor without blocking the render
+    /// thread. Re-arm after every event to hand mutation back to the view
+    /// context and request a repaint.
+    #[cfg(feature = "omw_local")]
+    fn pump_omw_agent_events(
+        &self,
+        mut events: tokio::sync::broadcast::Receiver<super::omw_protocol::OmwAgentEventDown>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        ctx.spawn(
+            async move {
+                loop {
+                    match events.recv().await {
+                        Ok(event) => return Some((events, event)),
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            log::warn!(
+                                "omw agent panel: skipped {skipped} transcript event(s)"
+                            );
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                    }
+                }
+            },
+            |view, next, ctx| {
+                let Some((events, event)) = next else {
+                    return;
+                };
+                if let super::omw_protocol::OmwAgentEventDown::ApprovalRequest {
+                    approval_id, ..
+                } = &event
+                {
+                    view.omw_approval_mouse_states
+                        .entry(approval_id.clone())
+                        .or_default();
+                }
+                view.omw_agent_transcript.apply_event(&event);
+                ctx.notify();
+                view.pump_omw_agent_events(events, ctx);
+            },
+        );
     }
 
     /// Kept for call-site compatibility while callers are migrated.
@@ -745,6 +835,47 @@ impl AIAssistantPanelView {
 
 /// All rendering related capabilities.
 impl AIAssistantPanelView {
+    fn render_resizable_panel(
+        &self,
+        panel: Box<dyn Element>,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        Resizable::new(self.resizable_state_handle.clone(), panel)
+            .on_resize(move |ctx, _| ctx.notify())
+            .with_dragbar_side(DragBarSide::Left)
+            .with_dragbar_width(PANEL_DRAGBAR_WIDTH)
+            .with_dragbar_visual_width(PANEL_DRAGBAR_VISUAL_WIDTH)
+            .with_dragbar_offset(PANEL_DRAGBAR_WIDTH / 2.)
+            .with_dragbar_color(Fill::Solid(appearance.theme().outline().into_solid()))
+            .with_dragbar_hover_color(Fill::Solid(appearance.theme().accent().into_solid()))
+            .with_bounds_callback(Box::new(|window_bounds| {
+                ai_assistant_panel_width_bounds(window_bounds.x())
+            }))
+            .finish()
+    }
+
+    fn render_close_button(&self, appearance: &Appearance) -> Box<dyn Element> {
+        icon_button(
+            appearance,
+            crate::ui_components::icons::Icon::X,
+            false,
+            self.mouse_state_handles.close_panel_state.clone(),
+        )
+        .build()
+        .on_click(|ctx, _, _| ctx.dispatch_typed_action(AIAssistantAction::ClosePanel))
+        .with_cursor(Cursor::PointingHand)
+        .finish()
+    }
+
+    #[cfg(feature = "omw_local")]
+    fn render_omw_title_bar(&self, appearance: &Appearance) -> Box<dyn Element> {
+        Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_child(Shrinkable::new(1., Empty::new().finish()).finish())
+            .with_child(self.render_close_button(appearance))
+            .finish()
+    }
+
     fn render_title_bar(&self, appearance: &Appearance, app: &AppContext) -> Box<dyn Element> {
         let mut header = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -798,19 +929,7 @@ impl AIAssistantPanelView {
 
         // Add the close button
         header.add_child(
-            Container::new(
-                icon_button(
-                    appearance,
-                    crate::ui_components::icons::Icon::X,
-                    false,
-                    self.mouse_state_handles.close_panel_state.clone(),
-                )
-                .build()
-                .on_click(|ctx, _, _| ctx.dispatch_typed_action(AIAssistantAction::ClosePanel))
-                .with_cursor(Cursor::PointingHand)
-                .finish(),
-            )
-            .finish(),
+            Container::new(self.render_close_button(appearance)).finish(),
         );
 
         header.finish()
@@ -1112,6 +1231,51 @@ impl TypedActionView for AIAssistantPanelView {
                 self.focus_state = PanelFocusState::Editor;
                 ctx.focus_self();
             }
+            #[cfg(feature = "omw_local")]
+            OmwApprovalDecision {
+                session_id,
+                approval_id,
+                decision,
+            } => {
+                // The action can be queued more than once by a rapid
+                // double-click. Once the first send succeeds, update the
+                // model synchronously so every later action becomes a no-op
+                // before it can reach the kernel.
+                if !self
+                    .omw_agent_transcript
+                    .is_approval_pending(approval_id)
+                {
+                    return;
+                }
+
+                let state = super::omw_agent_state::OmwAgentState::shared();
+                let result = match state.pane_session_by_id(session_id) {
+                    Some((_, pane)) => {
+                        pane.send_approval_decision(approval_id.clone(), *decision)
+                    }
+                    None => state.send_approval_decision(approval_id.clone(), *decision),
+                };
+                match result {
+                    Ok(()) => {
+                        let status = match decision {
+                            super::omw_protocol::ApprovalDecision::Approve => {
+                                super::omw_transcript::ApprovalCardStatus::Approved
+                            }
+                            super::omw_protocol::ApprovalDecision::Reject => {
+                                super::omw_transcript::ApprovalCardStatus::Rejected
+                            }
+                            super::omw_protocol::ApprovalDecision::Cancel => {
+                                super::omw_transcript::ApprovalCardStatus::Cancelled
+                            }
+                        };
+                        self.omw_agent_transcript
+                            .update_approval(approval_id, status);
+                        self.omw_approval_mouse_states.remove(approval_id);
+                        ctx.notify();
+                    }
+                    Err(e) => log::warn!("omw approval: send decision failed: {e}"),
+                }
+            }
         }
     }
 }
@@ -1145,10 +1309,29 @@ impl View for AIAssistantPanelView {
 
         #[cfg(feature = "omw_local")]
         if self.is_omw_placeholder {
-            return super::omw_panel::render_omw_agent_panel(
-                &self.omw_agent_transcript,
-                appearance,
-            );
+            let panel = Flex::column()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_child(
+                    ConstrainedBox::new(
+                        Container::new(self.render_omw_title_bar(appearance))
+                            .with_padding_top(HEADER_VERTICAL_PADDING)
+                            .with_padding_bottom(HEADER_VERTICAL_PADDING)
+                            .with_padding_left(PANEL_HORIZONTAL_PADDING)
+                            .with_padding_right(PANEL_HORIZONTAL_PADDING)
+                            .finish(),
+                    )
+                    .with_height(HEADER_HEIGHT)
+                    .finish(),
+                )
+                .with_child(Box::new(Shrinkable::new(
+                    1.,
+                    super::omw_panel::render_omw_agent_panel(
+                        &self.omw_agent_transcript,
+                        appearance,
+                        &self.omw_approval_mouse_states,
+                    ),
+                )));
+            return self.render_resizable_panel(panel.finish(), appearance);
         }
 
         let mut panel = Flex::column().with_main_axis_size(MainAxisSize::Max);
@@ -1230,18 +1413,57 @@ impl View for AIAssistantPanelView {
                 DispatchEventResult::StopPropagation
             });
 
-        Resizable::new(
-            self.resizable_state_handle.clone(),
-            clickable_panel.finish(),
-        )
-        .on_resize(move |ctx, _| ctx.notify())
-        .with_dragbar_side(DragBarSide::Left)
-        .with_bounds_callback(Box::new(|window_bounds| {
-            (
-                MIN_PANEL_WIDTH,
-                (window_bounds.x() - MIN_REMAINING_WINDOW_SIZE).max(MIN_PANEL_WIDTH),
-            )
-        }))
-        .finish()
+        self.render_resizable_panel(clickable_panel.finish(), appearance)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn panel_width_contract_uses_compact_defaults() {
+        assert_eq!(DEFAULT_WARP_AI_WIDTH, 360.);
+        assert_eq!(MIN_PANEL_WIDTH, 120.);
+        assert_eq!(MAX_PANEL_WIDTH, 600.);
+    }
+
+    #[test]
+    fn panel_width_is_capped_on_large_windows() {
+        assert_eq!(
+            ai_assistant_panel_width_bounds(2304.),
+            (MIN_PANEL_WIDTH, MAX_PANEL_WIDTH)
+        );
+    }
+
+    #[test]
+    fn panel_width_preserves_the_main_workspace() {
+        assert_eq!(
+            ai_assistant_panel_width_bounds(1280.),
+            (MIN_PANEL_WIDTH, 560.)
+        );
+        assert_eq!(
+            ai_assistant_panel_width_bounds(1024.),
+            (MIN_PANEL_WIDTH, 304.)
+        );
+    }
+
+    #[test]
+    fn panel_width_clamps_restored_values_but_keeps_valid_preferences() {
+        let (min, max) = ai_assistant_panel_width_bounds(2304.);
+        assert_eq!(1260_f32.clamp(min, max), MAX_PANEL_WIDTH);
+        assert_eq!(DEFAULT_WARP_AI_WIDTH.clamp(min, max), DEFAULT_WARP_AI_WIDTH);
+    }
+
+    #[test]
+    fn panel_width_keeps_safe_bounds_for_invalid_or_narrow_windows() {
+        for width in [640., -1., f32::NAN, f32::INFINITY] {
+            assert_eq!(
+                ai_assistant_panel_width_bounds(width),
+                (MIN_PANEL_WIDTH, MIN_PANEL_WIDTH)
+            );
+        }
+
+        assert_eq!(ai_assistant_panel_width_bounds(960.), (120., 240.));
     }
 }

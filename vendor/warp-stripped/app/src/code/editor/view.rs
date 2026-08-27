@@ -6,8 +6,10 @@ use crate::code::editor::{
     comments::PendingComment,
     diff::DiffStatus,
     element::{
-        AddAsContextButton, CommentButton, EditorWrapper, EditorWrapperStateHandle,
-        GutterHoverTarget, GutterRange, InnerEditor, LineNumberConfig, RevertHunkButton,
+        gutter_button_width, line_number_gutter_width, line_number_text_width, AddAsContextButton,
+        CommentButton, EditorWrapper, EditorWrapperStateHandle, GutterHoverTarget, GutterRange,
+        InnerEditor, LineNumberConfig, RevertHunkButton,
+        VERTICAL_DIFF_HUNK_INDICATOR_HOVERED_WIDTH,
     },
     find::view::{CodeEditorFind as Find, Event as FindViewEvent},
     goto_line::view::{Event as GoToLineEvent, GoToLineView},
@@ -75,6 +77,7 @@ use warpui::{
         ScrollStateHandle, Shrinkable, Stack,
     },
     event::ModifiersState,
+    fonts::Properties,
     keymap::Keystroke,
     platform::Cursor,
     prelude::RectF,
@@ -83,6 +86,38 @@ use warpui::{
     AppContext, BlurContext, Element, Entity, FocusContext, ModelHandle, SingletonEntity, View,
     ViewContext, ViewHandle, WeakViewHandle, WindowId,
 };
+
+const HIDDEN_SECTION_CONTROL_WIDTH: f32 = 16.;
+
+fn max_displayed_line_number(
+    starting_line_number: Option<usize>,
+    zero_based_last_line_index: usize,
+) -> usize {
+    starting_line_number
+        .unwrap_or(1)
+        .saturating_add(zero_based_last_line_index)
+}
+
+fn gutter_controls_min_width(
+    line_height: f32,
+    button_count: usize,
+    inline_code_review_enabled: bool,
+    reserves_hidden_section_control: bool,
+) -> f32 {
+    let button_width = if button_count == 0 {
+        0.
+    } else {
+        VERTICAL_DIFF_HUNK_INDICATOR_HOVERED_WIDTH
+            + gutter_button_width(line_height, inline_code_review_enabled) * button_count as f32
+    };
+    let hidden_section_width = if reserves_hidden_section_control {
+        HIDDEN_SECTION_CONTROL_WIDTH
+    } else {
+        0.
+    };
+
+    button_width.max(hidden_section_width)
+}
 
 mod actions;
 pub use actions::init;
@@ -842,11 +877,10 @@ impl CodeEditorView {
         // The render_state bounds are relative to the editor content area, but the
         // CodeEditorView also includes a gutter (line numbers). We need to offset
         // the bounds by the gutter width when line numbers are shown.
-        let gutter_offset = if self.display_options.show_line_numbers {
-            super::element::GUTTER_WIDTH
-        } else {
-            0.0
-        };
+        let gutter_offset = self
+            .line_number_config(app)
+            .map(|config| config.gutter_width)
+            .unwrap_or(0.);
 
         Some(RectF::new(
             bounds.origin() + vec2f(gutter_offset, 0.0),
@@ -1204,12 +1238,46 @@ impl CodeEditorView {
         let appearance = Appearance::as_ref(ctx);
         let theme = appearance.theme();
         if self.display_options.show_line_numbers {
+            let model = self.model.as_ref(ctx);
+            let zero_based_last_line_index = model.line_count(ctx);
+            let max_line_number = max_displayed_line_number(
+                self.display_options.starting_line_number,
+                zero_based_last_line_index,
+            );
+            let font_family = appearance.monospace_font_family();
+            let font_properties = Properties::default();
+            let font_size = appearance.monospace_font_size();
+            let number_width = line_number_text_width(
+                max_line_number,
+                ctx.font_cache(),
+                font_family,
+                font_properties,
+                font_size,
+            );
+            let inline_code_review_enabled = FeatureFlag::InlineCodeReview.is_enabled();
+            let button_count = usize::from(self.display_options.diff_hunk_as_context.is_some())
+                + usize::from(
+                    self.display_options.revert_diff_hunk.is_some()
+                        && FeatureFlag::RevertDiffHunk.is_enabled(),
+                )
+                + usize::from(
+                    self.display_options.comment_button.is_some() && inline_code_review_enabled,
+                );
+            let controls_min_width = gutter_controls_min_width(
+                model.line_height(ctx),
+                button_count,
+                inline_code_review_enabled,
+                self.display_options.collapsible_diffs,
+            );
+
             Some(LineNumberConfig {
-                font_family: appearance.monospace_font_family(),
-                font_size: appearance.monospace_font_size(),
+                font_family,
+                font_properties,
+                font_size,
                 text_color: theme.sub_text_color(theme.background()).into(),
                 highlight_text_color: theme.main_text_color(theme.background()).into(),
                 starting_line_number: self.display_options.starting_line_number,
+                gutter_width: line_number_gutter_width(number_width, controls_min_width),
             })
         } else {
             None

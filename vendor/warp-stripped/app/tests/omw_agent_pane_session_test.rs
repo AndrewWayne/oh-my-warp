@@ -50,6 +50,7 @@ fn make_pane() -> (
     let (pty_reads_tx, _pty_rx) = async_broadcast::broadcast::<Arc<Vec<u8>>>(64);
     let handle = ActiveTerminalHandle {
         view_id: warpui::EntityId::new(),
+        command_tx: None,
         event_loop_tx,
         pty_reads_tx,
     };

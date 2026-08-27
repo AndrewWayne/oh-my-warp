@@ -1,7 +1,7 @@
 # omw Test Plan
 
 Status: Draft v0.1
-Last updated: 2026-04-29
+Last updated: 2026-08-20
 Owners: TBD
 
 This spec defines how omw is tested across all phases. It is referenced by [PRD §16](../PRD.md#16-success-metrics) and gates each phase's exit criteria ([PRD §13](../PRD.md#13-phased-roadmap)).
@@ -33,9 +33,12 @@ The plan is structured by **trust tier**, not by component — each tier has dif
 
 ## 1. Trust Tiers
 
-### Tier A — every commit (must stay <5 min CI wall)
+### Tier A — every commit (fast core plus focused Windows compatibility)
 
-Blocks merge if red. Runs on macOS-latest and Linux-latest.
+Blocks merge if red. Core lanes run on macOS-latest and Linux-latest with the
+original five-minute target. A focused Windows lane has a 30-minute cold-cache
+budget and covers the root Rust workspace, ConPTY, native Credential Manager,
+the local agent, and Web Controller without linking the vendored Warp GUI.
 
 #### A.1 Unit
 - Standard Rust `#[test]` per crate.
@@ -250,7 +253,8 @@ User decision: **adopt upstream Warp's existing test suite as-is; no new GUI-spe
 
 ### 5.1 What we run
 
-- Upstream Warp's `cargo test --workspace` runs against our patched fork in CI.
+- Upstream Warp's `cargo test --workspace` is a manual upstream-sync and
+  pre-release gate against our patched fork; it is not a per-commit CI lane.
 - Upstream's `./script/presubmit` runs in pre-release.
 
 ### 5.2 What we don't run
@@ -276,6 +280,7 @@ Tier C manual eyeball on macOS at each pre-release. No automation in v1.
 | Stage | Trigger | OS | Cadence | Wall budget |
 |-------|---------|-----|---------|-------------|
 | Tier A unit + contract | every push | macOS, Linux | per-commit | 5 min |
+| Tier A Windows compatibility | every push | Windows | per-commit | 30 min |
 | Tier A provider cassettes | every push | macOS | per-commit | 3 min |
 | Tier A frontend (Vitest) | every push | Linux | per-commit | 2 min |
 | Tier B E2E A+B | nightly | macOS | 1×/day | 15 min |
@@ -284,6 +289,10 @@ Tier C manual eyeball on macOS at each pre-release. No automation in v1.
 | Tier B upstream-sync smoke | manual | macOS | per-sync | 30 min |
 | Tier C manual | pre-release | manual | per-release | varies |
 | Tier D external | gate | external | once per phase gate | vendor |
+
+The focused Windows lane retains root Rust/ConPTY/native-keychain and
+TypeScript/Web logs. It deliberately excludes `vendor/warp-stripped`; the real
+GUI build and compiled-binary no-cloud audit remain tagged-release/manual gates.
 
 Linux Tier A runs unit-only — no integration tests yet (Linux app packaging is Beyond v1). It exists to catch macOS-specific code that would block Linux later.
 

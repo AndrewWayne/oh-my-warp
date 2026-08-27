@@ -79,7 +79,8 @@ pub fn env_lock() -> MutexGuard<'static, ()> {
 ///
 /// Clears the parent env so OMW_CONFIG / XDG_CONFIG_HOME / OMW_KEYCHAIN_BACKEND
 /// resolve to the values we set explicitly. PATH is preserved so the dynamic
-/// linker still works on platforms that need it.
+/// linker still works on platforms that need it. On Windows, SYSTEMROOT is
+/// also preserved because WinSock provider initialization depends on it.
 pub fn omw_cmd(temp_dir: &Path) -> AssertCommand {
     let mut cmd =
         AssertCommand::cargo_bin("omw").expect("omw binary should be built by cargo test");
@@ -94,6 +95,10 @@ pub fn omw_cmd(temp_dir: &Path) -> AssertCommand {
     cmd.env("XDG_CONFIG_HOME", temp_dir.join("config"));
     if let Some(path) = std::env::var_os("PATH") {
         cmd.env("PATH", path);
+    }
+    #[cfg(windows)]
+    if let Some(system_root) = std::env::var_os("SYSTEMROOT") {
+        cmd.env("SYSTEMROOT", system_root);
     }
     cmd
 }

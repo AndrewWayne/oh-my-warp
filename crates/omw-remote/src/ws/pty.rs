@@ -91,10 +91,10 @@ fn default_unix_shell_fallback() -> OsString {
 }
 
 #[cfg(test)]
-#[cfg(not(windows))]
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
     #[test]
     fn unix_default_shell_prefers_non_empty_shell_env() {
         let spec = default_unix_shell_from_env(Some("/opt/homebrew/bin/fish".into()));
@@ -103,6 +103,7 @@ mod tests {
         assert!(spec.args.is_empty());
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn unix_default_shell_uses_platform_fallback_when_shell_env_is_missing_or_empty() {
         let expected: OsString = {
@@ -121,6 +122,15 @@ mod tests {
             default_unix_shell_from_env(Some(OsString::new())).program,
             expected
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_default_shell_is_quiet_cmd() {
+        let spec = ShellSpec::default_for_host();
+
+        assert_eq!(spec.program, OsString::from("cmd.exe"));
+        assert_eq!(spec.args, vec![OsString::from("/Q")]);
     }
 }
 

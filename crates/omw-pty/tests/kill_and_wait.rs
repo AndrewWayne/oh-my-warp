@@ -2,6 +2,10 @@
 //! reports an abnormal exit.
 
 use omw_pty::{Pty, PtyCommand};
+#[cfg(windows)]
+use portable_pty::{native_pty_system, CommandBuilder, PtySize as PortablePtySize};
+#[cfg(windows)]
+use std::time::Instant;
 use tokio::time::{timeout, Duration};
 
 fn long_running_cmd() -> PtyCommand {
@@ -12,6 +16,55 @@ fn long_running_cmd() -> PtyCommand {
     } else {
         PtyCommand::new("/bin/sh").arg("-c").arg("sleep 60")
     }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn portable_pty_killer_reports_success_after_terminating_child() {
+    let pair = native_pty_system()
+        .openpty(PortablePtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .expect("open Windows PTY");
+    let mut command = CommandBuilder::new("powershell.exe");
+    command.args([
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Start-Sleep -Seconds 60",
+    ]);
+    let mut child = pair
+        .slave
+        .spawn_command(command)
+        .expect("spawn long-running child");
+    assert!(
+        child.try_wait().expect("query child before kill").is_none(),
+        "child exited before the kill contract could be tested"
+    );
+
+    let mut killer = child.clone_killer();
+    let kill_result = killer.kill();
+
+    // TerminateProcess is asynchronous. Reap before asserting the return
+    // contract so a failing regression never leaves the child running.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("query child after kill") {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("child was still running 5s after kill");
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+
+    kill_result.expect("successful TerminateProcess must return Ok");
+    assert!(!status.success(), "killed child unexpectedly succeeded");
 }
 
 #[tokio::test]

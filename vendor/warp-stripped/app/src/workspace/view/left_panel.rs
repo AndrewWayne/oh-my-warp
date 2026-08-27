@@ -48,7 +48,7 @@ use crate::workspace::view::{
 use crate::{
     appearance::Appearance,
     code::file_tree::FileTreeView,
-    drive::panel::{MAX_SIDEBAR_WIDTH_RATIO, MIN_SIDEBAR_WIDTH},
+    drive::panel::MAX_SIDEBAR_WIDTH_RATIO,
     pane_group::pane::view::header::{components::HEADER_EDGE_PADDING, PANE_HEADER_HEIGHT},
     pane_group::{self},
     terminal::resizable_data::{ModalType, ResizableData},
@@ -60,6 +60,8 @@ use crate::{
     workspace::WorkspaceAction,
     TelemetryEvent,
 };
+
+const MIN_TOOLS_PANEL_WIDTH: f32 = 120.;
 
 #[derive(Default)]
 struct MouseStateHandles {
@@ -1196,12 +1198,18 @@ impl View for LeftPanelView {
                 ctx.notify();
             })
             .with_bounds_callback(Box::new(|window_size| {
-                let min_width = MIN_SIDEBAR_WIDTH;
-                let max_width = window_size.x() * MAX_SIDEBAR_WIDTH_RATIO;
-                (min_width, max_width.max(min_width))
+                tools_panel_width_bounds(window_size.x())
             }))
             .finish()
     }
+}
+
+fn tools_panel_width_bounds(window_width: f32) -> (f32, f32) {
+    let max_width = window_width * MAX_SIDEBAR_WIDTH_RATIO;
+    (
+        MIN_TOOLS_PANEL_WIDTH,
+        max_width.max(MIN_TOOLS_PANEL_WIDTH),
+    )
 }
 
 fn deduplicate_by_directory_name(directories: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -1210,4 +1218,25 @@ fn deduplicate_by_directory_name(directories: Vec<PathBuf>) -> Vec<PathBuf> {
         .into_iter()
         .filter(|path| seen_paths.insert(path.clone()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{tools_panel_width_bounds, MIN_TOOLS_PANEL_WIDTH};
+    use crate::drive::panel::{MAX_SIDEBAR_WIDTH_RATIO, MIN_SIDEBAR_WIDTH};
+    use crate::terminal::resizable_data::DEFAULT_LEFT_PANEL_WIDTH;
+
+    #[test]
+    fn tools_panel_uses_compact_minimum_without_changing_other_sidebar_contracts() {
+        assert_eq!(MIN_TOOLS_PANEL_WIDTH, 120.);
+        assert_eq!(DEFAULT_LEFT_PANEL_WIDTH, 240.);
+        assert_eq!(MIN_SIDEBAR_WIDTH, 250.);
+        assert_eq!(MAX_SIDEBAR_WIDTH_RATIO, 0.75);
+    }
+
+    #[test]
+    fn tools_panel_width_bounds_clamp_narrow_and_large_windows() {
+        assert_eq!(tools_panel_width_bounds(100.), (120., 120.));
+        assert_eq!(tools_panel_width_bounds(800.), (120., 600.));
+    }
 }

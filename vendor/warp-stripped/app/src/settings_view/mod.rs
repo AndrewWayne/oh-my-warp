@@ -2884,6 +2884,6 @@ impl BackingView for SettingsView {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "omw_local")))]
 #[path = "mod_test.rs"]
 mod tests;

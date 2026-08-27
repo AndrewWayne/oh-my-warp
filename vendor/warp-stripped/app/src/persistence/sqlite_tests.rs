@@ -1,5 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
+use diesel::connection::SimpleConnection;
 use warp_core::features::FeatureFlag;
 use warp_graphql::scalars::time::ServerTimestamp;
 
@@ -187,6 +188,45 @@ fn test_sqlite_round_trips_vertical_tabs_panel_open() {
             .collect::<Vec<_>>(),
         vec![false, true]
     );
+}
+
+#[test]
+fn test_warp_ai_width_migration_preserves_existing_preferences() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let database_path = tempdir.path().join("warp.sqlite");
+    let mut conn = setup_database(&database_path).expect("database should initialize");
+
+    let mut saved_width = test_terminal_window_snapshot(false);
+    saved_width.warp_ai_width = Some(410.);
+    let app_state = AppState {
+        windows: vec![saved_width, test_terminal_window_snapshot(true)],
+        active_window_index: Some(0),
+        block_lists: Default::default(),
+        running_mcp_servers: Default::default(),
+    };
+    save_app_state(&mut conn, &app_state).expect("app state should save");
+
+    conn.batch_execute(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../crates/persistence/migrations/2026-08-25-000000_reset_warp_ai_width/up.sql"
+    )))
+    .expect("width-preserving migration should run");
+
+    let mut restored = read_sqlite_data(&mut conn, None)
+        .expect("app state should load")
+        .app_state;
+    assert_eq!(restored.windows[0].warp_ai_width, Some(410.));
+    assert_eq!(restored.windows[1].warp_ai_width, None);
+
+    restored.windows[0].warp_ai_width = Some(120.);
+    save_app_state(&mut conn, &restored).expect("updated app state should save");
+    drop(conn);
+
+    let mut conn = setup_database(&database_path).expect("database should reopen");
+    let restored = read_sqlite_data(&mut conn, None)
+        .expect("app state should reload")
+        .app_state;
+    assert_eq!(restored.windows[0].warp_ai_width, Some(120.));
 }
 
 #[test]

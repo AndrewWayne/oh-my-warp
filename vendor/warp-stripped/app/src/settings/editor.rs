@@ -236,6 +236,21 @@ define_settings_group!(AppEditorSettings, settings: [
 ]);
 
 impl AppEditorSettings {
+    #[cfg(feature = "test-exports")]
+    pub fn new_with_omw_test_defaults(_ctx: &mut ModelContext<Self>) -> Self {
+        Self {
+            cursor_blink: CursorBlinkEnabled::new(None),
+            cursor_display_type: CursorDisplayState::new(None),
+            vim_mode: VimModeEnabled::new(None),
+            vim_unnamed_system_clipboard: VimUnnamedSystemClipboard::new(None),
+            vim_status_bar: VimStatusBar::new(None),
+            autocomplete_symbols: AutocompleteSymbols::new(None),
+            enable_autosuggestions: EnableAutosuggestions::new(None),
+            autosuggestion_keybinding_hint: AutosuggestionKeybindingHint::new(None),
+            show_autosuggestion_ignore_button: ShowAutosuggestionIgnoreButton::new(None),
+        }
+    }
+
     pub fn toggle_cursor_blink(&mut self, ctx: &mut ModelContext<Self>) {
         self.cursor_blink
             .set_value(self.cursor_blink.other_value(), ctx)

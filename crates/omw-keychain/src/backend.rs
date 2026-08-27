@@ -3,9 +3,9 @@
 //! The backend is resolved once per process via `OnceLock` based on the
 //! `OMW_KEYCHAIN_BACKEND` env var read at first call. Recognised values:
 //! `auto` (the default and any unrecognised value), `memory`, `os`. On
-//! macOS and Linux, `auto` resolves to the OS credential store; elsewhere it
-//! resolves to memory. Explicit `os` fails closed when no OS implementation is
-//! available.
+//! macOS, Linux, and Windows, `auto` resolves to the OS credential store;
+//! elsewhere it resolves to memory. Explicit `os` fails closed when no OS
+//! implementation is available.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -53,7 +53,11 @@ fn resolve() -> Resolved {
 }
 
 fn os_backend_available() -> bool {
-    cfg!(any(target_os = "macos", target_os = "linux"))
+    cfg!(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows"
+    ))
 }
 
 fn resolved() -> Resolved {
@@ -152,7 +156,7 @@ fn memory_list_omw() -> Result<Vec<String>, KeychainError> {
 
 // ---- OS backend ----
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 mod os_impl {
     use super::{KeychainError, SERVICE};
 
@@ -229,9 +233,17 @@ mod os_impl {
             reason: "listing Linux Secret Service entries is not supported by this backend".into(),
         })
     }
+
+    #[cfg(target_os = "windows")]
+    pub(super) fn list_omw() -> Result<Vec<String>, KeychainError> {
+        Err(KeychainError::BackendUnavailable {
+            reason: "listing Windows Credential Manager entries is not supported by this backend"
+                .into(),
+        })
+    }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 mod os_impl {
     use super::KeychainError;
 

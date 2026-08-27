@@ -35,20 +35,50 @@
 //!    removes the pidfile. With `--all`, additionally sets
 //!    `devices.revoked_at = now()` for every row.
 //!
-//! These tests are intentionally minimal: the start path is hard to
-//! exercise portably. Both tests are gated `#[cfg(unix)]` because spawn
-//! + signal semantics on Windows require a different shutdown mechanism
-//!   (named events, not signals) — that variant is Beyond-v1 work.
+//! These tests use the cross-platform shutdown-sentinel file recorded in
+//! the pidfile, so the same contract runs on Unix and Windows.
 
 mod common;
 
-#[cfg(unix)]
-mod unix_only {
+mod start_stop {
+    use std::ops::{Deref, DerefMut};
     use std::path::PathBuf;
     use std::process::{Child, Command, Stdio};
     use std::time::{Duration, Instant};
 
     use crate::common::omw_cmd;
+
+    // Failure-path cleanup; the tests still assert graceful public shutdown.
+    struct ChildGuard(Child);
+
+    impl ChildGuard {
+        fn new(child: Child) -> Self {
+            Self(child)
+        }
+    }
+
+    impl Deref for ChildGuard {
+        type Target = Child;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl DerefMut for ChildGuard {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.0
+        }
+    }
+
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            if !matches!(self.0.try_wait(), Ok(Some(_))) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+    }
 
     fn omw_bin() -> PathBuf {
         // assert_cmd builds and caches the bin in the same target dir
@@ -93,6 +123,12 @@ mod unix_only {
         if let Some(path) = std::env::var_os("PATH") {
             cmd.env("PATH", path);
         }
+        // WinSock provider initialization depends on SystemRoot. Preserve
+        // only this required system value after env_clear; provider/config
+        // variables remain isolated by the explicit test environment.
+        if let Some(system_root) = std::env::var_os("SYSTEMROOT") {
+            cmd.env("SYSTEMROOT", system_root);
+        }
         cmd.args([
             "remote",
             "start",
@@ -118,15 +154,12 @@ mod unix_only {
         let data_dir = dir.path().join("data");
         std::fs::create_dir_all(&data_dir).expect("mkdir data");
 
-        // The Executor's `--shutdown-signal <name>` hook should observe
-        // EITHER the env var or a sentinel file at
-        // `<OMW_DATA_DIR>/<name>.signal`. The latter is more portable
-        // because env vars on a running child can't be set after spawn.
-        // Tests use the file form.
+        // The `--shutdown-signal <name>` hook records a portable sentinel
+        // file at `<OMW_DATA_DIR>/<name>.signal` in the pidfile.
         let signal_name = "omw_test_stop";
-        let signal_file = data_dir.join(format!("{}.signal", signal_name));
 
-        let mut child = spawn_remote(&data_dir, signal_name).expect("spawn omw remote start");
+        let mut child =
+            ChildGuard::new(spawn_remote(&data_dir, signal_name).expect("spawn omw remote start"));
 
         // Wait up to 5 seconds for the pidfile to appear. If it doesn't,
         // dump child output for debugging.
@@ -135,10 +168,10 @@ mod unix_only {
             Ok(s) => s,
             Err(e) => {
                 let _ = child.kill();
-                let out = child.wait_with_output().ok();
+                let status = child.wait().ok();
                 panic!(
-                    "pidfile {:?} did not appear: {}; child output: {:?}",
-                    pidfile, e, out
+                    "pidfile {:?} did not appear: {}; child status: {:?}",
+                    pidfile, e, status
                 );
             }
         };
@@ -148,8 +181,41 @@ mod unix_only {
             pid_body
         );
 
-        // Trigger shutdown via the sentinel file.
-        std::fs::write(&signal_file, b"stop\n").expect("write signal file");
+        let expected_port = pid_body
+            .lines()
+            .find_map(|line| line.strip_prefix("port="))
+            .and_then(|port| port.parse::<u16>().ok())
+            .expect("pidfile must contain a numeric port");
+        let mut status_cmd = omw_cmd(dir.path());
+        status_cmd.env("OMW_DATA_DIR", &data_dir);
+        let status_assert = status_cmd.args(["remote", "status"]).assert();
+        let status_output = status_assert.get_output();
+        assert_eq!(
+            status_output.status.code(),
+            Some(0),
+            "remote status must exit 0; stderr={:?}",
+            String::from_utf8_lossy(&status_output.stderr)
+        );
+        let status_text = String::from_utf8_lossy(&status_output.stdout);
+        assert!(
+            status_text.contains("running")
+                && status_text.contains(&format!("127.0.0.1:{expected_port}")),
+            "live status must include running state and exact bound port; got {:?}",
+            status_text
+        );
+
+        // Exercise the public stop command. It reads the pidfile and writes
+        // the sentinel file used by the foreground process.
+        let mut stop_cmd = omw_cmd(dir.path());
+        stop_cmd.env("OMW_DATA_DIR", &data_dir);
+        let stop_assert = stop_cmd.args(["remote", "stop"]).assert();
+        let stop_output = stop_assert.get_output();
+        assert_eq!(
+            stop_output.status.code(),
+            Some(0),
+            "remote stop must exit 0; stderr={:?}",
+            String::from_utf8_lossy(&stop_output.stderr)
+        );
 
         // Wait up to 5 seconds for the child to exit on its own.
         let start = Instant::now();
@@ -157,9 +223,13 @@ mod unix_only {
             match child.try_wait().expect("try_wait child") {
                 Some(status) => {
                     assert!(
-                        status.success() || status.code().is_some(),
+                        status.success(),
                         "child must exit cleanly; got {:?}",
                         status
+                    );
+                    assert!(
+                        !pidfile.exists(),
+                        "pidfile must be removed after graceful shutdown"
                     );
                     break;
                 }
@@ -215,7 +285,7 @@ mod unix_only {
         // unconditionally — even if the SUT doesn't have a running
         // daemon, `--all` should still revoke (the brief calls this out).
         let signal_name = "omw_test_stopall";
-        let mut child = spawn_remote(&data_dir, signal_name).expect("spawn");
+        let mut child = ChildGuard::new(spawn_remote(&data_dir, signal_name).expect("spawn"));
         let _pid_body = wait_for_pidfile(&data_dir.join("remote.pid"), Duration::from_secs(5))
             .unwrap_or_else(|e| {
                 let _ = child.kill();
@@ -235,14 +305,26 @@ mod unix_only {
 
         // The child should now have exited (stop signaled it).
         let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(5) {
-            if let Some(_status) = child.try_wait().expect("try_wait") {
-                break;
+        let child_status = loop {
+            if let Some(status) = child.try_wait().expect("try_wait") {
+                break status;
+            }
+            if start.elapsed() >= Duration::from_secs(5) {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("child did not exit within 5s after `remote stop --all`");
             }
             std::thread::sleep(Duration::from_millis(50));
-        }
-        let _ = child.kill();
-        let _ = child.wait();
+        };
+        assert!(
+            child_status.success(),
+            "child must exit cleanly; got {:?}",
+            child_status
+        );
+        assert!(
+            !data_dir.join("remote.pid").exists(),
+            "pidfile must be removed after graceful shutdown"
+        );
 
         // Both devices must now have non-NULL revoked_at.
         let conn = rusqlite::Connection::open(&db_path).expect("re-open db");
@@ -265,8 +347,3 @@ mod unix_only {
         }
     }
 }
-
-// On Windows, both tests above are skipped at compile time. We don't
-// emit a stub `#[ignore]` test because cargo would still need a function
-// body referencing the Unix-only helpers. Beyond-v1: revisit when the
-// Windows shutdown mechanism (named event handle) lands.

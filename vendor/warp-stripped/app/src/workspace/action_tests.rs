@@ -26,6 +26,12 @@ fn settings_popup_toggle_does_not_save_workspace_state() {
 }
 
 #[test]
+fn toolbar_settings_toggle_saves_while_show_settings_semantics_stay_unchanged() {
+    assert!(WorkspaceAction::ToggleSettings.should_save_app_state_on_action());
+    assert!(!WorkspaceAction::ShowSettings.should_save_app_state_on_action());
+}
+
+#[test]
 fn display_granularity_change_does_not_save_workspace_state() {
     assert!(!WorkspaceAction::SetVerticalTabsDisplayGranularity(
         VerticalTabsDisplayGranularity::Panes
@@ -74,4 +80,5 @@ fn pane_name_actions_save_workspace_state() {
 
     assert!(WorkspaceAction::RenamePane(locator).should_save_app_state_on_action());
     assert!(WorkspaceAction::ResetPaneName(locator).should_save_app_state_on_action());
+    assert!(WorkspaceAction::ClosePane(locator).should_save_app_state_on_action());
 }

@@ -551,6 +551,8 @@ impl<T: EventLoopSender> PtyController<T> {
                 CommandExecutionSource::AI { metadata } => {
                     model.start_command_execution_with_ai_metadata(metadata)
                 }
+                #[cfg(feature = "omw_local")]
+                CommandExecutionSource::OmwAgent => model.start_command_execution(),
                 CommandExecutionSource::SharedSession {
                     participant_id,
                     ai_metadata,

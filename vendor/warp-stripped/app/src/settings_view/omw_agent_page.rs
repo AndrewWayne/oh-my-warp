@@ -22,10 +22,11 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Duration;
 
+use async_compat::CompatExt as _;
 use omw_config::{
-    AgentConfig, ApprovalConfig, ApprovalMode, BaseUrl, Config, KeyRef, ProviderConfig,
-    ProviderId,
+    AgentConfig, ApprovalConfig, ApprovalMode, BaseUrl, Config, KeyRef, ProviderConfig, ProviderId,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +61,13 @@ pub enum ProviderKindForm {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderTestStatus {
+    Testing(u64),
+    Succeeded,
+    Failed(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormError {
     InvalidProviderId(String),
     DuplicateProviderId(String),
@@ -88,6 +96,10 @@ pub struct OmwAgentPageState {
     pub pending_secrets: BTreeMap<String, String>,
     pub is_dirty: bool,
     pub last_save_error: Option<String>,
+    /// Ephemeral connection-test results keyed by visible provider slot. No response
+    /// bodies, credentials, or request headers are retained here.
+    pub provider_test_status: BTreeMap<usize, ProviderTestStatus>,
+    pub next_provider_test_request_id: u64,
     pub default_provider_dropdown: DefaultProviderDropdownState,
     /// Ordered list of `(old_id, new_id)` renames that haven't been
     /// reconciled with the keychain yet. Populated by `SetProviderId`
@@ -109,6 +121,7 @@ pub enum OmwAgentPageAction {
     SetProviderModel(usize, String),
     SetProviderBaseUrl(usize, String),
     SetProviderApiKey(usize, String),
+    TestProvider(usize),
     SetDefaultProviderById(Option<String>),
     ToggleDefaultProviderDropdown,
     CloseDefaultProviderDropdown,
@@ -133,10 +146,7 @@ pub fn form_from_config(cfg: &Config) -> OmwAgentForm {
 /// would re-sort rows on every save, leaving the per-slot editor inputs +
 /// MouseStateHandles pointing at the wrong row underneath their position
 /// — visibly switching kinds and mismatching titles.
-pub fn form_from_config_with_order(
-    cfg: &Config,
-    preferred_order: &[String],
-) -> OmwAgentForm {
+pub fn form_from_config_with_order(cfg: &Config, preferred_order: &[String]) -> OmwAgentForm {
     let mut by_id: std::collections::BTreeMap<String, ProviderRow> = cfg
         .providers
         .iter()
@@ -149,10 +159,7 @@ pub fn form_from_config_with_order(
                     kind: kind_from_config(pcfg),
                     model: pcfg.default_model().unwrap_or("").to_string(),
                     base_url: base_url_from_config(pcfg).unwrap_or_default(),
-                    key_ref_token: pcfg
-                        .key_ref()
-                        .map(|k| k.to_string())
-                        .unwrap_or_default(),
+                    key_ref_token: pcfg.key_ref().map(|k| k.to_string()).unwrap_or_default(),
                     api_key_input: String::new(),
                 },
             )
@@ -172,7 +179,10 @@ pub fn form_from_config_with_order(
     OmwAgentForm {
         agent_enabled: cfg.agent.enabled,
         approval_mode: cfg.approval.mode,
-        default_provider: cfg.default_provider.as_ref().map(|p| p.as_str().to_string()),
+        default_provider: cfg
+            .default_provider
+            .as_ref()
+            .map(|p| p.as_str().to_string()),
         providers,
         agents_md_path: cfg
             .agent
@@ -283,10 +293,22 @@ pub fn validate_form(form: &OmwAgentForm) -> Result<(), Vec<FormError>> {
 fn kind_requires_key(k: ProviderKindForm) -> bool {
     matches!(
         k,
-        ProviderKindForm::OpenAi
-            | ProviderKindForm::Anthropic
-            | ProviderKindForm::OpenAiCompatible,
+        ProviderKindForm::OpenAi | ProviderKindForm::Anthropic | ProviderKindForm::OpenAiCompatible,
     )
+}
+
+/// Return the provider editor slot whose live API-key buffer must be cleared
+/// before a kind change is rendered. The reducer clears its owned secret state,
+/// but password editors keep an independent buffer until explicitly reset.
+pub fn provider_api_key_buffer_clear_slot(
+    state: &OmwAgentPageState,
+    action: &OmwAgentPageAction,
+) -> Option<usize> {
+    let OmwAgentPageAction::SetProviderKind(idx, next_kind) = action else {
+        return None;
+    };
+    let row = state.form.providers.get(*idx)?;
+    (kind_requires_key(row.kind) && !kind_requires_key(*next_kind)).then_some(*idx)
 }
 
 /// True iff this row has all kind-required fields populated such that the
@@ -310,6 +332,115 @@ fn is_row_complete(row: &ProviderRow, has_persisted_key: impl Fn(&str) -> bool) 
     }
 }
 
+/// Build the non-secret model-list endpoint used by the Settings connection
+/// check. Probing it verifies DNS/TLS, the configured base URL, and
+/// authentication without consuming inference tokens or sending user content.
+/// OpenAI-compatible servers that omit `GET /models` will fail this narrow
+/// connection check even if their chat-completions endpoint is available.
+pub fn provider_test_endpoint(row: &ProviderRow) -> Result<String, String> {
+    let base = match row.kind {
+        ProviderKindForm::OpenAi => {
+            if row.base_url.is_empty() {
+                "https://api.openai.com/v1".to_owned()
+            } else {
+                row.base_url.clone()
+            }
+        }
+        ProviderKindForm::Anthropic => "https://api.anthropic.com/v1".to_owned(),
+        ProviderKindForm::OpenAiCompatible => {
+            if row.base_url.is_empty() {
+                return Err("base URL is required".to_owned());
+            }
+            row.base_url.clone()
+        }
+        ProviderKindForm::Ollama => {
+            if row.base_url.is_empty() {
+                "http://127.0.0.1:11434/v1".to_owned()
+            } else {
+                row.base_url.clone()
+            }
+        }
+    };
+    let parsed = BaseUrl::from_str(&base).map_err(|_| "base URL is invalid".to_owned())?;
+    Ok(format!("{}/models", parsed.as_str().trim_end_matches('/')))
+}
+
+pub fn validate_provider_test_inputs(
+    row: &ProviderRow,
+    secret_available: bool,
+) -> Result<(), String> {
+    ProviderId::from_str(&row.id).map_err(|_| "provider id is invalid".to_owned())?;
+    if row.model.trim().is_empty() {
+        return Err("model is required".to_owned());
+    }
+    let keyed = matches!(
+        row.kind,
+        ProviderKindForm::OpenAi | ProviderKindForm::Anthropic | ProviderKindForm::OpenAiCompatible
+    );
+    if keyed && !secret_available {
+        return Err("API key is required".to_owned());
+    }
+    provider_test_endpoint(row)?;
+    Ok(())
+}
+
+async fn test_provider_connection(row: ProviderRow, secret: Option<String>) -> Result<(), String> {
+    let url = provider_test_endpoint(&row)?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        // Never forward an Authorization/x-api-key header through an HTTP
+        // redirect. A provider test should fail closed on a moved endpoint.
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| "could not create HTTP client".to_owned())?;
+    let mut request = client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/json");
+    match row.kind {
+        ProviderKindForm::Anthropic => {
+            let secret = secret
+                .as_deref()
+                .ok_or_else(|| "API key is required".to_owned())?;
+            request = request
+                .header("x-api-key", secret)
+                .header("anthropic-version", "2023-06-01");
+        }
+        ProviderKindForm::OpenAi | ProviderKindForm::OpenAiCompatible => {
+            let secret = secret
+                .as_deref()
+                .ok_or_else(|| "API key is required".to_owned())?;
+            request = request.bearer_auth(secret);
+        }
+        ProviderKindForm::Ollama => {
+            if let Some(secret) = secret.as_deref() {
+                request = request.bearer_auth(secret);
+            }
+        }
+    }
+    let response = request.send().await.map_err(|error| {
+        if error.is_timeout() {
+            "request timed out".to_owned()
+        } else if error.is_connect() {
+            "connection failed".to_owned()
+        } else {
+            "request failed".to_owned()
+        }
+    })?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("HTTP {}", response.status()))
+    }
+}
+
+#[cfg(any(test, feature = "test-exports"))]
+pub async fn test_provider_connection_for_test(
+    row: ProviderRow,
+    secret: Option<String>,
+) -> Result<(), String> {
+    test_provider_connection(row, secret).await
+}
+
 pub fn form_to_config(
     form: &OmwAgentForm,
     persisted_secrets: &BTreeMap<String, KeyRef>,
@@ -328,38 +459,33 @@ pub fn form_to_config(
         } else {
             Some(row.model.clone())
         };
-        let key_ref = persisted_secrets
-            .get(&row.id)
-            .cloned()
-            .or_else(|| {
-                if row.key_ref_token.is_empty() {
-                    None
-                } else {
-                    KeyRef::from_str(&row.key_ref_token).ok()
-                }
-            });
+        let key_ref = persisted_secrets.get(&row.id).cloned().or_else(|| {
+            if row.key_ref_token.is_empty() {
+                None
+            } else {
+                KeyRef::from_str(&row.key_ref_token).ok()
+            }
+        });
 
         let pcfg = match row.kind {
             ProviderKindForm::OpenAi => ProviderConfig::OpenAi {
-                key_ref: key_ref
-                    .ok_or_else(|| vec![FormError::ApiKeyRequired(row.id.clone())])?,
+                key_ref: key_ref.ok_or_else(|| vec![FormError::ApiKeyRequired(row.id.clone())])?,
                 default_model: model,
                 base_url: if row.base_url.is_empty() {
                     None
                 } else {
-                    Some(BaseUrl::from_str(&row.base_url).map_err(|_| {
-                        vec![FormError::BaseUrlInvalid(row.id.clone())]
-                    })?)
+                    Some(
+                        BaseUrl::from_str(&row.base_url)
+                            .map_err(|_| vec![FormError::BaseUrlInvalid(row.id.clone())])?,
+                    )
                 },
             },
             ProviderKindForm::Anthropic => ProviderConfig::Anthropic {
-                key_ref: key_ref
-                    .ok_or_else(|| vec![FormError::ApiKeyRequired(row.id.clone())])?,
+                key_ref: key_ref.ok_or_else(|| vec![FormError::ApiKeyRequired(row.id.clone())])?,
                 default_model: model,
             },
             ProviderKindForm::OpenAiCompatible => ProviderConfig::OpenAiCompatible {
-                key_ref: key_ref
-                    .ok_or_else(|| vec![FormError::ApiKeyRequired(row.id.clone())])?,
+                key_ref: key_ref.ok_or_else(|| vec![FormError::ApiKeyRequired(row.id.clone())])?,
                 base_url: BaseUrl::from_str(&row.base_url)
                     .map_err(|_| vec![FormError::BaseUrlInvalid(row.id.clone())])?,
                 default_model: model,
@@ -368,9 +494,10 @@ pub fn form_to_config(
                 let base_url = if row.base_url.is_empty() {
                     None
                 } else {
-                    Some(BaseUrl::from_str(&row.base_url).map_err(|_| {
-                        vec![FormError::BaseUrlInvalid(row.id.clone())]
-                    })?)
+                    Some(
+                        BaseUrl::from_str(&row.base_url)
+                            .map_err(|_| vec![FormError::BaseUrlInvalid(row.id.clone())])?,
+                    )
                 };
                 ProviderConfig::Ollama {
                     base_url,
@@ -425,6 +552,9 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
         OmwAgentPageAction::RemoveProvider(idx) => {
             if idx < state.form.providers.len() {
                 let removed = state.form.providers.remove(idx);
+                // Slot indices change after a removal. Drop every ephemeral
+                // result so no in-flight callback can attach to the wrong row.
+                state.provider_test_status.clear();
                 if state.form.default_provider.as_deref() == Some(&removed.id) {
                     state.form.default_provider = None;
                 }
@@ -439,6 +569,7 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
         OmwAgentPageAction::SetProviderId(idx, new_id) => {
             if let Some(row) = state.form.providers.get_mut(idx) {
                 let old = std::mem::replace(&mut row.id, new_id.clone());
+                state.provider_test_status.remove(&idx);
                 // If the row's key_ref_token is the canonical form
                 // `keychain:omw/<old_id>` (what Apply writes), rebuild it
                 // to match the new id so the keychain lookup follows the
@@ -454,9 +585,7 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
                     // the entries in order — apply() processes them
                     // sequentially and each migration leaves a single
                     // live entry by the time the next one runs.
-                    state
-                        .pending_renames
-                        .push((old.clone(), new_id.clone()));
+                    state.pending_renames.push((old.clone(), new_id.clone()));
                 }
                 if state.form.default_provider.as_deref() == Some(&old) {
                     state.form.default_provider = Some(new_id.clone());
@@ -468,6 +597,7 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
         }
         OmwAgentPageAction::SetProviderKind(idx, k) => {
             if let Some(row) = state.form.providers.get_mut(idx) {
+                state.provider_test_status.remove(&idx);
                 let prev = row.kind;
                 row.kind = k;
                 // When crossing the key-required boundary (e.g. OpenAI →
@@ -483,16 +613,19 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
         }
         OmwAgentPageAction::SetProviderModel(idx, s) => {
             if let Some(row) = state.form.providers.get_mut(idx) {
+                state.provider_test_status.remove(&idx);
                 row.model = s;
             }
         }
         OmwAgentPageAction::SetProviderBaseUrl(idx, s) => {
             if let Some(row) = state.form.providers.get_mut(idx) {
+                state.provider_test_status.remove(&idx);
                 row.base_url = s;
             }
         }
         OmwAgentPageAction::SetProviderApiKey(idx, s) => {
             if let Some(row) = state.form.providers.get_mut(idx) {
+                state.provider_test_status.remove(&idx);
                 if s.is_empty() {
                     state.pending_secrets.remove(&row.id);
                 } else {
@@ -500,6 +633,10 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
                 }
                 row.api_key_input = s;
             }
+        }
+        OmwAgentPageAction::TestProvider(_) => {
+            // The real view handles this action asynchronously because the
+            // pure reducer has no runtime or ViewContext.
         }
         OmwAgentPageAction::SetDefaultProviderById(maybe_id) => match maybe_id {
             Some(id) if state.form.providers.iter().any(|r| r.id == id) => {
@@ -539,6 +676,7 @@ pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
             state.pending_renames.clear();
             state.is_dirty = false;
             state.last_save_error = None;
+            state.provider_test_status.clear();
             return;
         }
     }
@@ -560,10 +698,7 @@ use warpui::{
         ChildView, Container, CrossAxisAlignment, DispatchEventResult, Element, EventHandler, Flex,
         MainAxisAlignment, MouseStateHandle, ParentElement, Text,
     },
-    ui_components::{
-        button::ButtonVariant,
-        components::UiComponent,
-    },
+    ui_components::{button::ButtonVariant, components::UiComponent},
     AppContext, Entity, TypedActionView, View, ViewContext, ViewHandle,
 };
 
@@ -587,6 +722,7 @@ pub struct ProviderRowEditors {
     pub base_url_input: ViewHandle<SubmittableTextInput>,
     pub api_key_input: ViewHandle<SubmittableTextInput>,
     pub set_default_button: MouseStateHandle,
+    pub test_button: MouseStateHandle,
     pub remove_button: MouseStateHandle,
     /// One toggle per provider kind: openai, anthropic,
     /// openai-compatible, ollama. Index lines up with
@@ -652,7 +788,8 @@ impl OmwAgentPageView {
         // simply never rendered, so they're silent until the user adds
         // more providers.
         for slot in 0..MAX_PROVIDER_SLOTS {
-            me.provider_editors.push(make_provider_row_editors(slot, ctx));
+            me.provider_editors
+                .push(make_provider_row_editors(slot, ctx));
         }
         // AGENTS.md source-path input. Submit dispatches the same
         // SetAgentsMdPath action exercised by the L3a logic test.
@@ -704,6 +841,8 @@ impl OmwAgentPageView {
                 pending_secrets: BTreeMap::new(),
                 is_dirty: false,
                 last_save_error: None,
+                provider_test_status: BTreeMap::new(),
+                next_provider_test_request_id: 0,
                 default_provider_dropdown: DefaultProviderDropdownState::default(),
                 pending_renames: Vec::new(),
             },
@@ -718,9 +857,7 @@ impl OmwAgentPageView {
             ],
             default_provider_trigger_button: MouseStateHandle::default(),
             default_provider_none_item_button: MouseStateHandle::default(),
-            default_provider_item_buttons: std::array::from_fn(|_| {
-                MouseStateHandle::default()
-            }),
+            default_provider_item_buttons: std::array::from_fn(|_| MouseStateHandle::default()),
             provider_editors: Vec::new(),
             agents_md_path_input: None,
             // is_dual_scrollable=true: long provider lists need to scroll;
@@ -743,7 +880,11 @@ impl OmwAgentPageView {
             // Don't show api_key text — it's a secret. Always blank
             // unless the user is mid-edit; pending_secrets carries
             // the in-flight value separately.
-            let _ = (&editors.id_input, &editors.model_input, &editors.base_url_input);
+            let _ = (
+                &editors.id_input,
+                &editors.model_input,
+                &editors.base_url_input,
+            );
             // Buffer updates require nested view context — defer to a
             // helper that keeps the borrow scopes manageable.
             set_input_text(&editors.id_input, &id_text, ctx);
@@ -764,6 +905,76 @@ impl OmwAgentPageView {
             OmwAgentPageAction::Apply => self.apply(),
             other => apply_action(&mut self.state, other),
         }
+    }
+
+    fn start_provider_test(&mut self, idx: usize, ctx: &mut ViewContext<Self>) {
+        let Some(row) = self.state.form.providers.get(idx).cloned() else {
+            return;
+        };
+        let provider_id = row.id.clone();
+
+        let secret = if let Some(value) = self.state.pending_secrets.get(&provider_id) {
+            Some(value.clone())
+        } else if !row.api_key_input.is_empty() {
+            Some(row.api_key_input.clone())
+        } else if !row.key_ref_token.is_empty() {
+            let key_ref = match KeyRef::from_str(&row.key_ref_token) {
+                Ok(value) => value,
+                Err(_) => {
+                    self.state.provider_test_status.insert(
+                        idx,
+                        ProviderTestStatus::Failed("invalid key reference".to_owned()),
+                    );
+                    return;
+                }
+            };
+            match omw_keychain::get(&key_ref) {
+                Ok(value) => Some(value.expose().to_owned()),
+                Err(omw_keychain::KeychainError::NotFound) => None,
+                Err(_) => {
+                    self.state.provider_test_status.insert(
+                        idx,
+                        ProviderTestStatus::Failed("keychain lookup failed".to_owned()),
+                    );
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
+        if let Err(message) = validate_provider_test_inputs(&row, secret.is_some()) {
+            self.state
+                .provider_test_status
+                .insert(idx, ProviderTestStatus::Failed(message));
+            return;
+        }
+
+        self.state.next_provider_test_request_id =
+            self.state.next_provider_test_request_id.wrapping_add(1);
+        let request_id = self.state.next_provider_test_request_id;
+        self.state
+            .provider_test_status
+            .insert(idx, ProviderTestStatus::Testing(request_id));
+        ctx.spawn(
+            async move { test_provider_connection(row, secret).await }.compat(),
+            move |me, result, ctx| {
+                // An edit clears the Testing marker. In that case this result
+                // belongs to stale inputs and must not reappear on the row.
+                if !matches!(
+                    me.state.provider_test_status.get(&idx),
+                    Some(ProviderTestStatus::Testing(active_id)) if *active_id == request_id
+                ) {
+                    return;
+                }
+                let status = match result {
+                    Ok(()) => ProviderTestStatus::Succeeded,
+                    Err(message) => ProviderTestStatus::Failed(message),
+                };
+                me.state.provider_test_status.insert(idx, status);
+                ctx.notify();
+            },
+        );
     }
 
     /// Side-effecting Apply: writes pending API keys to the OS keychain, then
@@ -818,23 +1029,17 @@ impl OmwAgentPageView {
                     continue;
                 }
                 Err(e) => {
-                    log::warn!(
-                        "omw# settings: rename migration: read of {old_id} failed: {e}"
-                    );
+                    log::warn!("omw# settings: rename migration: read of {old_id} failed: {e}");
                     continue;
                 }
             };
             if let Err(e) = omw_keychain::set(&new_kr, secret.expose()) {
-                log::warn!(
-                    "omw# settings: rename migration: write of {new_id} failed: {e}"
-                );
+                log::warn!("omw# settings: rename migration: write of {new_id} failed: {e}");
                 continue;
             }
             if let Err(e) = omw_keychain::delete(&old_kr) {
                 if !matches!(e, omw_keychain::KeychainError::NotFound) {
-                    log::warn!(
-                        "omw# settings: rename migration: delete of {old_id} failed: {e}"
-                    );
+                    log::warn!("omw# settings: rename migration: delete of {old_id} failed: {e}");
                 }
             }
         }
@@ -845,8 +1050,7 @@ impl OmwAgentPageView {
             let kr = match KeyRef::from_str(&format!("keychain:omw/{id}")) {
                 Ok(k) => k,
                 Err(e) => {
-                    self.state.last_save_error =
-                        Some(format!("invalid key_ref for {id}: {e}"));
+                    self.state.last_save_error = Some(format!("invalid key_ref for {id}: {e}"));
                     return;
                 }
             };
@@ -895,45 +1099,36 @@ impl OmwAgentPageView {
         // We only log; surfacing this in last_save_error would be noisy
         // (the most common reason is "user typed a path that doesn't
         // exist yet", which is recoverable).
-        if let Err(e) =
-            omw_config::sync_agents_md(cfg.agent.agents_md_path.as_deref())
-        {
+        if let Err(e) = omw_config::sync_agents_md(cfg.agent.agents_md_path.as_deref()) {
             log::warn!("omw# settings: AGENTS.md sync on Apply failed: {e}");
         }
 
-        // 6. Orphan cleanup. Any provider id that was in the previous
-        //    saved_config but is gone from the new cfg has no live TOML
-        //    reference — its keychain entry is unreachable. Delete to
-        //    avoid accumulating dead entries on rename / remove. The
-        //    rename migration in step 2 already deleted the old entries
-        //    it migrated; this catches plain removes plus any rename
-        //    whose migration was skipped because the user typed a fresh
-        //    key for the new id (step 3 overwrote it; old still
-        //    orphaned). Failures are logged, not surfaced, so a
-        //    quirky keychain backend doesn't block the user.
-        let new_ids: std::collections::HashSet<String> = cfg
+        // 6. Orphan cleanup. Any key reference from the previous saved
+        //    config that no longer appears in the new config is unreachable.
+        //    Compare references, not just provider ids: a same-id kind change
+        //    to keyless Ollama must remove the old credential too, while a
+        //    shared reference still used by another provider must survive.
+        //    The rename migration in step 2 may already have deleted an old
+        //    reference; NotFound remains an expected no-op here. Failures are
+        //    logged, not surfaced, so a quirky keychain backend doesn't block
+        //    the user's TOML save.
+        let live_key_refs: std::collections::HashSet<String> = cfg
             .providers
-            .keys()
-            .map(|id| id.as_str().to_string())
+            .values()
+            .filter_map(|provider| provider.key_ref())
+            .map(ToString::to_string)
             .collect();
-        for old_id in self.state.saved_config.providers.keys() {
-            let id_str = old_id.as_str();
-            if new_ids.contains(id_str) {
+        for (old_id, old_provider) in &self.state.saved_config.providers {
+            let Some(old_key_ref) = old_provider.key_ref() else {
+                continue;
+            };
+            if live_key_refs.contains(&old_key_ref.to_string()) {
                 continue;
             }
-            let kr = match KeyRef::from_str(&format!("keychain:omw/{id_str}")) {
-                Ok(k) => k,
-                Err(e) => {
-                    log::warn!(
-                        "omw# settings: orphan cleanup: invalid key_ref for {id_str}: {e}"
-                    );
-                    continue;
-                }
-            };
-            if let Err(e) = omw_keychain::delete(&kr) {
+            if let Err(e) = omw_keychain::delete(old_key_ref) {
                 if !matches!(e, omw_keychain::KeychainError::NotFound) {
                     log::warn!(
-                        "omw# settings: orphan cleanup: delete of {id_str} failed: {e}"
+                        "omw# settings: orphan cleanup: delete for provider {old_id} failed: {e}"
                     );
                 }
             }
@@ -956,6 +1151,7 @@ impl OmwAgentPageView {
         self.state.form = form_from_config_with_order(&cfg, &prior_order);
         self.state.pending_secrets.clear();
         self.state.pending_renames.clear();
+        self.state.provider_test_status.clear();
         self.state.is_dirty = false;
         self.state.last_save_error = None;
 
@@ -1017,7 +1213,7 @@ fn make_provider_row_editors(
     });
 
     let api_key_input = ctx.add_typed_action_view(|ctx| {
-        let mut input = SubmittableTextInput::new(ctx);
+        let mut input = SubmittableTextInput::new_password(ctx).keep_buffer_on_submit();
         input.set_placeholder_text("API key (will be saved to keychain on Apply)", ctx);
         input
     });
@@ -1033,6 +1229,7 @@ fn make_provider_row_editors(
         base_url_input,
         api_key_input,
         set_default_button: MouseStateHandle::default(),
+        test_button: MouseStateHandle::default(),
         remove_button: MouseStateHandle::default(),
         kind_buttons: [
             MouseStateHandle::default(),
@@ -1093,6 +1290,11 @@ impl TypedActionView for OmwAgentPageView {
                 | OmwAgentPageAction::RemoveProvider(_)
                 | OmwAgentPageAction::Apply
         );
+        // Capture this before dispatch mutates the row kind. A keyed →
+        // keyless transition clears reducer-owned secret state; the live
+        // password editor has its own buffer and must be cleared separately
+        // or a later Apply/Test would flush the stale secret back into state.
+        let api_key_buffer_to_clear = provider_api_key_buffer_clear_slot(&self.state, action);
         // Before Apply: flush any typed-but-not-yet-submitted text from
         // each row's editor inputs into form state. Without this, users
         // who type into an input and click Apply without pressing Enter
@@ -1102,10 +1304,23 @@ impl TypedActionView for OmwAgentPageView {
         // the form on rebuild. (The default-row-only validation
         // relaxation removed the prior strict-validation safety net
         // that surfaced this as an explicit error.)
-        if matches!(action, OmwAgentPageAction::Apply) {
+        if matches!(
+            action,
+            OmwAgentPageAction::Apply | OmwAgentPageAction::TestProvider(_)
+        ) {
             self.flush_pending_input_text(ctx);
         }
+        if let OmwAgentPageAction::TestProvider(idx) = action {
+            self.start_provider_test(*idx, ctx);
+            ctx.notify();
+            return;
+        }
         self.dispatch(action.clone());
+        if let Some(idx) = api_key_buffer_to_clear {
+            if let Some(editors) = self.provider_editors.get(idx) {
+                set_input_text(&editors.api_key_input, "", ctx);
+            }
+        }
         if needs_full_buffer_refresh {
             // Re-sync every editor buffer from the (possibly mutated)
             // form so typed values keep showing the canonical text.
@@ -1180,10 +1395,7 @@ impl OmwAgentPageView {
                     .read(ctx, |e, ctx| e.buffer_text(ctx).trim().to_owned())
             });
             if text != self.state.form.agents_md_path {
-                apply_action(
-                    &mut self.state,
-                    OmwAgentPageAction::SetAgentsMdPath(text),
-                );
+                apply_action(&mut self.state, OmwAgentPageAction::SetAgentsMdPath(text));
             }
         }
     }
@@ -1223,7 +1435,7 @@ impl SettingsWidget for OmwAgentPageWidget {
     type View = OmwAgentPageView;
 
     fn search_terms(&self) -> &str {
-        "agent omw provider api key approval keychain config"
+        "agent omw provider api key approval keychain config test connection"
     }
 
     fn render(
@@ -1251,20 +1463,18 @@ impl SettingsWidget for OmwAgentPageWidget {
                 },
                 view.agent_enabled_button.clone(),
             )
-            .with_text_label(
-                if form.agent_enabled {
-                    "Enabled".to_owned()
-                } else {
-                    "Disabled".to_owned()
-                },
-            )
+            .with_text_label(if form.agent_enabled {
+                "Enabled".to_owned()
+            } else {
+                "Disabled".to_owned()
+            })
             .build()
             .on_click(|ctx, _, _| {
                 ctx.dispatch_typed_action(OmwAgentPageAction::ToggleEnabled);
             })
             .finish();
-        let mut agent_enabled_row = Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Center);
+        let mut agent_enabled_row =
+            Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
         agent_enabled_row.add_child(
             Container::new(
                 Text::new(
@@ -1290,16 +1500,23 @@ impl SettingsWidget for OmwAgentPageWidget {
         // others Secondary, matching the per-provider kind selector
         // below for visual consistency.
         let approval_modes = [
-            (ApprovalMode::ReadOnly, "Read only", &view.approval_mode_buttons[0]),
+            (
+                ApprovalMode::ReadOnly,
+                "Read only",
+                &view.approval_mode_buttons[0],
+            ),
             (
                 ApprovalMode::AskBeforeWrite,
                 "Ask before write",
                 &view.approval_mode_buttons[1],
             ),
-            (ApprovalMode::Trusted, "Trusted", &view.approval_mode_buttons[2]),
+            (
+                ApprovalMode::Trusted,
+                "Trusted",
+                &view.approval_mode_buttons[2],
+            ),
         ];
-        let mut approval_row = Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Center);
+        let mut approval_row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
         approval_row.add_child(
             Container::new(
                 Text::new(
@@ -1331,9 +1548,7 @@ impl SettingsWidget for OmwAgentPageWidget {
                     ctx.dispatch_typed_action(OmwAgentPageAction::SetApprovalMode(mode));
                 })
                 .finish();
-            approval_row.add_child(
-                Container::new(button).with_margin_right(4.).finish(),
-            );
+            approval_row.add_child(Container::new(button).with_margin_right(4.).finish());
         }
         col.add_child(
             Container::new(approval_row.finish())
@@ -1358,13 +1573,10 @@ impl SettingsWidget for OmwAgentPageWidget {
             .with_text_label(format!("{default_label} \u{25BE}"))
             .build()
             .on_click(|ctx, _, _| {
-                ctx.dispatch_typed_action(
-                    OmwAgentPageAction::ToggleDefaultProviderDropdown,
-                );
+                ctx.dispatch_typed_action(OmwAgentPageAction::ToggleDefaultProviderDropdown);
             })
             .finish();
-        let mut default_row = Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Center);
+        let mut default_row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
         default_row.add_child(
             Container::new(
                 Text::new(
@@ -1386,8 +1598,7 @@ impl SettingsWidget for OmwAgentPageWidget {
         );
 
         if view.state.default_provider_dropdown.is_expanded {
-            let mut menu = Flex::column()
-                .with_cross_axis_alignment(CrossAxisAlignment::Start);
+            let mut menu = Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Start);
             // (none) item — clears default.
             let is_none_active = form.default_provider.is_none();
             let none_item = appearance
@@ -1403,24 +1614,17 @@ impl SettingsWidget for OmwAgentPageWidget {
                 .with_text_label("(none)".to_owned())
                 .build()
                 .on_click(|ctx, _, _| {
-                    ctx.dispatch_typed_action(
-                        OmwAgentPageAction::SetDefaultProviderById(None),
-                    );
-                    ctx.dispatch_typed_action(
-                        OmwAgentPageAction::CloseDefaultProviderDropdown,
-                    );
+                    ctx.dispatch_typed_action(OmwAgentPageAction::SetDefaultProviderById(None));
+                    ctx.dispatch_typed_action(OmwAgentPageAction::CloseDefaultProviderDropdown);
                 })
                 .finish();
-            menu.add_child(
-                Container::new(none_item).with_margin_bottom(2.).finish(),
-            );
+            menu.add_child(Container::new(none_item).with_margin_bottom(2.).finish());
             // Provider items.
             for (idx, prow) in form.providers.iter().enumerate() {
                 if idx >= view.default_provider_item_buttons.len() {
                     break;
                 }
-                let is_active =
-                    form.default_provider.as_deref() == Some(prow.id.as_str());
+                let is_active = form.default_provider.as_deref() == Some(prow.id.as_str());
                 let item_button = appearance
                     .ui_builder()
                     .button(
@@ -1436,22 +1640,16 @@ impl SettingsWidget for OmwAgentPageWidget {
                     .on_click({
                         let id = prow.id.clone();
                         move |ctx, _, _| {
-                            ctx.dispatch_typed_action(
-                                OmwAgentPageAction::SetDefaultProviderById(Some(
-                                    id.clone(),
-                                )),
-                            );
+                            ctx.dispatch_typed_action(OmwAgentPageAction::SetDefaultProviderById(
+                                Some(id.clone()),
+                            ));
                             ctx.dispatch_typed_action(
                                 OmwAgentPageAction::CloseDefaultProviderDropdown,
                             );
                         }
                     })
                     .finish();
-                menu.add_child(
-                    Container::new(item_button)
-                        .with_margin_bottom(2.)
-                        .finish(),
-                );
+                menu.add_child(Container::new(item_button).with_margin_bottom(2.).finish());
             }
             col.add_child(
                 Container::new(menu.finish())
@@ -1641,7 +1839,10 @@ impl SettingsWidget for OmwAgentPageWidget {
                             .with_child(input_el)
                             .finish()
                     };
-                col.add_child(labeled_input("    id (press Enter to apply):", &editors.id_input));
+                col.add_child(labeled_input(
+                    "    id (press Enter to apply):",
+                    &editors.id_input,
+                ));
                 col.add_child(labeled_input("    model:", &editors.model_input));
                 col.add_child(labeled_input(
                     "    base_url (optional override):",
@@ -1656,7 +1857,11 @@ impl SettingsWidget for OmwAgentPageWidget {
                 // and a kind selector row.
                 let kinds_with_labels = [
                     (ProviderKindForm::OpenAi, "openai", &editors.kind_buttons[0]),
-                    (ProviderKindForm::Anthropic, "anthropic", &editors.kind_buttons[1]),
+                    (
+                        ProviderKindForm::Anthropic,
+                        "anthropic",
+                        &editors.kind_buttons[1],
+                    ),
                     (
                         ProviderKindForm::OpenAiCompatible,
                         "openai-compatible",
@@ -1664,8 +1869,8 @@ impl SettingsWidget for OmwAgentPageWidget {
                     ),
                     (ProviderKindForm::Ollama, "ollama", &editors.kind_buttons[3]),
                 ];
-                let mut kind_row = Flex::row()
-                    .with_cross_axis_alignment(CrossAxisAlignment::Center);
+                let mut kind_row =
+                    Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
                 kind_row.add_child(
                     Container::new(
                         Text::new(
@@ -1699,13 +1904,15 @@ impl SettingsWidget for OmwAgentPageWidget {
                             ));
                         })
                         .finish();
-                    kind_row.add_child(
-                        Container::new(button).with_margin_right(4.).finish(),
-                    );
+                    kind_row.add_child(Container::new(button).with_margin_right(4.).finish());
                 }
-                col.add_child(Container::new(kind_row.finish()).with_margin_top(4.).finish());
+                col.add_child(
+                    Container::new(kind_row.finish())
+                        .with_margin_top(4.)
+                        .finish(),
+                );
 
-                // Set Default + Remove.
+                // Set Default + Test + Remove.
                 let mut action_row = Flex::row()
                     .with_main_axis_alignment(MainAxisAlignment::Start)
                     .with_cross_axis_alignment(CrossAxisAlignment::Center);
@@ -1728,15 +1935,36 @@ impl SettingsWidget for OmwAgentPageWidget {
                     .on_click({
                         let id = row.id.clone();
                         move |ctx, _, _| {
-                            ctx.dispatch_typed_action(
-                                OmwAgentPageAction::SetDefaultProviderById(Some(id.clone())),
-                            );
+                            ctx.dispatch_typed_action(OmwAgentPageAction::SetDefaultProviderById(
+                                Some(id.clone()),
+                            ));
                         }
                     })
                     .finish();
                 action_row.add_child(
-                    Container::new(default_button).with_margin_right(6.).finish(),
+                    Container::new(default_button)
+                        .with_margin_right(6.)
+                        .finish(),
                 );
+                let is_testing = matches!(
+                    view.state.provider_test_status.get(&idx),
+                    Some(ProviderTestStatus::Testing(_))
+                );
+                let test_label = if is_testing { "Testing…" } else { "Test" };
+                let mut test_button = appearance
+                    .ui_builder()
+                    .button(ButtonVariant::Secondary, editors.test_button.clone())
+                    .with_text_label(test_label.to_owned())
+                    .build();
+                if is_testing {
+                    test_button = test_button.disable();
+                }
+                let test_button = test_button
+                    .on_click(move |ctx, _, _| {
+                        ctx.dispatch_typed_action(OmwAgentPageAction::TestProvider(idx));
+                    })
+                    .finish();
+                action_row.add_child(Container::new(test_button).with_margin_right(6.).finish());
                 let remove_button = appearance
                     .ui_builder()
                     .button(ButtonVariant::Secondary, editors.remove_button.clone())
@@ -1750,9 +1978,38 @@ impl SettingsWidget for OmwAgentPageWidget {
                 col.add_child(
                     Container::new(action_row.finish())
                         .with_margin_top(4.)
-                        .with_margin_bottom(12.)
+                        .with_margin_bottom(4.)
                         .finish(),
                 );
+                if let Some(status) = view.state.provider_test_status.get(&idx) {
+                    let (message, color) = match status {
+                        ProviderTestStatus::Testing(_) => {
+                            ("    Testing connection…".to_owned(), muted)
+                        }
+                        ProviderTestStatus::Succeeded => {
+                            ("    Connection test passed.".to_owned(), active)
+                        }
+                        ProviderTestStatus::Failed(reason) => (
+                            format!("    Connection test failed: {reason}"),
+                            theme.ui_error_color(),
+                        ),
+                    };
+                    col.add_child(
+                        Container::new(
+                            Text::new(message, appearance.ui_font_family(), CONTENT_FONT_SIZE)
+                                .with_color(color)
+                                .finish(),
+                        )
+                        .with_margin_bottom(12.)
+                        .finish(),
+                    );
+                } else {
+                    col.add_child(
+                        Container::new(Flex::column().finish())
+                            .with_margin_bottom(8.)
+                            .finish(),
+                    );
+                }
             }
         }
 
@@ -1828,7 +2085,11 @@ impl SettingsWidget for OmwAgentPageWidget {
         let buttons = Flex::row()
             .with_child(Container::new(apply_button).with_margin_right(8.).finish())
             .with_child(discard_button);
-        col.add_child(Container::new(buttons.finish()).with_margin_top(8.).finish());
+        col.add_child(
+            Container::new(buttons.finish())
+                .with_margin_top(8.)
+                .finish(),
+        );
 
         // Click-outside + Escape close the default-provider dropdown.
         // Wrap the whole page so a mouse-down on whitespace OR Escape
@@ -1850,16 +2111,12 @@ impl SettingsWidget for OmwAgentPageWidget {
             // the user's selection silently failed to take effect.
             EventHandler::new(page)
                 .on_left_mouse_up(|ctx, _, _| {
-                    ctx.dispatch_typed_action(
-                        OmwAgentPageAction::CloseDefaultProviderDropdown,
-                    );
+                    ctx.dispatch_typed_action(OmwAgentPageAction::CloseDefaultProviderDropdown);
                     DispatchEventResult::PropagateToParent
                 })
                 .on_keydown(|ctx, _, keystroke| {
                     if keystroke.is_unmodified_key("escape") {
-                        ctx.dispatch_typed_action(
-                            OmwAgentPageAction::CloseDefaultProviderDropdown,
-                        );
+                        ctx.dispatch_typed_action(OmwAgentPageAction::CloseDefaultProviderDropdown);
                         DispatchEventResult::StopPropagation
                     } else {
                         DispatchEventResult::PropagateToParent

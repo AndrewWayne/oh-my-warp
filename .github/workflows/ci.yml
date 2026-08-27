@@ -1,7 +1,8 @@
 name: CI
 
-# Tier A per specs/test-plan.md §6: fmt, clippy, test on every push and PR.
-# Wall budget: ~5 minutes. macOS + Linux matrix.
+# Tier A per specs/test-plan.md §6: core macOS/Linux lanes plus a focused
+# Windows integration lane. Windows deliberately excludes the vendored Warp
+# GUI link; compiled-binary/no-cloud gates remain in the release workflow.
 
 on:
   push:
@@ -84,11 +85,11 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: test
-        run: cargo test --workspace --all-targets
+        run: cargo test --workspace --all-targets --locked
       - name: doc-tests
-        run: cargo test --workspace --doc
+        run: cargo test --workspace --doc --locked
 
   ts-omw-agent:
     name: ${{ matrix.os }} / omw-agent (TS)
@@ -113,7 +114,7 @@ jobs:
       - name: Build helper binary
         run: cargo build --release -p omw-keychain-helper
       - name: npm install
-        run: npm install
+        run: npm ci --no-fund --no-audit
       - name: typecheck
         working-directory: apps/omw-agent
         run: npm run typecheck
@@ -133,7 +134,7 @@ jobs:
         with:
           node-version: '22'
       - name: npm install
-        run: npm install
+        run: npm ci --no-fund --no-audit
       - name: build (tsc + vite)
         working-directory: apps/web-controller
         run: npm run build
@@ -151,10 +152,124 @@ jobs:
         with:
           node-version: '22'
       - name: npm install
-        run: npm install
+        run: npm ci --no-fund --no-audit
       # Typecheck the shared BYORC client on its own tsconfig. This proves it
       # stays decoupled from the Web Controller (no React/xterm/IndexedDB/DOM
       # app imports), so Node clients such as omw-mcp can consume it.
       - name: typecheck
         working-directory: packages/byorc-client
         run: npm run typecheck
+
+  windows-integration:
+    name: Windows / root + TS integration
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Prepare retained logs
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force artifacts/windows-ci | Out-Null
+      - name: Install selected Node workspaces
+        shell: pwsh
+        run: |
+          & npm.cmd ci --no-fund --no-audit `
+            --workspace @oh-my-warp/omw-agent `
+            --workspace @oh-my-warp/web-controller `
+            --workspace @oh-my-warp/byorc-client `
+            --include-workspace-root=false 2>&1 |
+            Tee-Object -FilePath artifacts/windows-ci/npm-ci.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+      - name: Build Web Controller
+        shell: pwsh
+        run: |
+          & npm.cmd run build --workspace @oh-my-warp/web-controller 2>&1 |
+            Tee-Object -FilePath artifacts/windows-ci/web-build.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+      - name: Test Web Controller
+        shell: pwsh
+        run: |
+          & npm.cmd test --workspace @oh-my-warp/web-controller 2>&1 |
+            Tee-Object -FilePath artifacts/windows-ci/web-test.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+      - name: Typecheck BYORC client
+        shell: pwsh
+        run: |
+          & npm.cmd run typecheck --workspace @oh-my-warp/byorc-client 2>&1 |
+            Tee-Object -FilePath artifacts/windows-ci/byorc-typecheck.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+      - name: Clippy root Windows workspace
+        shell: pwsh
+        env:
+          OMW_SKIP_WEB_BUILD: '1'
+        run: |
+          & cargo clippy --workspace --all-targets --locked -- -D warnings 2>&1 |
+            Tee-Object -FilePath artifacts/windows-ci/cargo-clippy.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+      - name: Test root Windows workspace
+        shell: pwsh
+        env:
+          OMW_SKIP_WEB_BUILD: '1'
+        run: |
+          & cargo test --workspace --all-targets --locked 2>&1 |
+            Tee-Object -FilePath artifacts/windows-ci/cargo-test.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+      - name: Test root Windows doctests
+        shell: pwsh
+        env:
+          OMW_SKIP_WEB_BUILD: '1'
+        run: |
+          & cargo test --workspace --doc --locked 2>&1 |
+            Tee-Object -FilePath artifacts/windows-ci/cargo-doc-test.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+      - name: Build Windows keychain helper
+        shell: pwsh
+        env:
+          OMW_SKIP_WEB_BUILD: '1'
+        run: |
+          & cargo build --locked -p omw-keychain-helper 2>&1 |
+            Tee-Object -FilePath artifacts/windows-ci/keychain-helper-build.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+      - name: Typecheck omw-agent
+        shell: pwsh
+        run: |
+          & npm.cmd run typecheck --workspace @oh-my-warp/omw-agent 2>&1 |
+            Tee-Object -FilePath artifacts/windows-ci/agent-typecheck.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+      - name: Test omw-agent with Windows helper
+        shell: pwsh
+        env:
+          OMW_KEYCHAIN_HELPER: ${{ github.workspace }}\target\debug\omw-keychain-helper.exe
+        run: |
+          & npm.cmd test --workspace @oh-my-warp/omw-agent 2>&1 |
+            Tee-Object -FilePath artifacts/windows-ci/agent-test.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+      - name: Upload Windows CI logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-ci-logs
+          path: artifacts/windows-ci
+          if-no-files-found: warn
+          retention-days: 14

@@ -23,7 +23,45 @@
 
 #![cfg(feature = "omw_local")]
 
-use warp::test_exports::{OmwAgentEventDown, OmwAgentTranscriptModel};
+use warp::test_exports::{
+    format_agent_status, OmwAgentEventDown, OmwAgentStatus, OmwAgentTranscriptModel,
+};
+
+#[test]
+fn agent_status_uses_concise_user_facing_labels() {
+    let cases = [
+        (OmwAgentStatus::Idle, "Agent status: Idle"),
+        (OmwAgentStatus::Starting, "Agent status: Starting"),
+        (
+            OmwAgentStatus::Connected {
+                session_id: "session-id-that-does-not-belong-in-the-ui".to_owned(),
+            },
+            "Agent status: Connected",
+        ),
+        (
+            OmwAgentStatus::Streaming {
+                session_id: "another-internal-session-id".to_owned(),
+            },
+            "Agent status: Streaming",
+        ),
+    ];
+
+    for (status, expected) in cases {
+        assert_eq!(format_agent_status(&status), expected);
+    }
+}
+
+#[test]
+fn failed_agent_status_preserves_the_user_facing_error() {
+    let status = OmwAgentStatus::Failed {
+        error: "provider unavailable".to_owned(),
+    };
+
+    assert_eq!(
+        format_agent_status(&status),
+        "Agent status: Failed - provider unavailable"
+    );
+}
 
 #[test]
 fn inbound_assistant_delta_appends_to_transcript() {

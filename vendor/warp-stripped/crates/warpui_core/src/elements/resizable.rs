@@ -1,17 +1,14 @@
-use std::{
-    mem,
-    sync::{Arc, Mutex, MutexGuard},
-};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use pathfinder_color::ColorU;
 use pathfinder_geometry::{
     rect::RectF,
-    vector::{vec2f, Vector2F},
+    vector::{Vector2F, vec2f},
 };
 
 use crate::{
-    event::DispatchedEvent, platform::Cursor, AfterLayoutContext, AppContext, Element,
-    EventContext, PaintContext, SizeConstraint,
+    AfterLayoutContext, AppContext, Element, EventContext, PaintContext, SizeConstraint,
+    event::DispatchedEvent, platform::Cursor,
 };
 
 use super::{Fill, Point, ZIndex};
@@ -24,9 +21,6 @@ const DRAGBAR_WIDTH: f32 = 5.0;
 /// manage dimensions as the element is resized.
 ///
 /// Supports both horizontal and vertical resizing via the ResizeDirection.
-///
-/// TODO:
-///     - Take a configurable dragbar size instead of always using 5.0
 pub struct Resizable {
     child: Box<dyn Element>,
     origin: Option<Vector2F>,
@@ -37,7 +31,6 @@ pub struct Resizable {
     resize_handler: Option<Handler>,
     start_resize_handler: Option<Handler>,
     end_resize_handler: Option<Handler>,
-    hovering_dragbar: bool,
     direction: ResizeDirection,
     origin_delta: Vector2F,
     dragbar_offset: f32,
@@ -57,6 +50,7 @@ pub struct ResizableState {
     size: f32,
     bounds: Option<(f32, f32)>,
     mode: ResizableMode,
+    hovering_dragbar: bool,
 }
 
 #[derive(Default)]
@@ -74,6 +68,7 @@ impl ResizableState {
             size,
             bounds: None,
             mode: Default::default(),
+            hovering_dragbar: false,
         }
     }
     pub fn size(&self) -> f32 {
@@ -153,11 +148,7 @@ impl ResizableState {
 
             self.mode = ResizableMode::Dragging { last_position };
 
-            if resized {
-                Some(origin_delta)
-            } else {
-                None
-            }
+            if resized { Some(origin_delta) } else { None }
         } else {
             None
         }
@@ -184,7 +175,10 @@ struct Dragbar {
     size: Option<Vector2F>,
     z_index: Option<ZIndex>,
     color: Fill,
+    hover_color: Option<Fill>,
     side: DragBarSide,
+    width: f32,
+    visual_width: f32,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -212,7 +206,10 @@ impl Dragbar {
             size: None,
             z_index: None,
             color,
+            hover_color: None,
             side: Default::default(),
+            width: DRAGBAR_WIDTH,
+            visual_width: DRAGBAR_WIDTH,
         }
     }
 }
@@ -229,7 +226,6 @@ impl Resizable {
             start_resize_handler: None,
             end_resize_handler: None,
             dragbar: Dragbar::new(),
-            hovering_dragbar: false,
             direction: ResizeDirection::Horizontal,
             origin_delta: Vector2F::zero(),
             dragbar_offset: 0.0,
@@ -271,6 +267,28 @@ impl Resizable {
 
     pub fn with_dragbar_color(mut self, color: Fill) -> Self {
         self.dragbar.color = color;
+        self
+    }
+
+    /// Sets the dragbar color while the pointer is over its hit target.
+    pub fn with_dragbar_hover_color(mut self, color: Fill) -> Self {
+        self.dragbar.hover_color = Some(color);
+        self
+    }
+
+    /// Sets the width of the dragbar hit target.
+    pub fn with_dragbar_width(mut self, width: f32) -> Self {
+        if width.is_finite() && width > 0.0 {
+            self.dragbar.width = width;
+        }
+        self
+    }
+
+    /// Sets the painted divider width independently from the dragbar hit target.
+    pub fn with_dragbar_visual_width(mut self, width: f32) -> Self {
+        if width.is_finite() && width >= 0.0 {
+            self.dragbar.visual_width = width;
+        }
         self
     }
 
@@ -324,6 +342,13 @@ impl Resizable {
         let is_covered = ctx.is_covered(point);
 
         is_hovering && !is_covered
+    }
+
+    fn cursor(&self) -> Cursor {
+        match self.direction {
+            ResizeDirection::Horizontal => Cursor::ResizeLeftRight,
+            ResizeDirection::Vertical => Cursor::ResizeUpDown,
+        }
     }
 }
 
@@ -382,30 +407,54 @@ impl Element for Resizable {
     fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, app: &AppContext) {
         self.child.paint(origin, ctx, app);
 
-        // Draw the dragbar and record its size and position
+        // Record the full hit target, then paint a thinner divider inside it.
         let child_size = self.child.size().unwrap();
+        let dragbar_width = self.dragbar.width;
         let (dragbar_origin, dragbar_size) = match self.dragbar.side {
             DragBarSide::Left => (
                 origin - vec2f(self.dragbar_offset, 0.),
-                vec2f(DRAGBAR_WIDTH, child_size.y()),
+                vec2f(dragbar_width, child_size.y()),
             ),
             DragBarSide::Right => (
-                origin + vec2f(child_size.x() - DRAGBAR_WIDTH + self.dragbar_offset, 0.),
-                vec2f(DRAGBAR_WIDTH, child_size.y()),
+                origin + vec2f(child_size.x() - dragbar_width + self.dragbar_offset, 0.),
+                vec2f(dragbar_width, child_size.y()),
             ),
             DragBarSide::Top => (
                 origin - vec2f(0., self.dragbar_offset),
-                vec2f(child_size.x(), DRAGBAR_WIDTH),
+                vec2f(child_size.x(), dragbar_width),
             ),
             DragBarSide::Bottom => (
-                origin + vec2f(0., child_size.y() - DRAGBAR_WIDTH + self.dragbar_offset),
-                vec2f(child_size.x(), DRAGBAR_WIDTH),
+                origin + vec2f(0., child_size.y() - dragbar_width + self.dragbar_offset),
+                vec2f(child_size.x(), dragbar_width),
             ),
         };
 
         ctx.scene
             .draw_rect_with_hit_recording(RectF::new(dragbar_origin, dragbar_size))
-            .with_background(self.dragbar.color);
+            .with_background(Fill::Solid(ColorU::transparent_black()));
+
+        let visual_width = self.dragbar.visual_width.clamp(0.0, dragbar_width);
+        if visual_width > 0.0 {
+            let (visual_origin, visual_size) = match self.dragbar.side {
+                DragBarSide::Left | DragBarSide::Right => (
+                    dragbar_origin + vec2f((dragbar_width - visual_width) / 2.0, 0.0),
+                    vec2f(visual_width, dragbar_size.y()),
+                ),
+                DragBarSide::Top | DragBarSide::Bottom => (
+                    dragbar_origin + vec2f(0.0, (dragbar_width - visual_width) / 2.0),
+                    vec2f(dragbar_size.x(), visual_width),
+                ),
+            };
+            let hovering_dragbar = self.state().hovering_dragbar;
+            let color = if hovering_dragbar {
+                self.dragbar.hover_color.unwrap_or(self.dragbar.color)
+            } else {
+                self.dragbar.color
+            };
+            ctx.scene
+                .draw_rect_without_hit_recording(RectF::new(visual_origin, visual_size))
+                .with_background(color);
+        }
 
         self.dragbar.bounds = Some(RectF::new(dragbar_origin, dragbar_size));
         self.dragbar.origin = Some(Point::from_vec2f(dragbar_origin, ctx.scene.z_index()));
@@ -422,34 +471,48 @@ impl Element for Resizable {
         ctx: &mut EventContext,
         app: &AppContext,
     ) -> bool {
-        let child_handled = self.child.dispatch_event(event, ctx, app);
-
+        // Once resizing begins, capture drag/up before children so the gesture
+        // survives rerenders and remains active outside the original hit target.
         match event.raw_event() {
             crate::Event::LeftMouseDown { position, .. } => {
-                // If a mouse-down on the dragbar element occurred, put the view into resizing mode
                 if self
                     .dragbar
                     .bounds
                     .is_some_and(|bounds| bounds.contains_point(*position))
                 {
                     self.state().begin_resizing(*position);
-                    dispatch_callback(self.resize_handler.as_mut(), ctx, app);
+                    dispatch_callback(self.start_resize_handler.as_mut(), ctx, app);
                     return true;
                 }
             }
-
-            crate::Event::LeftMouseUp { .. } => {
-                // If a mouse-up occurs, take the view out of resizing mode
+            crate::Event::LeftMouseUp { position, .. } => {
                 if self.state().is_resizing() {
-                    ctx.reset_cursor();
-                    self.state().end_resizing();
+                    let hovering_dragbar = self.is_mouse_hovering_dragbar(ctx, *position);
+                    let hover_changed = self.state().hovering_dragbar != hovering_dragbar;
+                    {
+                        let mut state = self.state();
+                        state.end_resizing();
+                        state.hovering_dragbar = hovering_dragbar;
+                    }
+                    if hovering_dragbar {
+                        if let Some(z_index) = self.dragbar.z_index {
+                            ctx.set_cursor(self.cursor(), z_index);
+                        }
+                    } else {
+                        ctx.reset_cursor();
+                    }
+                    if hover_changed {
+                        ctx.notify();
+                    }
                     dispatch_callback(self.end_resize_handler.as_mut(), ctx, app);
                     return true;
                 }
             }
-
             crate::Event::LeftMouseDragged { position, .. } => {
                 if self.state().is_resizing() {
+                    if let Some(z_index) = self.dragbar.z_index {
+                        ctx.set_cursor(self.cursor(), z_index);
+                    }
                     let dragbar_side = self.dragbar.side;
                     let origin = self.origin.map(|origin| origin + self.origin_delta);
                     let resized = self
@@ -462,22 +525,27 @@ impl Element for Resizable {
                     return true;
                 }
             }
+            _ => {}
+        }
+
+        let child_handled = self.child.dispatch_event(event, ctx, app);
+
+        match event.raw_event() {
             crate::Event::MouseMoved { position, .. } => {
-                // A mouse event over the dragbar should set the cursor
-                let Some(z_index) = self.z_index() else {
+                let Some(z_index) = self.dragbar.z_index else {
                     log::warn!("self.z_index() was None in `Resizable`");
                     return false;
                 };
                 let hovering_dragbar = self.is_mouse_hovering_dragbar(ctx, *position);
-                let was_already_hovering =
-                    mem::replace(&mut self.hovering_dragbar, hovering_dragbar);
+                let was_already_hovering = self.state().hovering_dragbar;
+
+                if hovering_dragbar != was_already_hovering {
+                    self.state().hovering_dragbar = hovering_dragbar;
+                    ctx.notify();
+                }
 
                 if hovering_dragbar && !was_already_hovering {
-                    let cursor = match self.direction {
-                        ResizeDirection::Horizontal => Cursor::ResizeLeftRight,
-                        ResizeDirection::Vertical => Cursor::ResizeUpDown,
-                    };
-                    ctx.set_cursor(cursor, z_index);
+                    ctx.set_cursor(self.cursor(), z_index);
                 } else if !hovering_dragbar && was_already_hovering {
                     ctx.reset_cursor();
                 }
@@ -497,6 +565,10 @@ impl Element for Resizable {
         self.child.origin()
     }
 }
+
+#[cfg(test)]
+#[path = "resizable_test.rs"]
+mod tests;
 
 fn dispatch_callback(callback: Option<&mut Handler>, ctx: &mut EventContext, app: &AppContext) {
     if let Some(callback) = callback {

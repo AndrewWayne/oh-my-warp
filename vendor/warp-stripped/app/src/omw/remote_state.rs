@@ -30,6 +30,7 @@
 //! - PTY-controller hook (no `WarpSessionBashOperations` adapter)
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::thread;
@@ -58,6 +59,12 @@ const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Nonce store retention window (BYORC default: 60 s).
 const NONCE_WINDOW: Duration = Duration::from_secs(60);
+
+/// Enables write access for newly paired devices only on an exact, explicit
+/// host opt-in. All other values preserve the read-only pairing default.
+fn remote_default_write_enabled(value: Option<&OsStr>) -> bool {
+    matches!(value, Some(value) if value == OsStr::new("1"))
+}
 
 /// Public status surface for the button label.
 ///
@@ -159,39 +166,20 @@ impl OmwRemoteState {
         self.status_tx.subscribe()
     }
 
-    /// Bridge the watch channel into an [`async_channel::Receiver`] suitable
-    /// for `ViewContext::spawn_stream_local`. The Warp UI framework consumes
-    /// any `Stream`, but we don't have `tokio-stream` in the workspace, so
-    /// instead of wrapping the watch directly we spin up a tiny forwarder on
-    /// our existing daemon runtime: each `watch::changed().await` produces an
-    /// `async_channel::send`. The first item delivered is the *current* value
-    /// (so a late-attached UI can paint the right icon immediately).
-    ///
-    /// Errors from `ensure_runtime` are surfaced — the UI falls back to a
-    /// non-reactive button label in that (extremely rare) case.
+    /// Return a view-lifetime stream of status snapshots without starting the
+    /// daemon runtime. The first item is the current value.
     pub fn subscribe_status_stream(
         &self,
-    ) -> Result<async_channel::Receiver<OmwRemoteStatus>, String> {
-        let runtime = self.ensure_runtime()?;
+    ) -> impl futures::Stream<Item = OmwRemoteStatus> + 'static {
         let mut watch_rx = self.status_rx();
-        let (tx, rx) = async_channel::unbounded();
-
-        // Seed the stream with the current value so the subscriber paints the
-        // correct state on its first render, even if no transition follows.
-        let seed = watch_rx.borrow_and_update().clone();
-        let _ = tx.try_send(seed);
-
-        runtime.spawn(async move {
+        async_stream::stream! {
+            let initial = watch_rx.borrow_and_update().clone();
+            yield initial;
             while watch_rx.changed().await.is_ok() {
                 let snapshot = watch_rx.borrow_and_update().clone();
-                if tx.send(snapshot).await.is_err() {
-                    // UI dropped the receiver — exit the bridge.
-                    break;
-                }
+                yield snapshot;
             }
-        });
-
-        Ok(rx)
+        }
     }
 
     /// Update the cached status AND broadcast it on the watch channel. Caller
@@ -255,7 +243,19 @@ impl OmwRemoteState {
         }
 
         // Bring up (or reuse) the runtime thread.
-        let handle = self.ensure_runtime()?;
+        let handle = match self.ensure_runtime() {
+            Ok(handle) => handle,
+            Err(error) => {
+                let mut g = self.inner.lock();
+                self.set_status(
+                    &mut g,
+                    OmwRemoteStatus::Failed {
+                        error: error.clone(),
+                    },
+                );
+                return Err(error);
+            }
+        };
 
         // Block on init from the calling thread. The init future returns the
         // pair URL on success and a string error on failure.
@@ -275,14 +275,24 @@ impl OmwRemoteState {
             let _ = init_tx.send(result);
         });
 
-        match init_rx
-            .recv()
-            .map_err(|e| format!("init channel closed: {e}"))?
-        {
-            Ok((pair_url, tailscale_serving, serve_task, pty_registry)) => {
-                eprintln!(
-                    "omw-remote running. Pair URL: {pair_url} (tailscale_serving={tailscale_serving})"
+        let init_result = match init_rx.recv() {
+            Ok(result) => result,
+            Err(error) => {
+                let error = format!("init channel closed: {error}");
+                let mut g = self.inner.lock();
+                self.set_status(
+                    &mut g,
+                    OmwRemoteStatus::Failed {
+                        error: error.clone(),
+                    },
                 );
+                return Err(error);
+            }
+        };
+
+        match init_result {
+            Ok((pair_url, tailscale_serving, serve_task, pty_registry)) => {
+                eprintln!("omw-remote running (tailscale_serving={tailscale_serving})");
                 let mut g = self.inner.lock();
                 self.set_status(
                     &mut g,
@@ -420,28 +430,19 @@ impl OmwRemoteState {
     /// (icon, tooltip) without waiting for the next mutation). Each subsequent
     /// `store_pane_share` / `unshare_pane` call delivers the bumped counter.
     ///
-    /// Mirrors [`subscribe_status_stream`] in shape; the consumer doesn't care
-    /// about the counter value, only that something changed and it should
-    /// re-read [`is_pane_shared`].
+    /// Mirrors [`subscribe_status_stream`] without starting the daemon runtime;
+    /// the consumer only uses each item as an invalidation signal.
     #[allow(dead_code)]
-    pub fn subscribe_share_stream(&self) -> Result<async_channel::Receiver<u64>, String> {
-        let runtime = self.ensure_runtime()?;
+    pub fn subscribe_share_stream(&self) -> impl futures::Stream<Item = u64> + 'static {
         let mut watch_rx = self.share_tx.subscribe();
-        let (tx, rx) = async_channel::unbounded();
-
-        let seed = *watch_rx.borrow_and_update();
-        let _ = tx.try_send(seed);
-
-        runtime.spawn(async move {
+        async_stream::stream! {
+            let initial = *watch_rx.borrow_and_update();
+            yield initial;
             while watch_rx.changed().await.is_ok() {
                 let snapshot = *watch_rx.borrow_and_update();
-                if tx.send(snapshot).await.is_err() {
-                    break;
-                }
+                yield snapshot;
             }
-        });
-
-        Ok(rx)
+        }
     }
 
     /// Spin up (or return) the dedicated runtime thread.
@@ -535,7 +536,15 @@ fn data_dir() -> Result<PathBuf, String> {
 /// the live PTY-session registry. Caller `.abort()`s the handle to stop.
 async fn bring_up_daemon(
     runtime_handle: tokio::runtime::Handle,
-) -> Result<(String, bool, JoinHandle<()>, Arc<omw_server::SessionRegistry>), String> {
+) -> Result<
+    (
+        String,
+        bool,
+        JoinHandle<()>,
+        Arc<omw_server::SessionRegistry>,
+    ),
+    String,
+> {
     let dir = data_dir()?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
 
@@ -586,6 +595,11 @@ async fn bring_up_daemon(
 
     let pty_registry = omw_server::SessionRegistry::new();
     let pty_registry_for_state = pty_registry.clone();
+    let default_pair_write =
+        remote_default_write_enabled(std::env::var_os("OMW_REMOTE_ALLOW_DEFAULT_WRITE").as_deref());
+    if default_pair_write {
+        eprintln!("omw-remote: interactive phone input enabled for newly paired devices");
+    }
     let config = omw_remote::ServerConfig {
         bind,
         host_key: Arc::new(host_key),
@@ -595,9 +609,9 @@ async fn bring_up_daemon(
         nonce_store: omw_remote::NonceStore::new(NONCE_WINDOW),
         pairings: Some(pairings),
         request_log: None,
-        // Read-only default (invariant I-6); the embedded daemon has no
-        // write-opt-in surface yet.
-        default_pair_write: false,
+        // Read-only by default (invariant I-6); interactive input requires the
+        // exact OMW_REMOTE_ALLOW_DEFAULT_WRITE=1 host opt-in above.
+        default_pair_write,
         shell: omw_remote::ShellSpec::default_for_host(),
         pty_registry,
         host_id: "warp-host".to_string(),
@@ -609,7 +623,12 @@ async fn bring_up_daemon(
         }
     });
 
-    Ok((pair_url, tailscale_serving, serve_task, pty_registry_for_state))
+    Ok((
+        pair_url,
+        tailscale_serving,
+        serve_task,
+        pty_registry_for_state,
+    ))
 }
 
 #[cfg(test)]
@@ -647,6 +666,64 @@ impl OmwRemoteState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_default_write_absent_is_disabled() {
+        assert!(!remote_default_write_enabled(None));
+    }
+
+    #[test]
+    fn remote_default_write_exact_one_is_enabled() {
+        assert!(remote_default_write_enabled(Some(OsStr::new("1"))));
+    }
+
+    #[test]
+    fn remote_default_write_empty_is_disabled() {
+        assert!(!remote_default_write_enabled(Some(OsStr::new(""))));
+    }
+
+    #[test]
+    fn remote_default_write_zero_is_disabled() {
+        assert!(!remote_default_write_enabled(Some(OsStr::new("0"))));
+    }
+
+    #[test]
+    fn remote_default_write_true_is_disabled() {
+        assert!(!remote_default_write_enabled(Some(OsStr::new("true"))));
+    }
+
+    #[test]
+    fn remote_default_write_yes_is_disabled() {
+        assert!(!remote_default_write_enabled(Some(OsStr::new("yes"))));
+    }
+
+    #[test]
+    fn remote_default_write_malformed_is_disabled() {
+        for value in ["01", "+1", " 1", "1 ", "1\n"] {
+            assert!(
+                !remote_default_write_enabled(Some(OsStr::new(value))),
+                "unexpectedly accepted {value:?}",
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn remote_default_write_non_unicode_is_disabled() {
+        use std::os::windows::ffi::OsStringExt;
+
+        let value = std::ffi::OsString::from_wide(&[0xD800]);
+        assert!(!remote_default_write_enabled(Some(value.as_os_str())));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_default_write_non_unicode_is_disabled() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let value = std::ffi::OsString::from_vec(vec![b'1', 0xFF]);
+        assert!(!remote_default_write_enabled(Some(value.as_os_str())));
+    }
 
     /// `status_rx().borrow()` returns the initial `Stopped` value before any
     /// transition has occurred — the watch channel is seeded in `shared()` /
@@ -716,40 +793,24 @@ mod tests {
         assert!(matches!(*rx.borrow(), OmwRemoteStatus::Starting));
     }
 
-    /// The async-channel bridge that the UI uses (`subscribe_status_stream`)
-    /// seeds the stream with the current value AND forwards subsequent
-    /// transitions. Run on a current-thread tokio runtime so we don't have
-    /// to spin up the real daemon runtime in tests.
+    /// The UI stream seeds the current value and forwards later transitions
+    /// without starting the daemon runtime.
     #[tokio::test(flavor = "current_thread")]
     async fn subscribe_status_stream_seeds_and_forwards() {
+        use futures::StreamExt as _;
+
         let state = OmwRemoteState::new_for_test();
-        // Force a known starting value before subscribing.
         state.set_status_for_test(OmwRemoteStatus::Starting);
+        let mut stream = Box::pin(state.subscribe_status_stream());
 
-        // The bridge needs a runtime; `new_for_test` doesn't pre-attach one,
-        // but `ensure_runtime` will spin one up. To keep the test self-
-        // contained (and fast), we exercise the seed/forward logic directly
-        // against the watch channel rather than going through the daemon
-        // runtime.
-        let mut watch_rx = state.status_rx();
-        let (tx, rx) = async_channel::unbounded();
-        let seed = watch_rx.borrow_and_update().clone();
-        tx.try_send(seed).unwrap();
-
-        // Seed delivered.
-        let first = rx.recv().await.unwrap();
+        let first = stream.next().await.unwrap();
         assert!(matches!(first, OmwRemoteStatus::Starting));
 
-        // Mutate: the bridge logic reads the new value on `changed().await`.
         state.set_status_for_test(OmwRemoteStatus::Running {
             pair_url: "http://127.0.0.1:8787/pair?t=x".to_string(),
             tailscale_serving: false,
         });
-        watch_rx.changed().await.unwrap();
-        let snapshot = watch_rx.borrow_and_update().clone();
-        tx.try_send(snapshot).unwrap();
-
-        let second = rx.recv().await.unwrap();
+        let second = stream.next().await.unwrap();
         assert!(matches!(second, OmwRemoteStatus::Running { .. }));
     }
 
@@ -770,20 +831,24 @@ mod tests {
 
         let first_drops = Arc::new(AtomicUsize::new(0));
         let first_drops_clone = first_drops.clone();
-        let first =
-            super::super::pane_share::PaneShareHandle::new_for_test(uuid::Uuid::new_v4(), move || {
+        let first = super::super::pane_share::PaneShareHandle::new_for_test(
+            uuid::Uuid::new_v4(),
+            move || {
                 first_drops_clone.fetch_add(1, Ordering::Relaxed);
-            });
+            },
+        );
         assert!(state.store_pane_share(view_id, first));
         assert_eq!(state.share_count(), 1);
         assert!(state.is_pane_shared(view_id));
 
         let second_drops = Arc::new(AtomicUsize::new(0));
         let second_drops_clone = second_drops.clone();
-        let duplicate =
-            super::super::pane_share::PaneShareHandle::new_for_test(uuid::Uuid::new_v4(), move || {
+        let duplicate = super::super::pane_share::PaneShareHandle::new_for_test(
+            uuid::Uuid::new_v4(),
+            move || {
                 second_drops_clone.fetch_add(1, Ordering::Relaxed);
-            });
+            },
+        );
         // Second insert with same EntityId is rejected; the duplicate handle
         // is dropped (its on_stop callback fires) — proving the share map
         // can't accidentally double-register pumps for the same pane.
@@ -809,14 +874,15 @@ mod tests {
     }
 
     /// `subscribe_share_stream` seeds the consumer with the current counter
-    /// AND delivers a fresh value on every store/unshare. Mirrors
-    /// `subscribe_status_stream_seeds_and_forwards` for the share-map watch.
-    #[test]
-    fn share_tx_bumps_on_mutation() {
+    /// and delivers a fresh value on every store/unshare.
+    #[tokio::test(flavor = "current_thread")]
+    async fn subscribe_share_stream_seeds_and_forwards() {
+        use futures::StreamExt as _;
+
         let state = OmwRemoteState::new_for_test();
         let view_id = EntityId::from_usize(7);
-        let mut rx = state.share_tx.subscribe();
-        let initial = *rx.borrow_and_update();
+        let mut stream = Box::pin(state.subscribe_share_stream());
+        let initial = stream.next().await.expect("seeded share version");
 
         let drops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let drops_for_handle = drops.clone();
@@ -827,13 +893,11 @@ mod tests {
             },
         );
         assert!(state.store_pane_share(view_id, handle));
-        assert!(rx.has_changed().expect("sender alive"));
-        let after_insert = *rx.borrow_and_update();
+        let after_insert = stream.next().await.expect("insert share version");
         assert_ne!(after_insert, initial);
 
         state.unshare_pane(view_id);
-        assert!(rx.has_changed().expect("sender alive"));
-        let after_remove = *rx.borrow_and_update();
+        let after_remove = stream.next().await.expect("remove share version");
         assert_ne!(after_remove, after_insert);
     }
 }

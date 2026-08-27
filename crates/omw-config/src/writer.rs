@@ -39,7 +39,7 @@ pub fn save_atomic(path: &Path, cfg: &Config) -> Result<(), ConfigError> {
             .parse()
             .map_err(|source: toml_edit::TomlError| ConfigError::TomlEdit {
                 path: path.to_path_buf(),
-                source,
+                source: Box::new(source),
             })?
     };
 

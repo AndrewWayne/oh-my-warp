@@ -90,16 +90,7 @@ pub fn watch_with_debounce(path: PathBuf, debounce: Duration) -> Result<WatchHan
     // doesn't exist yet) preserves the previous behavior for the
     // create-on-write case — once the file appears, parent canonicalize
     // below covers it.
-    let canonical_target = match std::fs::canonicalize(&path) {
-        Ok(p) => p,
-        Err(_) => match std::fs::canonicalize(&parent) {
-            Ok(parent_canon) => path
-                .file_name()
-                .map(|name| parent_canon.join(name))
-                .unwrap_or_else(|| path.clone()),
-            Err(_) => path.clone(),
-        },
-    };
+    let canonical_target = canonicalize_allow_missing(&path);
     std::thread::Builder::new()
         .name("omw-config-watcher".into())
         .spawn(move || run_watcher_thread(events_rx, tx, canonical_target, debounce))
@@ -154,15 +145,46 @@ fn run_watcher_thread(
 /// the parent directory means we see siblings' events too; this drops them.
 fn is_relevant(event: &notify::Result<notify::Event>, target: &Path) -> bool {
     match event {
-        Ok(ev) => ev.paths.iter().any(|p| p == target),
+        Ok(ev) => ev
+            .paths
+            .iter()
+            .any(|path| canonicalize_allow_missing(path) == target),
         // Pass errors through so the worker can re-read and surface them.
         Err(_) => true,
     }
 }
 
+/// Canonicalize a path even when its final component does not exist.
+///
+/// Windows' `std::fs::canonicalize` returns a verbatim path (for example,
+/// `\\?\D:\...`), while `notify` reports an ordinary drive-letter path.
+/// Normalizing both the watched target and each event path prevents that
+/// representation difference from filtering out every Windows event. The
+/// parent fallback also covers create/delete and atomic-replace events.
+fn canonicalize_allow_missing(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| {
+        path.parent()
+            .and_then(|parent| std::fs::canonicalize(parent).ok())
+            .and_then(|parent| path.file_name().map(|name| parent.join(name)))
+            .unwrap_or_else(|| path.to_path_buf())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relevant_event_matches_canonical_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        write(&path, "");
+
+        let event = Ok(notify::Event::new(notify::EventKind::Any).add_path(path.clone()));
+        let canonical_target = canonicalize_allow_missing(&path);
+
+        assert!(is_relevant(&event, &canonical_target));
+    }
 
     fn write(path: &Path, body: &str) {
         std::fs::write(path, body).unwrap();

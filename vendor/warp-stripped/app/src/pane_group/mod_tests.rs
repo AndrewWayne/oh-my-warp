@@ -1174,6 +1174,87 @@ fn test_terminal_pane_headers() {
     });
 }
 
+#[cfg(feature = "omw_local")]
+#[test]
+fn omw_phone_share_is_persistent_for_plain_and_alt_screen_local_panes() {
+    use crate::terminal::model::ansi::{self, Handler as _};
+    use crate::terminal::session_settings::{CLIAgentToolbarChipSelection, SessionSettings};
+    use crate::terminal::view::TerminalAction;
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        crate::settings::AISettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .should_render_cli_agent_footer
+                .set_value(false, ctx)
+                .expect("disable CLI-agent footer");
+        });
+        SessionSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .cli_agent_footer_chip_selection
+                .set_value(
+                    CLIAgentToolbarChipSelection::Custom {
+                        left: vec![],
+                        right: vec![],
+                    },
+                    ctx,
+                )
+                .expect("remove all CLI-agent toolbar items");
+        });
+
+        let pane_group = mock_pane_group(&mut app, Default::default());
+
+        let terminal_view = pane_group.read(&app, |pane_group, ctx| {
+            let terminal_pane = match pane_group.panes_of::<TerminalPane>().exactly_one() {
+                Ok(terminal_pane) => terminal_pane,
+                Err(_) => panic!("expected one ordinary terminal pane"),
+            };
+            terminal_pane.terminal_view(ctx)
+        });
+
+        terminal_view.read(&app, |view, ctx| {
+            assert!(CLIAgentSessionsModel::as_ref(ctx)
+                .session(terminal_view.id())
+                .is_none());
+            assert!(view.is_omw_phone_shareable(ctx));
+            assert!(view.should_render_header(ctx));
+            let presentation = view
+                .omw_phone_share_presentation(ctx)
+                .expect("ordinary local pane phone action");
+            assert_eq!(presentation.label, "Share with phone");
+            assert!(!presentation.disabled);
+
+            let items = view.pane_header_overflow_menu_items(ctx);
+            let phone_item = items
+                .iter()
+                .find(|item| {
+                    matches!(
+                        item.item_on_select_action(),
+                        Some(TerminalAction::ToggleOmwPhoneShare)
+                    )
+                })
+                .expect("persistent phone action in pane overflow menu");
+            let fields = phone_item.fields().expect("ordinary menu item");
+            assert_eq!(fields.label(), "Share with phone");
+            assert!(!fields.is_disabled());
+
+            view.model.lock().set_mode(ansi::Mode::SwapScreen {
+                save_cursor_and_clear_screen: true,
+            });
+            assert!(view.model.lock().is_alt_screen_active());
+            assert!(view.should_render_header(ctx));
+            assert!(view
+                .pane_header_overflow_menu_items(ctx)
+                .iter()
+                .any(|item| matches!(
+                    item.item_on_select_action(),
+                    Some(TerminalAction::ToggleOmwPhoneShare)
+                )));
+        });
+    });
+}
+
 /// Tests that focusing two different panes in quick succession does not cause
 /// an infinite loop of focus changes, as outlined in this PR's description:
 /// https://github.com/warpdotdev/warp-internal/pull/8990

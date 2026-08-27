@@ -428,6 +428,9 @@ pub enum TerminalAction {
     },
     /// Toggle PTY recording for this session.
     ToggleSessionRecording,
+    /// Share or stop sharing this local terminal pane with a phone.
+    #[cfg(feature = "omw_local")]
+    ToggleOmwPhoneShare,
     /// Open the rich input editor for composing a prompt to send to a CLI agent.
     /// Triggered by Ctrl-G when a CLI agent is detected, or from the footer button.
     OpenCLIAgentRichInput,
@@ -704,6 +707,8 @@ impl fmt::Debug for TerminalAction {
             ToggleUsageFooter => write!(f, "ToggleUsageFooter"),
             RevealChildAgent { .. } => write!(f, "RevealChildAgent"),
             ToggleSessionRecording => write!(f, "ToggleSessionRecording"),
+            #[cfg(feature = "omw_local")]
+            ToggleOmwPhoneShare => write!(f, "ToggleOmwPhoneShare"),
             OpenCLIAgentRichInput => write!(f, "OpenCLIAgentRichInput"),
         }
     }

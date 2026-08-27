@@ -42,11 +42,10 @@ describe.skipIf(skipAll)("real omw-keychain-helper binary", () => {
 		}
 	});
 
-	// Skipped on macOS because the OS backend IS available there and would
-	// not produce exit 3 — that's a different code path documented in the
-	// helper's CLI contract.
-	it.skipIf(process.platform === "darwin")(
-		"3. backend unavailable on Linux/Windows throws exitCode === 3",
+	// This is a headless-Linux contract. macOS and Windows both provide a
+	// native OS credential backend and therefore do not return exit 3.
+	it.skipIf(process.platform !== "linux")(
+		"3. unavailable OS backend on headless Linux throws exitCode === 3",
 		async () => {
 			const { getKeychainSecret, KeychainHelperError } = await import(
 				"../src/keychain.js"

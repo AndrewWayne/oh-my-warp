@@ -47,12 +47,25 @@ pub struct SubmittableTextInput {
 
 impl SubmittableTextInput {
     pub fn new(ctx: &mut ViewContext<Self>) -> Self {
-        let editor = ctx.add_typed_action_view(|ctx| {
+        Self::new_with_password_mode(false, ctx)
+    }
+
+    /// Construct an input whose contents are rendered as password dots and
+    /// cannot be copied or cut. The backing editor still exposes the real
+    /// buffer to the owning form so it can submit the secret directly to a
+    /// keychain without ever rendering it as plaintext.
+    pub fn new_password(ctx: &mut ViewContext<Self>) -> Self {
+        Self::new_with_password_mode(true, ctx)
+    }
+
+    fn new_with_password_mode(is_password: bool, ctx: &mut ViewContext<Self>) -> Self {
+        let editor = ctx.add_typed_action_view(move |ctx| {
             let appearance = Appearance::as_ref(ctx);
             let options = EditorOptions {
                 autogrow: true,
                 soft_wrap: true,
                 text: TextOptions::ui_font_size(appearance),
+                is_password,
                 ..Default::default()
             };
             EditorView::new(options, ctx)

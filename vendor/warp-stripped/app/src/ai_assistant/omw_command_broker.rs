@@ -156,16 +156,25 @@ async fn handle_exec(
     // the prompt-end marker for a fast-completing command.
     let mut rx = handle.pty_reads_tx.new_receiver();
 
-    // Inject the command into the pane. A trailing CR is needed for the
-    // shell to actually execute (matching pty_controller's `COMMAND_ENTER`).
-    let mut bytes = command.into_bytes();
-    bytes.push(b'\r');
-    let send_result = handle
-        .event_loop_tx
-        .lock()
-        .send(Message::Input(Cow::Owned(bytes)));
+    // Production panes route through TerminalView's ExecuteCommand event so
+    // the command receives the same block/history/audit treatment as a user
+    // or official-agent command. Synthetic channel-only tests retain the raw
+    // PTY fallback; a trailing CR executes that fallback command.
+    let send_result: Result<(), String> = if let Some(command_tx) = &handle.command_tx {
+        command_tx
+            .try_send(command)
+            .map_err(|e| format!("UI command queue send failed: {e}"))
+    } else {
+        let mut bytes = command.into_bytes();
+        bytes.push(b'\r');
+        handle
+            .event_loop_tx
+            .lock()
+            .send(Message::Input(Cow::Owned(bytes)))
+            .map_err(|e| format!("event_loop_tx send failed: {e}"))
+    };
     if let Err(e) = send_result {
-        log::warn!("omw command_broker: event_loop_tx send failed: {e}");
+        log::warn!("omw command_broker: command dispatch failed: {e}");
         send_exit(&reply, command_id, None, true);
         return;
     }

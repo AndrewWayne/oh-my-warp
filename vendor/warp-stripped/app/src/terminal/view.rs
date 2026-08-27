@@ -26,6 +26,8 @@ use onboarding::callout::{FinalState, OnboardingCalloutViewEvent, OnboardingQuer
 use onboarding::{OnboardingCalloutView, OnboardingKeybindings};
 pub(crate) mod docker_sandbox;
 mod link_detection;
+#[cfg(feature = "omw_local")]
+pub(crate) mod omw_phone_share;
 mod open_in_warp;
 mod pane_impl;
 mod passive_suggestions;
@@ -2749,6 +2751,26 @@ pub struct TerminalView {
     cloud_mode_details_panel_toggle_mouse_state: warpui::elements::MouseStateHandle,
     /// Mouse state handle for the ambient agent cancel button in the pane header.
     ambient_agent_cancel_mouse_state: warpui::elements::MouseStateHandle,
+    /// Mouse state for the persistent per-pane phone-sharing header action.
+    #[cfg(feature = "omw_local")]
+    omw_phone_share_mouse_state: warpui::elements::MouseStateHandle,
+    /// Monotonic token used to invalidate deferred phone-share work.
+    #[cfg(feature = "omw_local")]
+    omw_phone_share_generation: u64,
+    /// The generation currently waiting on the zero-duration defer, if any.
+    #[cfg(feature = "omw_local")]
+    omw_phone_share_pending_generation: Option<u64>,
+    /// Whether the pending generation started a previously stopped daemon.
+    #[cfg(feature = "omw_local")]
+    omw_phone_share_pending_started_daemon: bool,
+    /// Cancellation marker shared with background daemon startup. This lets a
+    /// detached view roll back a start even if its UI callback is discarded.
+    #[cfg(feature = "omw_local")]
+    omw_phone_share_pending_active: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Keeps the daemon/share invalidation streams alive for exactly this
+    /// view's lifetime. Dropping the sender terminates both subscriptions.
+    #[cfg(feature = "omw_local")]
+    omw_phone_share_subscription_lifetime: Option<async_channel::Sender<()>>,
 
     /// First-time cloud agent setup view (full-screen overlay for creating initial environment).
     first_time_cloud_agent_setup_view: ViewHandle<ambient_agent::FirstTimeCloudAgentSetupView>,
@@ -4148,6 +4170,18 @@ impl TerminalView {
             #[cfg(not(target_arch = "wasm32"))]
             cloud_mode_details_panel_toggle_mouse_state: Default::default(),
             ambient_agent_cancel_mouse_state: Default::default(),
+            #[cfg(feature = "omw_local")]
+            omw_phone_share_mouse_state: Default::default(),
+            #[cfg(feature = "omw_local")]
+            omw_phone_share_generation: 0,
+            #[cfg(feature = "omw_local")]
+            omw_phone_share_pending_generation: None,
+            #[cfg(feature = "omw_local")]
+            omw_phone_share_pending_started_daemon: false,
+            #[cfg(feature = "omw_local")]
+            omw_phone_share_pending_active: None,
+            #[cfg(feature = "omw_local")]
+            omw_phone_share_subscription_lifetime: None,
             active_init_project_model: None,
             is_pending_aws_login: false,
             manual_pty_shutdown_requested: false,
@@ -4165,6 +4199,8 @@ impl TerminalView {
             active_viewer_driven_size: None,
         };
         terminal_view.register_subscriptions_for_use_agent_footer(ctx);
+        #[cfg(feature = "omw_local")]
+        terminal_view.register_omw_phone_share_subscriptions(ctx);
 
         // Forward RemoteServerManager setup events into the terminal event stream
         // so the ModelEventDispatcher can gate session initialization on them.
@@ -6545,6 +6581,66 @@ impl TerminalView {
 
     pub fn input(&self) -> &ViewHandle<Input> {
         &self.input
+    }
+
+    /// Build the local-agent IO handle for this pane. Approved commands use a
+    /// UI-thread queue so they pass through the regular ExecuteCommand event,
+    /// which creates the block and command-history audit record. Agent output
+    /// capture continues to use the local PTY channels.
+    #[cfg(feature = "omw_local")]
+    fn omw_agent_terminal_handle(
+        &mut self,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<crate::ai_assistant::omw_agent_state::ActiveTerminalHandle> {
+        let (event_loop_tx, pty_reads_tx, _) =
+            crate::omw::pane_auto_share::local_io_handles_for(self, ctx)?;
+        let (command_tx, command_rx) = async_channel::bounded(8);
+        self.listen_for_omw_agent_commands(command_rx, ctx);
+        Some(
+            crate::ai_assistant::omw_agent_state::ActiveTerminalHandle {
+                view_id: self.view_id,
+                command_tx: Some(command_tx),
+                event_loop_tx,
+                pty_reads_tx,
+            },
+        )
+    }
+
+    #[cfg(feature = "omw_local")]
+    fn listen_for_omw_agent_commands(
+        &mut self,
+        command_rx: async_channel::Receiver<String>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        ctx.spawn(
+            async move {
+                let command = command_rx.recv().await;
+                (command, command_rx)
+            },
+            |me, (command, command_rx), ctx| {
+                let Ok(command) = command else {
+                    return;
+                };
+                me.execute_omw_agent_command(command, ctx);
+                me.listen_for_omw_agent_commands(command_rx, ctx);
+            },
+        );
+    }
+
+    #[cfg(feature = "omw_local")]
+    fn execute_omw_agent_command(&mut self, command: String, ctx: &mut ViewContext<Self>) {
+        let Some(session_id) = self.active_block_session_id() else {
+            log::warn!("omw command_broker: pane has no active terminal session");
+            return;
+        };
+        ctx.emit(Event::ExecuteCommand(ExecuteCommandEvent {
+            command,
+            session_id,
+            workflow_id: None,
+            workflow_command: None,
+            should_add_command_to_history: true,
+            source: CommandExecutionSource::OmwAgent,
+        }));
     }
 
     pub fn input_config(&self, app: &AppContext) -> InputConfig {
@@ -24368,6 +24464,17 @@ impl TypedActionView for TerminalView {
                 "Use file picker to select a git repository".to_owned(),
                 WarpA11yRole::PopoverRole,
             )),
+            #[cfg(feature = "omw_local")]
+            ToggleOmwPhoneShare => {
+                let label = self
+                    .omw_phone_share_presentation(ctx)
+                    .map(|presentation| presentation.label)
+                    .unwrap_or("Phone sharing is unavailable for this pane");
+                Custom(AccessibilityContent::new_without_help(
+                    label.to_owned(),
+                    WarpA11yRole::ButtonRole,
+                ))
+            }
             #[cfg(feature = "voice_input")]
             ToggleCLIAgentVoiceInput(_) => Empty,
             // Below are actions that are most likely irrelevant to users or are very noisy and the
@@ -25489,6 +25596,8 @@ impl TypedActionView for TerminalView {
                     recorder.toggle_recording(ctx);
                 });
             }
+            #[cfg(feature = "omw_local")]
+            ToggleOmwPhoneShare => self.toggle_omw_phone_share(ctx),
             OpenCLIAgentRichInput => {
                 if self.has_active_cli_agent_input_session(ctx) {
                     self.close_cli_agent_rich_input_and_disable_auto_toggle(ctx);
@@ -26043,16 +26152,8 @@ impl View for TerminalView {
             {
                 let agent_state =
                     crate::ai_assistant::omw_agent_state::OmwAgentState::shared();
-                if let Some((event_loop_tx, pty_reads_tx, _)) =
-                    crate::omw::pane_auto_share::local_io_handles_for(self, ctx)
-                {
-                    agent_state.register_active_terminal(
-                        crate::ai_assistant::omw_agent_state::ActiveTerminalHandle {
-                            view_id: ctx.view_id(),
-                            event_loop_tx,
-                            pty_reads_tx,
-                        },
-                    );
+                if let Some(handle) = self.omw_agent_terminal_handle(ctx) {
+                    agent_state.register_active_terminal(handle);
                 } else {
                     agent_state.clear_active_terminal();
                 }

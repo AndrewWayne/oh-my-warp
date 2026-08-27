@@ -19,6 +19,9 @@ security-framework = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { workspace = true, features = ["linux-native-sync-persistent", "crypto-rust"] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { workspace = true, features = ["windows-native"] }
+
 [dev-dependencies]
 omw-config = { path = "../omw-config" }
 proptest.workspace = true

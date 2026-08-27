@@ -1,6 +1,7 @@
 name: Release
 
-# Builds + publishes omw-local-preview artifacts (Mac .dmg, Windows .zip)
+# Builds + publishes omw-local-preview artifacts (Mac .dmg, Windows portable
+# .zip, and Windows per-user installer/uninstaller)
 # for the given tag. Triggered automatically on tag push, or manually
 # via workflow_dispatch with a tag input (used to backfill artifacts
 # onto a tag that was pushed before this workflow existed).
@@ -48,10 +49,12 @@ jobs:
     steps:
       - name: Resolve tag and version
         id: meta
+        env:
+          RELEASE_REF_CANDIDATE: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          ref="${{ github.event.inputs.tag || github.ref_name }}"
+          ref="$RELEASE_REF_CANDIDATE"
           version="${ref#omw-local-preview-v}"
-          if [[ "$ref" == "$version" ]]; then
+          if [[ ! "$ref" =~ ^omw-local-preview-v[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
             echo "::error::tag '$ref' does not match expected pattern omw-local-preview-v<version>"
             exit 1
           fi
@@ -65,9 +68,11 @@ jobs:
       - name: Ensure release exists
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_REF: ${{ steps.meta.outputs.ref }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          ref="${{ steps.meta.outputs.ref }}"
-          version="${{ steps.meta.outputs.version }}"
+          ref="$RELEASE_REF"
+          version="$RELEASE_VERSION"
           if gh release view "$ref" >/dev/null 2>&1; then
             echo "Release $ref already exists; nothing to do."
           else
@@ -101,6 +106,10 @@ jobs:
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
       - name: Install protoc
         run: brew install protobuf
       - uses: dtolnay/rust-toolchain@master
@@ -112,14 +121,17 @@ jobs:
       - name: Build .dmg
         env:
           PROTOC: /opt/homebrew/bin/protoc
-        run: bash scripts/build-mac-dmg.sh ${{ needs.prepare.outputs.version }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: bash scripts/build-mac-dmg.sh "$RELEASE_VERSION"
       - name: Upload to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_REF: ${{ needs.prepare.outputs.ref }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          gh release upload "${{ needs.prepare.outputs.ref }}" \
-            "dist/omw-warp-oss-v${{ needs.prepare.outputs.version }}-aarch64-apple-darwin.dmg" \
-            "dist/omw-warp-oss-v${{ needs.prepare.outputs.version }}-aarch64-apple-darwin.dmg.sha256" \
+          gh release upload "$RELEASE_REF" \
+            "dist/omw-warp-oss-v${RELEASE_VERSION}-aarch64-apple-darwin.dmg" \
+            "dist/omw-warp-oss-v${RELEASE_VERSION}-aarch64-apple-darwin.dmg.sha256" \
             --clobber
 
   windows:
@@ -138,6 +150,10 @@ jobs:
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
       - name: Install protoc
         shell: pwsh
         run: |
@@ -157,14 +173,90 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: vendor/warp-stripped
-      - name: Build .zip
+      - name: Install NSIS
         shell: pwsh
-        run: pwsh -File scripts/build-windows-zip.ps1 -Version ${{ needs.prepare.outputs.version }}
+        run: |
+          $logDir = "artifacts/windows-release"
+          New-Item -ItemType Directory -Force $logDir | Out-Null
+          & choco install nsis -y --no-progress 2>&1 |
+            Tee-Object -FilePath "$logDir/nsis-install.log"
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+
+          $makensis = @(
+            "${env:ProgramFiles(x86)}\NSIS\makensis.exe",
+            "$env:ProgramFiles\NSIS\makensis.exe"
+          ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+            Select-Object -First 1
+          if (-not $makensis) { throw "makensis.exe not found after NSIS installation" }
+          "MAKENSIS=$makensis" >> $env:GITHUB_ENV
+          & $makensis /VERSION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build Windows portable ZIP and installer
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $logDir = "artifacts/windows-release"
+          New-Item -ItemType Directory -Force $logDir | Out-Null
+          & pwsh -NoProfile -File scripts/build-windows-zip.ps1 `
+            -Version $env:RELEASE_VERSION 2>&1 |
+            Tee-Object -FilePath "$logDir/build-and-audit.log"
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+
+          & pwsh -NoProfile -File scripts/build-windows-installer.ps1 `
+            -Version $env:RELEASE_VERSION `
+            -MakensisPath $env:MAKENSIS 2>&1 |
+            Tee-Object -FilePath "$logDir/build-installer.log"
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+
+          $zip = "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc.zip"
+          $installer = "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc-setup.exe"
+          foreach ($artifact in @($zip, $installer)) {
+            if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
+              throw "missing Windows artifact: $artifact"
+            }
+            $sidecar = "$artifact.sha256"
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifact).Hash.ToLowerInvariant()
+            $checksumLine = "$hash  $([IO.Path]::GetFileName($artifact))`n"
+            [IO.File]::WriteAllText($sidecar, $checksumLine, [Text.Encoding]::ASCII)
+            Copy-Item -LiteralPath $sidecar -Destination $logDir -Force
+          }
+      - name: Smoke test Windows installer and uninstaller
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $logDir = "artifacts/windows-release"
+          $installer = "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc-setup.exe"
+          $staging = "dist/staging-v$env:RELEASE_VERSION-windows"
+          & pwsh -NoProfile -File scripts/test-windows-installer.ps1 `
+            -InstallerPath $installer `
+            -StagingDirectory $staging `
+            -Version $env:RELEASE_VERSION 2>&1 |
+            Tee-Object -FilePath "$logDir/installer-smoke.log"
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+      - name: Upload Windows build and audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-build-audit
+          path: artifacts/windows-release
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload to release
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_REF: ${{ needs.prepare.outputs.ref }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          gh release upload "${{ needs.prepare.outputs.ref }}" `
-            "dist/omw-warp-oss-v${{ needs.prepare.outputs.version }}-x86_64-pc-windows-msvc.zip" `
+          gh release upload "$env:RELEASE_REF" `
+            "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc.zip" `
+            "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc.zip.sha256" `
+            "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc-setup.exe" `
+            "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc-setup.exe.sha256" `
             --clobber

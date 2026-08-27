@@ -29,6 +29,11 @@ if [[ ! -x "$BIN" ]]; then
   exit 2
 fi
 
+if ! command -v strings >/dev/null 2>&1; then
+  echo "audit-no-cloud: GNU strings is required but was not found on PATH" >&2
+  exit 2
+fi
+
 # Hostnames the omw_local build must NOT contain.
 PATTERNS=(
   "app.warp.dev"

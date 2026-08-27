@@ -1,7 +1,7 @@
 //! `OMW_KEYCHAIN_BACKEND=os` on platforms without an OS backend must fail closed.
-//! macOS and Linux have OS credential store implementations.
+//! macOS, Linux, and Windows have OS credential store implementations.
 
-#![cfg(not(any(target_os = "macos", target_os = "linux")))]
+#![cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 
 mod common;
 
@@ -20,7 +20,7 @@ fn init() {
 }
 
 #[test]
-fn os_backend_on_non_mac_returns_backend_unavailable() {
+fn os_backend_on_unsupported_platform_returns_backend_unavailable() {
     init();
     let kr = key_ref(&unique_name("os-unavail"));
 

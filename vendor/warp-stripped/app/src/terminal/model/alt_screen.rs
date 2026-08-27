@@ -18,7 +18,8 @@ use crate::terminal::model::ansi::{
     Mode, PrecmdValue, PreexecValue, StandardCharset, TabulationClearMode,
 };
 use crate::terminal::model::grid::grid_handler::{
-    FragmentBoundary, GridHandler, Link, PerformResetGridChecks, PossiblePath, TermMode,
+    FragmentBoundary, GridHandler, Link, Osc8Hyperlink, PerformResetGridChecks, PossiblePath,
+    TermMode,
 };
 use crate::terminal::model::grid::{Dimensions, GridStorage};
 use crate::terminal::model::index::{Point, Side, VisibleRow};
@@ -286,6 +287,10 @@ impl AltScreen {
         self.grid_handler.url_at_point(*point)
     }
 
+    pub fn osc8_hyperlink_at_point(&self, point: &Point) -> Option<Osc8Hyperlink> {
+        self.grid_handler.osc8_hyperlink_at_point(*point)
+    }
+
     pub fn fragment_boundary_at_point(&self, point: &Point) -> FragmentBoundary {
         self.grid_handler.fragment_boundary_at_point(point)
     }
@@ -379,6 +384,10 @@ impl ansi::Handler for AltScreen {
 
     fn set_cursor_shape(&mut self, shape: CursorShape) {
         self.ansi_handler().set_cursor_shape(shape);
+    }
+
+    fn set_hyperlink(&mut self, destination: Option<&str>) {
+        self.ansi_handler().set_hyperlink(destination);
     }
 
     fn input(&mut self, c: char) {

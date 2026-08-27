@@ -1,9 +1,10 @@
-use std::ops::BitOrAssign;
+use std::{io, ops::BitOrAssign};
 
 use warp_terminal::model::char_or_str::CharOrStr;
 use warp_util::path::LineAndColumnArg;
 use warpui::text::words::is_default_word_boundary;
 
+use crate::terminal::model::ansi::Processor;
 use crate::terminal::model::secrets::{ObfuscateSecrets, SecretLevel};
 use crate::terminal::model::{blockgrid::BlockGrid, secrets::IsObfuscated};
 use crate::test_util::mock_blockgrid;
@@ -706,6 +707,80 @@ fn test_find_url_line_breaks() {
     );
 }
 
+fn grid_from_ansi(rows: usize, columns: usize, bytes: &[u8]) -> GridHandler {
+    let mut grid = GridHandler::new_for_test_with_scroll_limit(rows, columns, MAX_SCROLL_LIMIT);
+    let mut processor = Processor::new();
+    processor.parse_bytes(&mut grid, bytes, &mut io::sink());
+    grid
+}
+
+#[test]
+fn test_osc8_hyperlink_survives_soft_wrap_and_close() {
+    let destination = "https://example.com/a/very/long/link";
+    let bytes = format!("\x1b]8;id=codex;{destination}\x07abcdefghijkl\x1b]8;;\x07x");
+    let grid = grid_from_ansi(3, 8, bytes.as_bytes());
+
+    let first_row = grid
+        .osc8_hyperlink_at_point(Point::new(0, 2))
+        .expect("first wrapped row should be linked");
+    assert_eq!(first_row.destination(), destination);
+    assert_eq!(first_row.link.range, Point::new(0, 0)..=Point::new(1, 3));
+
+    let second_row = grid
+        .osc8_hyperlink_at_point(Point::new(1, 1))
+        .expect("second wrapped row should share the target");
+    assert_eq!(second_row.destination(), destination);
+    assert!(grid.osc8_hyperlink_at_point(Point::new(1, 4)).is_none());
+}
+
+#[test]
+fn test_osc8_file_hyperlink_keeps_full_target_across_hard_rows() {
+    let destination = "file:///Users/test/My%20File.md";
+    let bytes = format!("\x1b]8;;{destination}\x1b\\abc\r\ndef\x1b]8;;\x1b\\");
+    let grid = grid_from_ansi(2, 8, bytes.as_bytes());
+
+    let first_fragment = grid
+        .osc8_hyperlink_at_point(Point::new(0, 1))
+        .expect("first hard-row fragment should be linked");
+    assert_eq!(first_fragment.destination(), destination);
+    assert_eq!(
+        first_fragment.link.range,
+        Point::new(0, 0)..=Point::new(0, 2)
+    );
+
+    let second_fragment = grid
+        .osc8_hyperlink_at_point(Point::new(1, 1))
+        .expect("second hard-row fragment should retain the full target");
+    assert_eq!(second_fragment.destination(), destination);
+    assert_eq!(
+        second_fragment.link.range,
+        Point::new(1, 0)..=Point::new(1, 2)
+    );
+}
+
+#[test]
+fn test_osc8_hyperlink_survives_resize_reflow() {
+    let destination = "https://example.com/reflow";
+    let bytes = format!("\x1b]8;;{destination}\x07abcdefghijkl\x1b]8;;\x07");
+    let mut grid = grid_from_ansi(3, 8, bytes.as_bytes());
+
+    grid.resize(SizeInfo::new_without_font_metrics(4, 5));
+
+    let linked_points = (0..grid.total_rows())
+        .flat_map(|row| (0..grid.columns()).map(move |col| Point::new(row, col)))
+        .filter(|point| {
+            grid.row(point.row)
+                .and_then(|row| row.get(point.col).map(|cell| cell.hyperlink().is_some()))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(linked_points.len(), 12);
+    assert!(linked_points.iter().all(|point| {
+        grid.osc8_hyperlink_at_point(*point)
+            .is_some_and(|link| link.destination() == destination)
+    }));
+}
+
 #[test]
 fn test_find_url_wide_characters() {
     let blockgrid = mock_blockgrid("https://google.com/啊啊啊啊");
@@ -1066,6 +1141,137 @@ fn test_possible_file_paths() {
             },
         ]
     );
+}
+
+#[test]
+fn test_possible_file_paths_detects_prefixed_absolute_path_after_full_width_colon() {
+    let prefix = "总入口：";
+    let path = "/Users/shuokong/Desktop/NanoCosmos/output/index.html";
+    let blockgrid = mock_blockgrid(&format!("{prefix}{path}"));
+    let path_start_col = prefix
+        .chars()
+        .map(|c| usize::max(c.width().unwrap_or(1), 1))
+        .sum::<usize>();
+
+    let paths = blockgrid
+        .grid_handler
+        .possible_file_paths_at_point(Point::new(0, path_start_col + 8));
+    let detected = paths
+        .iter()
+        .find(|possible_path| possible_path.path.path == path)
+        .expect("absolute paths after non-English labels should still be detected");
+
+    assert_eq!(
+        detected.range,
+        Point::new(0, path_start_col)..=Point::new(0, path_start_col + path.len() - 1)
+    );
+}
+
+#[test]
+fn test_possible_file_paths_reconstructs_prefixed_hard_wrapped_absolute_path() {
+    let prefix = "- main entry: ";
+    let first = "/Users/shuokong/Desktop/NanoCosmos/output/";
+    let second = "generated_fragment_diversity_20260730/index.html";
+    let blockgrid = mock_blockgrid(&format!("{prefix}{first}\r\n  {second}"));
+    let expected_path = format!("{first}{second}");
+
+    for point in [Point::new(0, prefix.len() + 8), Point::new(1, 8)] {
+        let paths = blockgrid.grid_handler.possible_file_paths_at_point(point);
+        let detected = paths
+            .iter()
+            .find(|possible_path| possible_path.path.path == expected_path)
+            .expect("prefixed hard-wrapped absolute path should reconstruct into one candidate");
+
+        assert_eq!(
+            detected.range,
+            Point::new(0, prefix.len())..=Point::new(1, second.len() + 1)
+        );
+    }
+}
+
+#[test]
+fn test_possible_file_paths_reconstructs_codex_hard_wrapped_path() {
+    let blockgrid = mock_blockgrid("• root/segment/\r\n  child/\r\n  file.html");
+    let expected_path = "root/segment/child/file.html";
+    let expected_range = Point::new(0, 2)..=Point::new(2, 10);
+
+    for point in [Point::new(0, 4), Point::new(1, 4), Point::new(2, 4)] {
+        let paths = blockgrid.grid_handler.possible_file_paths_at_point(point);
+        let reconstructed = paths
+            .iter()
+            .find(|possible_path| possible_path.path.path == expected_path)
+            .expect("all visible rows should resolve to the reconstructed path candidate");
+
+        assert_eq!(reconstructed.range, expected_range);
+    }
+}
+
+#[test]
+fn test_possible_file_paths_reconstructs_reported_codex_path_shape() {
+    let first = "Desktop/NanoCosmos/twoD_Cosmos-transfer-dynamics-refactor/scripts/outputs/taichi_pdms_pc_hbn_graphene_lamination/";
+    let second = "module11_four_stage_generic_2s_pc_target_fix_20260727_1702/stage4_bottom_hbn/";
+    let third = "module11_four_stage_generic_2s_pc_target_fix_20260727_1702_stage4_bottom_hbn_interactive_3d.html";
+    let blockgrid = mock_blockgrid(&format!("• {first}\r\n  {second}\r\n  {third}"));
+    let expected_path = format!("{first}{second}{third}");
+    let expected_range = Point::new(0, 2)..=Point::new(2, third.len() + 1);
+
+    for point in [Point::new(0, 20), Point::new(1, 20), Point::new(2, 20)] {
+        let paths = blockgrid.grid_handler.possible_file_paths_at_point(point);
+        let reconstructed = paths
+            .iter()
+            .find(|possible_path| possible_path.path.path == expected_path)
+            .expect("the reported Codex output shape should reconstruct one complete path");
+
+        assert_eq!(reconstructed.range, expected_range);
+    }
+}
+
+#[test]
+fn test_possible_file_paths_reconstructs_mixed_hard_and_soft_wrapped_path() {
+    let grid = grid_from_ansi(
+        8,
+        12,
+        "• root/segment/\r\n  child/\r\n  verylongfilename.html".as_bytes(),
+    );
+    let expected_path = "root/segment/child/verylongfilename.html";
+    let expected_range = Point::new(0, 2)..=Point::new(4, 10);
+
+    assert!(
+        grid.row_wraps(0),
+        "the first Codex logical line should soft-wrap"
+    );
+    assert!(
+        grid.row_wraps(3),
+        "the final Codex logical line should soft-wrap"
+    );
+
+    for point in [
+        Point::new(0, 4),
+        Point::new(1, 1),
+        Point::new(2, 4),
+        Point::new(3, 4),
+        Point::new(4, 4),
+    ] {
+        let paths = grid.possible_file_paths_at_point(point);
+        let reconstructed = paths
+            .iter()
+            .find(|possible_path| possible_path.path.path == expected_path)
+            .expect("every hard and soft wrapped segment should resolve to the complete path");
+
+        assert_eq!(reconstructed.range, expected_range);
+    }
+}
+
+#[test]
+fn test_possible_file_paths_does_not_join_unindented_hard_lines() {
+    let blockgrid = mock_blockgrid("root/segment/\r\nchild/\r\nfile.html");
+    let paths = blockgrid
+        .grid_handler
+        .possible_file_paths_at_point(Point::new(1, 2));
+
+    assert!(paths
+        .iter()
+        .all(|possible_path| possible_path.path.path != "root/segment/child/file.html"));
 }
 
 #[test]

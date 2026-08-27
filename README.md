@@ -45,9 +45,9 @@ uninstaller, upgrade, and silent-deployment details.
 ## What works today
 
 - **Audit-clean stripped client.** All upstream cloud / sign-in / Drive / hosted-agent surfaces removed at compile time.
-- **BYORC over Tailscale.** Click the Phone button on any pane → the pair URL is auto-copied to your clipboard → open it on your phone (or paste into another laptop's browser) → attach to the live pane. Phone keystrokes echo on the laptop in real time.
+- **BYORC over Tailscale.** With Tailscale running on both devices, launch the host with `OMW_REMOTE_BIND=<host-tailnet-IPv4>:8787`, then click the Phone button on a shareable local pane → the pair URL is auto-copied to your clipboard → open it on your phone (or paste into another laptop's browser) → attach to the live pane. Viewing is read-only by default; remote typing also requires `OMW_REMOTE_ALLOW_DEFAULT_WRITE=1`.
 - **Inline agent.** Type `# <prompt>` at the start of any pane to run your prompt through `omw-agent` against your configured provider. Shell commands and file edits prompt for approval before running.
-- **Settings → Agent.** Configure providers, default model, and API keys (stored in the macOS Keychain) from inside the app.
+- **Settings → Agent.** Configure providers, default model, and API keys from inside the app. Keys are stored in macOS Keychain or Windows Credential Manager.
 
 ## Limitations
 

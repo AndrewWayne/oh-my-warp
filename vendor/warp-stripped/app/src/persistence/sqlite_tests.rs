@@ -191,7 +191,7 @@ fn test_sqlite_round_trips_vertical_tabs_panel_open() {
 }
 
 #[test]
-fn test_warp_ai_width_migration_resets_once_then_preserves_user_choice() {
+fn test_warp_ai_width_migration_preserves_existing_preferences() {
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
     let database_path = tempdir.path().join("warp.sqlite");
     let mut conn = setup_database(&database_path).expect("database should initialize");
@@ -210,12 +210,12 @@ fn test_warp_ai_width_migration_resets_once_then_preserves_user_choice() {
         env!("CARGO_MANIFEST_DIR"),
         "/../crates/persistence/migrations/2026-08-25-000000_reset_warp_ai_width/up.sql"
     )))
-    .expect("width reset migration should run");
+    .expect("width-preserving migration should run");
 
     let mut restored = read_sqlite_data(&mut conn, None)
         .expect("app state should load")
         .app_state;
-    assert_eq!(restored.windows[0].warp_ai_width, Some(360.));
+    assert_eq!(restored.windows[0].warp_ai_width, Some(410.));
     assert_eq!(restored.windows[1].warp_ai_width, None);
 
     restored.windows[0].warp_ai_width = Some(120.);

@@ -292,9 +292,7 @@ impl OmwRemoteState {
 
         match init_result {
             Ok((pair_url, tailscale_serving, serve_task, pty_registry)) => {
-                eprintln!(
-                    "omw-remote running. Pair URL: {pair_url} (tailscale_serving={tailscale_serving})"
-                );
+                eprintln!("omw-remote running (tailscale_serving={tailscale_serving})");
                 let mut g = self.inner.lock();
                 self.set_status(
                     &mut g,

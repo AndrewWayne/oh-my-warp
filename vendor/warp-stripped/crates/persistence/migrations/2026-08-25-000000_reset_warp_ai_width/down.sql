@@ -6,6 +6,5 @@
 -- Copyright (C) 2020-2026 Denver Technologies, Inc.
 -- Licensed under the GNU Affero General Public License, version 3.
 
--- This data migration is intentionally irreversible. Restoring the old value
--- would overwrite widths that users selected after the migration ran.
+-- The forward migration preserves all data, so there is nothing to roll back.
 SELECT 1;

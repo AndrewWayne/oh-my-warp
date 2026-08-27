@@ -6,7 +6,6 @@
 -- Copyright (C) 2020-2026 Denver Technologies, Inc.
 -- Licensed under the GNU Affero General Public License, version 3.
 
--- Apply the compact Agent panel default once to windows saved by earlier builds.
-UPDATE windows
-SET warp_ai_width = 360
-WHERE warp_ai_width IS NOT NULL;
+-- Existing widths are user preferences and must not be rewritten. New windows
+-- receive the compact default from ModalSizes when no saved width exists.
+SELECT 1;

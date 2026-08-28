@@ -6,10 +6,16 @@ name: Release
 # via workflow_dispatch with a tag input (used to backfill artifacts
 # onto a tag that was pushed before this workflow existed).
 #
-# Both jobs run --no-default-features --features omw_local and gate
+# Both platforms run --no-default-features --features omw_local and gate
 # the upload behind audit-no-cloud.sh — a build that contains any of
 # the eight forbidden Warp/Firebase hostnames in .rodata fails the job
 # and is never uploaded.
+#
+# Windows is split in two: windows-build is the expensive (~1h) compile and
+# package step, windows-package-test is the cheap smoke test plus the release
+# upload. Iterating on the installer therefore does not require recompiling —
+# dispatch with reuse_build_run_id set to a run whose windows-build succeeded
+# and only the test job runs.
 
 on:
   push:
@@ -30,9 +36,16 @@ on:
           - both
           - mac
           - windows
+      reuse_build_run_id:
+        description: 'Reuse the Windows package built by this run ID instead of rebuilding (~1h saved)'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: write
+  # download-artifact needs this to read windows-package-v* from another run.
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -134,17 +147,21 @@ jobs:
             "dist/omw-warp-oss-v${RELEASE_VERSION}-aarch64-apple-darwin.dmg.sha256" \
             --clobber
 
-  windows:
-    name: Windows x86_64
+  windows-build:
+    name: Windows x86_64 build
     runs-on: windows-latest
     needs: prepare
     # v0.0.3 is macOS-only: the Windows zip script does not bundle the
     # omw-agent kernel or omw-keychain-helper.exe, so a Windows build at
     # this tag would ship without the v0.0.3 inline-agent feature working
     # at runtime. Skip until build-windows-zip.ps1 is brought to parity.
+    #
+    # reuse_build_run_id skips this whole hour: windows-package-test then
+    # pulls the .zip/.exe/manifest artifact from the named earlier run.
     if: >-
       needs.prepare.outputs.ref != 'omw-local-preview-v0.0.3'
       && (github.event_name != 'workflow_dispatch' || github.event.inputs.targets != 'mac')
+      && (github.event.inputs.reuse_build_run_id || '') == ''
     # Same rationale as mac: 90 was tight (Windows finished at ~67 min in
     # v0.0.6, still inside the budget but no headroom). 180 leaves room.
     timeout-minutes: 180
@@ -173,6 +190,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: vendor/warp-stripped
+          # A failed build otherwise throws away ~50 minutes of compilation,
+          # so the retry pays full cold-cache cost again.
+          cache-on-failure: true
       - name: Install NSIS
         shell: pwsh
         run: |
@@ -224,12 +244,64 @@ jobs:
             [IO.File]::WriteAllText($sidecar, $checksumLine, [Text.Encoding]::ASCII)
             Copy-Item -LiteralPath $sidecar -Destination $logDir -Force
           }
+      # Everything windows-package-test needs, and nothing else. The 487 MB
+      # staging tree is byte-identical to the ZIP contents, and the smoke test
+      # only reads SHA256SUMS out of it, so the manifest travels alone.
+      - name: Upload Windows package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-package-v${{ needs.prepare.outputs.version }}
+          path: |
+            dist/omw-warp-oss-v${{ needs.prepare.outputs.version }}-x86_64-pc-windows-msvc.zip
+            dist/omw-warp-oss-v${{ needs.prepare.outputs.version }}-x86_64-pc-windows-msvc.zip.sha256
+            dist/omw-warp-oss-v${{ needs.prepare.outputs.version }}-x86_64-pc-windows-msvc-setup.exe
+            dist/omw-warp-oss-v${{ needs.prepare.outputs.version }}-x86_64-pc-windows-msvc-setup.exe.sha256
+            dist/staging-v${{ needs.prepare.outputs.version }}-windows/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+          # The .zip and .exe are already LZMA/deflate compressed; re-zipping
+          # 300 MB of that buys nothing and costs minutes.
+          compression-level: 0
+      - name: Upload build and audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-build-audit
+          path: artifacts/windows-release
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-package-test:
+    name: Windows x86_64 package test
+    runs-on: windows-latest
+    needs: [prepare, windows-build]
+    # Runs when windows-build succeeded, and also when it was deliberately
+    # skipped via reuse_build_run_id. The platform gate is repeated so a
+    # mac-only dispatch skips this job too.
+    if: >-
+      always()
+      && needs.prepare.result == 'success'
+      && needs.windows-build.result != 'failure'
+      && needs.windows-build.result != 'cancelled'
+      && needs.prepare.outputs.ref != 'omw-local-preview-v0.0.3'
+      && (github.event_name != 'workflow_dispatch' || github.event.inputs.targets != 'mac')
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Windows package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-package-v${{ needs.prepare.outputs.version }}
+          path: dist
+          run-id: ${{ github.event.inputs.reuse_build_run_id || github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Smoke test Windows installer and uninstaller
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           $logDir = "artifacts/windows-release"
+          New-Item -ItemType Directory -Force $logDir | Out-Null
           $installer = "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc-setup.exe"
           $staging = "dist/staging-v$env:RELEASE_VERSION-windows"
           & pwsh -NoProfile -File scripts/test-windows-installer.ps1 `
@@ -239,11 +311,11 @@ jobs:
             Tee-Object -FilePath "$logDir/installer-smoke.log"
           $code = $LASTEXITCODE
           if ($code -ne 0) { exit $code }
-      - name: Upload Windows build and audit evidence
+      - name: Upload smoke test evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-release-build-audit
+          name: windows-release-smoke-audit
           path: artifacts/windows-release
           if-no-files-found: error
           retention-days: 14

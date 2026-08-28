@@ -15,12 +15,37 @@ $ErrorActionPreference = "Stop"
 $InstallerPath = (Resolve-Path -LiteralPath $InstallerPath).Path
 $StagingDirectory = (Resolve-Path -LiteralPath $StagingDirectory).Path
 if (-not $InstallDirectory) {
-    $InstallDirectory = Join-Path ([IO.Path]::GetTempPath()) "omw-installer-smoke-$([guid]::NewGuid().ToString('N'))"
+    # Keep the generated name short. NSIS extracts through the Win32 APIs without
+    # \\?\ prefixes, so "$InstallDirectory\app.new\<payload path>" is capped at
+    # MAX_PATH. A full 32-hex GUID here put the deepest node_modules entry at
+    # 259-262 characters on hosted runners and the install failed with error 13.
+    $suffix = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $InstallDirectory = Join-Path ([IO.Path]::GetTempPath()) "omw-smoke-$suffix"
 }
 $InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory)
 $installRoot = [IO.Path]::GetPathRoot($InstallDirectory)
 if ($InstallDirectory -eq $installRoot -or $InstallDirectory.Length -le $installRoot.Length + 8) {
     throw "refusing unsafe installer test directory: $InstallDirectory"
+}
+
+# Fail here, with the numbers, rather than as an opaque installer error 13.
+$maxPathLength = 259
+$stagingManifest = Join-Path $StagingDirectory 'SHA256SUMS'
+if (-not (Test-Path -LiteralPath $stagingManifest -PathType Leaf)) {
+    throw "staging manifest is missing: $stagingManifest"
+}
+$longestPayloadPath = 0
+foreach ($line in Get-Content -LiteralPath $stagingManifest) {
+    $match = [regex]::Match($line, '^[0-9a-fA-F]{64}  ([^\r\n]+)$')
+    if ($match.Success -and $match.Groups[1].Value.Length -gt $longestPayloadPath) {
+        $longestPayloadPath = $match.Groups[1].Value.Length
+    }
+}
+$longestInstalledPath = $InstallDirectory.Length + '\app.new\'.Length + $longestPayloadPath
+if ($longestInstalledPath -gt $maxPathLength) {
+    throw ("installer test directory is too deep: '$InstallDirectory' plus the longest payload " +
+        "path ($longestPayloadPath chars) reaches $longestInstalledPath characters, over the " +
+        "$maxPathLength-character MAX_PATH limit. Pass a shorter -InstallDirectory.")
 }
 if (Test-Path -LiteralPath $InstallDirectory) {
     throw "installer test directory already exists: $InstallDirectory"
@@ -115,6 +140,9 @@ $mainExecutable = Join-Path $appDirectory 'omw-warp-oss.exe'
 $uninstaller = Join-Path $InstallDirectory 'Uninstall.exe'
 $startMenuShortcut = Join-Path $startMenuDirectory 'omw.lnk'
 $cleanupRequired = $false
+
+Write-Host "==> Install directory: $InstallDirectory"
+Write-Host "    longest installed payload path: $longestInstalledPath of $maxPathLength characters"
 
 try {
     Write-Host "==> Silent first install"

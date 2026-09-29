@@ -927,3 +927,13 @@ fn form_to_config_empty_agents_md_path_serializes_as_none() {
         "whitespace-only path must serialize as None"
     );
 }
+
+#[test]
+fn set_provider_api_key_debug_redacts_secret() {
+    // warpui logs every dispatched typed action with `{:?}`, so the
+    // Debug output must never carry the key.
+    let action = OmwAgentPageAction::SetProviderApiKey(0, "sk-test-secret".into());
+    let debug = format!("{action:?}");
+    assert!(!debug.contains("sk-test-secret"), "{debug}");
+    assert!(debug.contains("SetProviderApiKey"), "{debug}");
+}

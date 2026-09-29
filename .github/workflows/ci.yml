@@ -46,6 +46,14 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash .github/workflows/scripts/check-vendor-omw-headers.sh
 
+  linux-build-script:
+    name: Linux build script staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/test-build-linux-gui.sh
+
   msrv:
     name: MSRV check (1.85) / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

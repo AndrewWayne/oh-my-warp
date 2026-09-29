@@ -110,7 +110,7 @@ pub struct OmwAgentPageState {
     pub pending_renames: Vec<(String, String)>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum OmwAgentPageAction {
     ToggleEnabled,
     SetApprovalMode(ApprovalMode),
@@ -128,6 +128,48 @@ pub enum OmwAgentPageAction {
     SetAgentsMdPath(String),
     Apply,
     Discard,
+}
+
+// Hand-written so the API key never reaches the log: warpui logs every
+// dispatched typed action with `{:?}`.
+impl std::fmt::Debug for OmwAgentPageAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use OmwAgentPageAction::*;
+        match self {
+            ToggleEnabled => f.write_str("ToggleEnabled"),
+            SetApprovalMode(mode) => f.debug_tuple("SetApprovalMode").field(mode).finish(),
+            AddProvider => f.write_str("AddProvider"),
+            RemoveProvider(idx) => f.debug_tuple("RemoveProvider").field(idx).finish(),
+            SetProviderId(idx, s) => f.debug_tuple("SetProviderId").field(idx).field(s).finish(),
+            SetProviderKind(idx, kind) => f
+                .debug_tuple("SetProviderKind")
+                .field(idx)
+                .field(kind)
+                .finish(),
+            SetProviderModel(idx, s) => f
+                .debug_tuple("SetProviderModel")
+                .field(idx)
+                .field(s)
+                .finish(),
+            SetProviderBaseUrl(idx, s) => f
+                .debug_tuple("SetProviderBaseUrl")
+                .field(idx)
+                .field(s)
+                .finish(),
+            SetProviderApiKey(idx, _) => {
+                write!(f, "SetProviderApiKey({idx:?}, <redacted>)")
+            }
+            TestProvider(idx) => f.debug_tuple("TestProvider").field(idx).finish(),
+            SetDefaultProviderById(id) => {
+                f.debug_tuple("SetDefaultProviderById").field(id).finish()
+            }
+            ToggleDefaultProviderDropdown => f.write_str("ToggleDefaultProviderDropdown"),
+            CloseDefaultProviderDropdown => f.write_str("CloseDefaultProviderDropdown"),
+            SetAgentsMdPath(s) => f.debug_tuple("SetAgentsMdPath").field(s).finish(),
+            Apply => f.write_str("Apply"),
+            Discard => f.write_str("Discard"),
+        }
+    }
 }
 
 // ---------------------- Pure converters ----------------------

@@ -143,7 +143,7 @@ Env vars audited:
   ✓ OMW_AGENT_BIN          (override-only; default: locate_kernel_script)
   ✓ OMW_AGENT_NODE         (override-only; default: locate_node)
   ✓ OMW_KEYCHAIN_HELPER    (override-only; default: locate_keychain_helper)
-  ✓ OMW_SERVER_URL         (override-only; default: 127.0.0.1:8788)
+  ✓ OMW_SERVER_URL         (override-only; default: 127.0.0.1:8788, or an OS-assigned port if taken)
 
 Forbidden-hostname audit:  ✓ (audit-no-cloud.sh: 0 hits across 8 hosts)
 

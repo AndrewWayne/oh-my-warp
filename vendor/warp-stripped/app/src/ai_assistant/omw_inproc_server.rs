@@ -16,8 +16,9 @@
 //!
 //! On first call to [`ensure_running`], spawns:
 //! - The omw-agent stdio child (Node + bundled `omw-agent.mjs`).
-//! - An axum server on `127.0.0.1:8788` exposing
-//!   [`omw_server::agent_router`].
+//! - An axum server on `127.0.0.1:8788` (an OS-assigned port if 8788 is
+//!   taken) exposing [`omw_server::agent_router`]. [`ensure_running`]
+//!   returns its URL.
 //!
 //! Both run on the [`OmwAgentState`] tokio runtime. Subsequent calls are
 //! no-ops. Failures (Node missing, port in use, kernel script not found)
@@ -58,6 +59,7 @@ use tokio::task::JoinHandle;
 struct BootedServer {
     serve_task: JoinHandle<()>,
     agent: Arc<AgentProcess>,
+    url: String,
 }
 
 impl BootedServer {
@@ -70,10 +72,13 @@ impl BootedServer {
     }
 }
 
-/// Default loopback bind address. Matches `OmwAgentState`'s
-/// `DEFAULT_SERVER_URL` so the GUI dials the right port without env-var
-/// configuration.
+/// Loopback bind address. Release notes since v0.0.3 document 8788, so we
+/// keep it when it's free.
 const DEFAULT_BIND: &str = "127.0.0.1:8788";
+
+/// Used when [`DEFAULT_BIND`] fails, e.g. another local service holds 8788.
+/// Port 0 lets the OS pick a free port.
+const FALLBACK_BIND: &str = "127.0.0.1:0";
 
 /// Process-wide cached boot state. None until `ensure_running` succeeds
 /// once. Held in a `Mutex<Option<...>>` (not `OnceLock`) because we may
@@ -85,9 +90,9 @@ static SERVER_TASK: Mutex<Option<BootedServer>> = Mutex::new(None);
 
 /// Idempotent against a *live* server. If the previous boot's serve
 /// task has finished OR the kernel child has exited, we drop the dead
-/// state and re-boot transparently. Callers see a single
-/// `Result<(), String>` either way.
-pub fn ensure_running(runtime: &tokio::runtime::Handle) -> Result<(), String> {
+/// state and re-boot transparently. Returns the server's base URL
+/// (`http://127.0.0.1:<port>`); the port can change across re-boots.
+pub fn ensure_running(runtime: &tokio::runtime::Handle) -> Result<String, String> {
     {
         let mut guard = SERVER_TASK.lock().expect("SERVER_TASK lock poisoned");
         if let Some(state) = guard.as_ref() {
@@ -95,7 +100,7 @@ pub fn ensure_running(runtime: &tokio::runtime::Handle) -> Result<(), String> {
             let kernel_alive = state.agent.is_alive();
             if !serve_finished && kernel_alive {
                 log::info!("omw# inproc: ensure_running — already running, no-op");
-                return Ok(());
+                return Ok(state.url.clone());
             }
             log::warn!(
                 "omw# inproc: previous boot is unhealthy (serve_finished={serve_finished} \
@@ -134,12 +139,13 @@ pub fn ensure_running(runtime: &tokio::runtime::Handle) -> Result<(), String> {
         .recv()
         .map_err(|_| "in-process server boot channel dropped".to_string())??;
 
+    let url = booted.url.clone();
     {
         let mut guard = SERVER_TASK.lock().expect("SERVER_TASK lock poisoned");
         *guard = Some(booted);
     }
     log::info!("omw# inproc: ensure_running OK");
-    Ok(())
+    Ok(url)
 }
 
 /// Async boot path. Spawns the agent stdio child, **binds the loopback
@@ -203,8 +209,8 @@ async fn boot(kernel_path: PathBuf) -> Result<BootedServer, String> {
     // in a tokio::spawn that may not have been polled by the time the
     // GUI's first POST /api/v1/agent/sessions hits the loopback.
     log::info!("omw# inproc: binding loopback {DEFAULT_BIND}");
-    let listener = bind_agent_loopback(DEFAULT_BIND).await?;
-    log::info!("omw# inproc: listener bound; detaching serve task");
+    let (listener, url) = bind_loopback().await?;
+    log::info!("omw# inproc: listener bound at {url}; detaching serve task");
     let agent_for_serve = agent.clone();
     let task = tokio::spawn(async move {
         if let Err(e) = serve_agent_on_listener(listener, agent_for_serve).await {
@@ -216,7 +222,24 @@ async fn boot(kernel_path: PathBuf) -> Result<BootedServer, String> {
     Ok(BootedServer {
         serve_task: task,
         agent,
+        url,
     })
+}
+
+/// Bind the agent listener on [`DEFAULT_BIND`], falling back to
+/// [`FALLBACK_BIND`], and return it with the base URL clients should dial.
+pub async fn bind_loopback() -> Result<(tokio::net::TcpListener, String), String> {
+    let listener = match bind_agent_loopback(DEFAULT_BIND).await {
+        Ok(listener) => listener,
+        Err(e) => {
+            log::warn!("omw# inproc: {e}; falling back to an OS-assigned port");
+            bind_agent_loopback(FALLBACK_BIND).await?
+        }
+    };
+    let addr = listener
+        .local_addr()
+        .map_err(|e| format!("loopback local_addr: {e}"))?;
+    Ok((listener, format!("http://{addr}")))
 }
 
 /// Walk env-override → macOS Resources → flat-bundle → caller-supplied

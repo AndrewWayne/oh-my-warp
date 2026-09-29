@@ -140,6 +140,8 @@ pub mod test_exports {
         OmwAgentPageState, OmwAgentPageView, ProviderKindForm, ProviderRow, ProviderTestStatus,
     };
     #[cfg(feature = "omw_local")]
+    pub use crate::ai_assistant::omw_inproc_server::bind_loopback;
+    #[cfg(feature = "omw_local")]
     pub use crate::terminal::input::parse_inline_agent_prompt;
     pub use crate::view_components::{SubmittableTextInput, SubmittableTextInputAction};
     #[cfg(feature = "omw_local")]

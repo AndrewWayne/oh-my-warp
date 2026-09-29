@@ -45,10 +45,6 @@ use tokio::task::JoinHandle;
 
 use super::omw_protocol::{ApprovalDecision, OmwAgentEventDown, OmwAgentEventUp};
 
-/// Default omw-server URL. Phase 3b assumes the GUI and the server share
-/// a host. Callers can override via the `OMW_SERVER_URL` env var.
-const DEFAULT_SERVER_URL: &str = "http://127.0.0.1:8788";
-
 /// HTTP/WS request timeout. Generous because the kernel's first-token
 /// latency includes a Node spawn + provider TLS handshake.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -434,15 +430,17 @@ impl OmwAgentState {
         // doesn't have to launch a sidecar process. Idempotent — only the
         // first call binds the listener; later calls are O(1).
         log::info!("omw# state: calling inproc_server::ensure_running");
-        if let Err(e) = super::omw_inproc_server::ensure_running(&runtime) {
-            log::warn!("omw# state: ensure_running FAILED: {e}");
-            self.set_status(OmwAgentStatus::Failed { error: e.clone() });
-            return Err(e);
-        }
+        let inproc_url = match super::omw_inproc_server::ensure_running(&runtime) {
+            Ok(url) => url,
+            Err(e) => {
+                log::warn!("omw# state: ensure_running FAILED: {e}");
+                self.set_status(OmwAgentStatus::Failed { error: e.clone() });
+                return Err(e);
+            }
+        };
         log::info!("omw# state: inproc_server ready");
 
-        let server_url = std::env::var("OMW_SERVER_URL")
-            .unwrap_or_else(|_| DEFAULT_SERVER_URL.to_string());
+        let server_url = std::env::var("OMW_SERVER_URL").unwrap_or(inproc_url);
 
         self.set_status(OmwAgentStatus::Starting);
 
@@ -562,10 +560,9 @@ impl OmwAgentState {
             params.model
         );
         let runtime = self.ensure_runtime()?;
-        super::omw_inproc_server::ensure_running(&runtime)?;
+        let inproc_url = super::omw_inproc_server::ensure_running(&runtime)?;
 
-        let server_url = std::env::var("OMW_SERVER_URL")
-            .unwrap_or_else(|_| DEFAULT_SERVER_URL.to_string());
+        let server_url = std::env::var("OMW_SERVER_URL").unwrap_or(inproc_url);
 
         // Block on session/create + WS connect synchronously so the
         // caller has a usable PaneSession on return — mirrors the
@@ -1273,7 +1270,7 @@ async fn create_session(
     params: &OmwAgentSessionParams,
 ) -> Result<String, String> {
     // CRITICAL: explicitly disable proxies. The GUI's session/create
-    // POST targets the in-process omw-server on `http://127.0.0.1:8788`
+    // POST targets the in-process omw-server on `http://127.0.0.1:<port>`
     // — but reqwest's default builder honors system + env proxy config
     // (`https_proxy`, macOS network proxy panel). On developer machines
     // running Clash / Telegram-style local proxies, the request gets

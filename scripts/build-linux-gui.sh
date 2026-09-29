@@ -73,6 +73,17 @@ export GIT_RELEASE_TAG="omw-local-preview-v${VERSION}"
 BINARY="${VENDOR_DIR}/target/debug/warp-oss"
 [[ -f "${BINARY}" ]] || { echo "ERROR: build did not produce ${BINARY}" >&2; exit 1; }
 
+# The agent kernel reads API keys through omw-keychain-helper;
+# omw_inproc_server.rs looks for it next to the binary.
+echo "==> Building omw-keychain-helper ..."
+(
+    cd "${REPO_ROOT}"
+    cargo build -p omw-keychain-helper
+)
+KEYCHAIN_HELPER_BIN="${REPO_ROOT}/target/debug/omw-keychain-helper"
+[[ -f "${KEYCHAIN_HELPER_BIN}" ]] \
+    || { echo "ERROR: omw-keychain-helper build did not produce ${KEYCHAIN_HELPER_BIN}" >&2; exit 1; }
+
 LINUX_DIST_DIR="${DIST_DIR}/omw-warp-oss-v${VERSION}-${TARGET_TRIPLE}"
 LINUX_BINARY="${LINUX_DIST_DIR}/warp-oss"
 
@@ -81,6 +92,7 @@ rm -rf "${LINUX_DIST_DIR}"
 mkdir -p "${LINUX_DIST_DIR}"
 cp "${BINARY}" "${LINUX_BINARY}"
 chmod +x "${LINUX_BINARY}"
+cp "${KEYCHAIN_HELPER_BIN}" "${LINUX_DIST_DIR}/omw-keychain-helper"
 cp "${REPO_ROOT}/LICENSE" "${LINUX_DIST_DIR}/LICENSE"
 
 (

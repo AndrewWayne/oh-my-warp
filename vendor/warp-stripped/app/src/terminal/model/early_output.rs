@@ -436,6 +436,10 @@ impl ansi::Handler for EarlyOutputHandler<'_> {
         delegate!(self.set_cursor_shape(shape));
     }
 
+    fn set_hyperlink(&mut self, destination: Option<&str>) {
+        delegate!(self.set_hyperlink(destination));
+    }
+
     fn goto(&mut self, row: super::index::VisibleRow, col: usize) {
         delegate!(self.goto(row, col));
     }

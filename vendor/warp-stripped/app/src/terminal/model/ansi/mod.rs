@@ -67,6 +67,9 @@ const WARP_OSC_MARKER: &[u8] = b"9278";
 /// of checks ensuring that Warp's grids and ConPTY's grid are in sync.
 const WARP_RESET_GRID_OSC_MARKER: &[u8] = b"9279";
 
+/// Bound semantic hyperlink metadata independently from visible terminal text.
+const MAX_OSC8_URI_BYTES: usize = 8192;
+
 /// The amount of time a single synchronized update can take from the time the corresponding
 /// 'Set Mode' escape sequence is processed before a redraw is forced.
 ///
@@ -852,6 +855,33 @@ where
                     return;
                 }
                 unhandled(params);
+            }
+
+            // OSC 8 semantic hyperlink.
+            // Format: OSC 8 ; params ; URI ST. An empty URI closes the active hyperlink.
+            b"8" => {
+                if params.len() < 3 {
+                    return unhandled(params);
+                }
+
+                let destination = params[2..]
+                    .iter()
+                    .map(|part| str::from_utf8(part))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|parts| parts.join(";"));
+
+                match destination {
+                    Ok(destination) if destination.is_empty() => {
+                        self.handler.set_hyperlink(None);
+                    }
+                    Ok(destination)
+                        if destination.len() <= MAX_OSC8_URI_BYTES
+                            && !destination.chars().any(char::is_control) =>
+                    {
+                        self.handler.set_hyperlink(Some(&destination));
+                    }
+                    _ => unhandled(params),
+                }
             }
 
             // Set color index.

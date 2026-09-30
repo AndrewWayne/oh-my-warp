@@ -98,6 +98,9 @@ pub(super) struct State {
     /// The currently active keyboard mode.
     pub keyboard_mode: KeyboardModes,
 
+    /// OSC 8 destination applied to cells written while the hyperlink is active.
+    pub active_hyperlink: Option<Arc<String>>,
+
     /// Kitty keyboard enhancement protocol mode stack.
     /// Used purely for push/pop save/restore semantics.
     /// `push` appends the new mode; `pop` truncates and restores
@@ -139,6 +142,7 @@ impl State {
             dirty_cells_range: Default::default(),
             pane_size: size_info.pane_size_px(),
             keyboard_mode: KeyboardModes::NO_MODE,
+            active_hyperlink: None,
             keyboard_mode_stack: BoundedVecDeque::new(super::KEYBOARD_MODE_STACK_MAX_DEPTH),
         }
     }
@@ -171,6 +175,11 @@ impl ansi::Handler for GridHandler {
 
     fn set_cursor_shape(&mut self, shape: ansi::CursorShape) {
         self.ansi_handler_state.cursor_style.shape = shape;
+    }
+
+    fn set_hyperlink(&mut self, destination: Option<&str>) {
+        self.ansi_handler_state.active_hyperlink =
+            destination.map(|destination| Arc::new(destination.to_owned()));
     }
 
     fn input(&mut self, c: char) {
@@ -896,6 +905,7 @@ impl ansi::Handler for GridHandler {
 
         self.ansi_handler_state.active_charset = Default::default();
         self.ansi_handler_state.cursor_style = CursorStyle::default();
+        self.ansi_handler_state.active_hyperlink = None;
         self.ansi_handler_state.scroll_region = VisibleRow(0)..VisibleRow(self.visible_rows());
         self.ansi_handler_state.tabs = TabStops::new(self.columns());
 
@@ -1583,6 +1593,7 @@ impl GridHandler {
         let fg = self.grid.cursor().template.fg;
         let bg = self.grid.cursor().template.bg;
         let flags = self.grid.cursor().template.flags;
+        let hyperlink = self.ansi_handler_state.active_hyperlink.clone();
 
         let cursor_cell = self.grid.cursor_cell();
 
@@ -1592,6 +1603,7 @@ impl GridHandler {
         cursor_cell.fg = fg;
         cursor_cell.bg = bg;
         cursor_cell.flags = flags;
+        cursor_cell.set_hyperlink(hyperlink);
 
         cursor_cell
     }

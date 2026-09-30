@@ -7,6 +7,7 @@ use crate::model::{
         row::Row,
     },
 };
+use std::sync::Arc;
 
 #[test]
 fn verify_cell_size() {
@@ -16,6 +17,25 @@ fn verify_cell_size() {
     const EXPECTED_CELL_SIZE_IN_BYTES: usize = 24;
 
     assert_eq!(std::mem::size_of::<Cell>(), EXPECTED_CELL_SIZE_IN_BYTES);
+}
+
+#[test]
+fn hyperlink_metadata_is_shared_and_cleared_on_overwrite() {
+    let destination = Arc::new("file:///Users/test/My%20File.md".to_owned());
+    let mut cell = Cell::default();
+    cell.set_hyperlink(Some(destination.clone()));
+
+    let stored = cell.hyperlink().expect("hyperlink should be stored");
+    assert!(Arc::ptr_eq(stored, &destination));
+
+    let cloned = cell.clone();
+    assert!(Arc::ptr_eq(
+        cloned.hyperlink().expect("clone should retain hyperlink"),
+        &destination
+    ));
+
+    cell.drop_extra();
+    assert!(cell.hyperlink().is_none());
 }
 
 #[test]

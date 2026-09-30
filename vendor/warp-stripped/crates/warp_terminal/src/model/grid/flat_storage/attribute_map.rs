@@ -91,7 +91,7 @@ impl<A: GetSize> GetSize for AttributeMap<A> {
     }
 }
 
-impl<A: Copy> AttributeMap<A> {
+impl<A: Clone> AttributeMap<A> {
     /// Returns an iterator over per-byte attribute values starting at the
     /// given byte offset.
     pub fn iter_from(&self, start_offset: ByteOffset) -> impl Iterator<Item = A> + '_ {
@@ -100,7 +100,7 @@ impl<A: Copy> AttributeMap<A> {
 
     /// Returns the tail (current) value of the given attribute.
     pub fn tail(&self) -> A {
-        self.tail_value
+        self.tail_value.clone()
     }
 }
 
@@ -112,16 +112,16 @@ struct Iter<'a, A> {
     tail_value: A,
 }
 
-impl<'a, A: Copy> Iter<'a, A> {
+impl<'a, A: Clone> Iter<'a, A> {
     fn new(map: &'a AttributeMap<A>, start_offset: ByteOffset) -> Self {
         let mut inner = map.map.range(start_offset..);
-        let cur_range = Self::next_range(&mut inner, map.tail_value);
+        let cur_range = Self::next_range(&mut inner, map.tail_value.clone());
 
         Self {
             cur_offset: start_offset,
             cur_range,
             inner,
-            tail_value: map.tail_value,
+            tail_value: map.tail_value.clone(),
         }
     }
 
@@ -129,7 +129,7 @@ impl<'a, A: Copy> Iter<'a, A> {
     fn next_range(inner: &mut btree_map::Range<ByteOffset, A>, tail: A) -> (ByteOffset, A) {
         inner
             .next()
-            .map(|(k, v)| (*k, *v))
+            .map(|(k, v)| (*k, v.clone()))
             // If there are no more ranges in the map, return an "open" range
             // with the tail attribute value.
             .unwrap_or((ByteOffset::from(usize::MAX), tail))
@@ -138,7 +138,7 @@ impl<'a, A: Copy> Iter<'a, A> {
 
 impl<A> Iterator for Iter<'_, A>
 where
-    A: Copy,
+    A: Clone,
 {
     type Item = A;
 
@@ -152,12 +152,12 @@ where
         // While the offset of the next item is outside the current range, get
         // the next range from the iterator over our BTreeMap.
         while self.cur_offset > self.cur_range.0 {
-            self.cur_range = Self::next_range(&mut self.inner, self.tail_value);
+            self.cur_range = Self::next_range(&mut self.inner, self.tail_value.clone());
         }
 
         // Get the value and advance the iterator by one, in preparation for
         // the next call.
-        let val = self.cur_range.1;
+        let val = self.cur_range.1.clone();
         self.cur_offset += 1;
         Some(val)
     }

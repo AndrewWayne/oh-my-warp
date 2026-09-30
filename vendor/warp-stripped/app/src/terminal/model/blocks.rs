@@ -48,7 +48,7 @@ use warpui::{
 
 use super::block::{BlockId, BlockSize, BlockState};
 use super::early_output::EarlyOutput;
-use super::grid::grid_handler::{FragmentBoundary, GridHandler, PossiblePath};
+use super::grid::grid_handler::{FragmentBoundary, GridHandler, Osc8Hyperlink, PossiblePath};
 use super::grid::RespectDisplayedOutput;
 use super::image_map::StoredImageMetadata;
 use super::kitty::{KittyAction, KittyResponse};
@@ -2438,6 +2438,29 @@ impl BlockList {
             })
     }
 
+    pub fn osc8_hyperlink_at_point(
+        &self,
+        point: &WithinBlock<Point>,
+    ) -> Option<WithinBlock<Osc8Hyperlink>> {
+        let block_grid = match point.grid {
+            GridType::Output => self.blocks.get(point.block_index.0)?.output_grid(),
+            GridType::PromptAndCommand => self
+                .blocks
+                .get(point.block_index.0)?
+                .prompt_and_command_grid(),
+            GridType::Prompt | GridType::Rprompt => return None,
+        };
+
+        block_grid
+            .grid_handler
+            .osc8_hyperlink_at_point(point.inner)
+            .map(|link| WithinBlock {
+                inner: link,
+                block_index: point.block_index,
+                grid: point.grid,
+            })
+    }
+
     pub fn is_bootstrapped(&self) -> bool {
         self.bootstrap_stage.is_bootstrapped()
     }
@@ -3325,6 +3348,10 @@ impl ansi::Handler for BlockList {
 
     fn set_cursor_shape(&mut self, shape: CursorShape) {
         delegate!(self.set_cursor_shape(shape));
+    }
+
+    fn set_hyperlink(&mut self, destination: Option<&str>) {
+        delegate!(self.set_hyperlink(destination));
     }
 
     fn input(&mut self, c: char) {

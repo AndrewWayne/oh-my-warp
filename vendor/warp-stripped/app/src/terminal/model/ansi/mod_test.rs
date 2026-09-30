@@ -19,6 +19,7 @@ struct MockHandler {
     identity_reported: bool,
     d_proto_hooks: Vec<DProtoHook>,
     pluggable_notifications: Vec<(Option<String>, String)>,
+    hyperlinks: Vec<Option<String>>,
 }
 
 impl Handler for MockHandler {
@@ -50,6 +51,10 @@ impl Handler for MockHandler {
     fn set_cursor_style(&mut self, _: Option<super::CursorStyle>) {}
 
     fn set_cursor_shape(&mut self, _shape: super::CursorShape) {}
+
+    fn set_hyperlink(&mut self, destination: Option<&str>) {
+        self.hyperlinks.push(destination.map(ToOwned::to_owned));
+    }
 
     fn input(&mut self, _c: char) {}
 
@@ -244,6 +249,7 @@ impl Default for MockHandler {
             identity_reported: false,
             d_proto_hooks: Vec::new(),
             pluggable_notifications: Vec::new(),
+            hyperlinks: Vec::new(),
         }
     }
 }
@@ -260,6 +266,23 @@ fn parse_bytes(bytes: &[u8]) -> (Processor, MockHandler) {
     parser.parse_bytes(&mut handler, bytes, &mut io::sink());
 
     (parser, handler)
+}
+
+#[test]
+fn parse_osc8_hyperlinks_with_bell_and_st_terminators() {
+    let bytes = b"\x1b]8;id=web;https://example.com/a;b\x07web\x1b]8;;\x07\
+        \x1b]8;;file:///Users/test/My%20File.md\x1b\\file\x1b]8;;\x1b\\";
+    let (_, handler) = parse_bytes(bytes);
+
+    assert_eq!(
+        handler.hyperlinks,
+        vec![
+            Some("https://example.com/a;b".to_owned()),
+            None,
+            Some("file:///Users/test/My%20File.md".to_owned()),
+            None,
+        ]
+    );
 }
 
 #[test]

@@ -2916,6 +2916,10 @@ impl ansi::Handler for Block {
         delegate!(self.set_cursor_shape(shape));
     }
 
+    fn set_hyperlink(&mut self, destination: Option<&str>) {
+        delegate!(self.set_hyperlink(destination));
+    }
+
     fn input(&mut self, c: char) {
         delegate!(self.input(c));
     }

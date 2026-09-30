@@ -715,6 +715,10 @@ impl ansi::Handler for BlockGrid {
         self.ansi_handler().set_cursor_shape(shape);
     }
 
+    fn set_hyperlink(&mut self, destination: Option<&str>) {
+        self.ansi_handler().set_hyperlink(destination);
+    }
+
     fn input(&mut self, c: char) {
         self.ansi_handler().input(c);
     }

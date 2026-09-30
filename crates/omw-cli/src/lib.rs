@@ -70,6 +70,13 @@ pub fn run(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) -> i
             RemoteCommand::Status => commands::remote::status(stdout, stderr),
             RemoteCommand::Stop(args) => commands::remote::stop(args, stdout, stderr),
         },
+        Command::NotifySetup(n) => match n.command {
+            NotifySetupCommand::Install(args) => {
+                commands::notify_setup::install(args, stdout, stderr)
+            }
+            NotifySetupCommand::Status => commands::notify_setup::status(stdout, stderr),
+            NotifySetupCommand::Uninstall => commands::notify_setup::uninstall(stdout, stderr),
+        },
     };
 
     match result {
@@ -108,6 +115,24 @@ enum Command {
     Pair(PairArgs),
     /// Manage the omw-remote daemon process
     Remote(RemoteArgs),
+    /// Wire agent completion notifications (Claude Code, Codex) into omw
+    NotifySetup(NotifySetupArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct NotifySetupArgs {
+    #[command(subcommand)]
+    command: NotifySetupCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum NotifySetupCommand {
+    /// Install the bridge scripts and hook entries for Claude Code and Codex
+    Install(commands::notify_setup::InstallArgs),
+    /// Report which agents are wired up
+    Status,
+    /// Remove omw's hook entries and the bridge scripts
+    Uninstall,
 }
 
 #[derive(clap::Args, Debug)]

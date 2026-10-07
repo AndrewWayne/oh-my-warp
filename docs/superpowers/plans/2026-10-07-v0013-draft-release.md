@@ -22,8 +22,10 @@ or latest-release promotion. Prepare in Draft, then publish as Pre-release only
 after assets and checks are complete. Do not push a release tag that could rebuild these
 platforms from the wrong baseline. Continue the established inline execution.
 
-**Recovery state:** Mac 0.0.13 has been rebuilt and checked. DMG SHA-256:
-`dbe880f4ec2b0733cc20e054b6f2edefac9f4f9c02d7c1c10c4c68cb691d633a`.
+**Recovery state:** Public Pre-release publication is complete. Release ID
+`405633716`, tag `omw-local-preview-v0.0.13`, target
+`47ed36e813f08da521a428267ce77856da8c9dc8`. Final Mac DMG SHA-256:
+`bc6df1c2874c43ef919352761424fba96ef80455f856607e8e0e4d0b0cde6e8f`.
 Fresh evidence: `.tmp/renumber-0013-{package-build,package-check,agent-check}.log`.
 Keep the two final foreground acceptance gaps explicit. GitHub 0.0.12 has only
 Mac assets. Windows run `33082661977` compiled successfully, but installer smoke
@@ -114,7 +116,7 @@ The previous stable release remains latest and the installed Mac app untouched.
   or publish before accepted Windows assets are present.
 - Stable latest before staging: `omw-local-preview-v0.0.11`, release ID
   `368393805`. Main remote SHA: `da678973e7846f32ee3872c817f8adfbac0f2ff6`.
-- Remaining: Windows package/installer acceptance, exact platform source/hash
+- At draft creation, remaining work was Windows package/installer acceptance, exact platform source/hash
   manifest and source archives, final public notes, publish with
   `draft=false`/`prerelease=true`/`make_latest=false`, verify public readback.
 - Temporary release ID **405633716**. Mac asset sizes/digests confirmed by GitHub;
@@ -156,3 +158,44 @@ The previous stable release remains latest and the installed Mac app untouched.
   The earlier 0.0.12 installer exit 13 did not reproduce; no underlying installer
   root-cause fix is asserted. Windows `apps`, `crates`, `vendor` remain unchanged
   from the exact 0.0.12 base (fresh `git diff --exit-code` passed).
+
+## Final Publication Record
+
+- Published **2026-10-07 11:33:30 UTC** as a publicly downloadable Pre-release:
+  https://github.com/AndrewWayne/oh-my-warp/releases/tag/omw-local-preview-v0.0.13
+- Authenticated and anonymous API readbacks confirm `draft=false`,
+  `prerelease=true`, the expected release body, nine assets and all sizes/digests.
+  Latest stable remains **0.0.11**, release ID **368393805**. Main remains
+  `da678973e7846f32ee3872c817f8adfbac0f2ff6`.
+- Windows run **37606388621** completed with **success**, exact source
+  `2866f442fd9564bb78ed425392f6df29754ad3bb`. Its full ZIP validation verified
+  **16979 files, 70 directories, 489372883 payload bytes**. Bundled helper/Agent,
+  cloud audit and full installer lifecycle passed. Full logs are retained at
+  `.tmp/windows-0013-full-job.log`; source/gate readback is at
+  `.tmp/windows-0013-full-run.json`.
+- Tag target and Mac source archive are the documentation commit
+  `47ed36e813f08da521a428267ce77856da8c9dc8`. Mac program sources, dependencies
+  and build scripts are unchanged from the accepted build source `256a52d...`;
+  the fresh commit comparison passed. The Windows source archive is generated
+  from its exact successful build source `2866f44...`.
+- Mac source archive: **165229381 bytes**, SHA-256
+  `110b11cabf502307bb0ff40eb712c3c56190271d0952cb28d1c2b0bc4051372f`.
+  Windows source archive: **165233716 bytes**, SHA-256
+  `092a8fd7e5eff5705580e62a5b919a97e75a14f4bbd827e7208cf370bc19072d`.
+- Attached platform manifest SHA-256:
+  `0d1727a7e2e5ef7ac1755bea23c1fab408d2647d4aa5bbd9e4d3750a0ebed91f`.
+  It records eight other assets, exact platform sources, submodule gitlinks,
+  verification evidence and acceptance limits. Automatic GitHub source archives
+  point to the Mac tag; the separate Windows archive is corresponding source.
+- Tag-triggered Release run **37614886873** succeeded with both platform jobs
+  **skipped** as intended, preserving the separately accepted artifacts.
+- All nine anonymous download HEAD requests returned **HTTP 200**, and the three
+  actual downloaded checksum files matched CI/local records. Direct local
+  requests timed out without the existing Git proxy; reusing that proxy for
+  these requests passed. No network settings were changed. Evidence:
+  `.tmp/release-0013-public-download-verification.json` and
+  `.tmp/release-0013-public-downloads/`.
+- No installed application or terminal session was replaced or stopped by this
+  release preparation. The existing untracked Mac `target` symlink remains.
+  The two final Mac GUI gaps, older-system execution and real-provider/phone
+  limitations remain explicit in the public notes and manifest.

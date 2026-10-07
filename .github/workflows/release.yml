@@ -73,6 +73,10 @@ jobs:
         run: |
           ref="$RELEASE_REF"
           version="$RELEASE_VERSION"
+          if [[ "$ref" == "omw-local-preview-v0.0.13" ]]; then
+            test "$(gh release view "$ref" --json isDraft,isPrerelease --jq '.isDraft and .isPrerelease')" = "true"
+            exit 0
+          fi
           if gh release view "$ref" >/dev/null 2>&1; then
             echo "Release $ref already exists; nothing to do."
           else
@@ -173,6 +177,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: vendor/warp-stripped
+          cache-on-failure: true
       - name: Install NSIS
         shell: pwsh
         run: |
@@ -254,6 +259,12 @@ jobs:
           RELEASE_REF: ${{ needs.prepare.outputs.ref }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
+          if ($env:RELEASE_REF -eq 'omw-local-preview-v0.0.13') {
+            $draftState = gh release view $env:RELEASE_REF --json isDraft,isPrerelease --jq '.isDraft and .isPrerelease'
+            if ($LASTEXITCODE -ne 0 -or $draftState -ne 'true') {
+              throw '0.0.13 destination must remain Draft and Pre-release'
+            }
+          }
           gh release upload "$env:RELEASE_REF" `
             "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc.zip" `
             "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc.zip.sha256" `

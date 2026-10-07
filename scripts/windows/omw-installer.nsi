@@ -78,6 +78,7 @@ VIAddVersionKey /LANG=1033 "LegalCopyright" "Copyright (C) 2026 omw contributors
 !insertmacro MUI_LANGUAGE "English"
 
 Var PreviousAppMoved
+Var InstallStage
 
 Function .onInit
   SetShellVarContext current
@@ -132,11 +133,14 @@ Section "omw application (required)" SecApplication
   RMDir /r "$INSTDIR\app.old"
   CreateDirectory "$INSTDIR\app.new"
   SetOutPath "$INSTDIR\app.new"
+  StrCpy $InstallStage "extract payload"
   ClearErrors
   File /r "${PAYLOAD_DIR}\*"
   IfErrors install_failed
 
+  StrCpy $InstallStage "check main executable"
   IfFileExists "$INSTDIR\app.new\${PRODUCT_EXE}" 0 install_failed
+  StrCpy $InstallStage "check payload manifest"
   IfFileExists "$INSTDIR\app.new\SHA256SUMS" 0 install_failed
 
   # Windows cannot rename a directory that is still the process working
@@ -144,12 +148,14 @@ Section "omw application (required)" SecApplication
   SetOutPath "$INSTDIR"
   StrCpy $PreviousAppMoved "0"
   IfFileExists "$INSTDIR\app\${PRODUCT_EXE}" 0 activate_new
+  StrCpy $InstallStage "preserve previous payload"
   ClearErrors
   Rename "$INSTDIR\app" "$INSTDIR\app.old"
   IfErrors install_failed
   StrCpy $PreviousAppMoved "1"
 
 activate_new:
+  StrCpy $InstallStage "activate new payload"
   ClearErrors
   Rename "$INSTDIR\app.new" "$INSTDIR\app"
   IfErrors activate_failed
@@ -185,11 +191,16 @@ activate_failed:
   ${EndIf}
 
 install_failed:
+  System::Call 'kernel32::GetLastError() i.r0'
+  FileOpen $1 "$INSTDIR\installer-error.log" w
+  FileWrite $1 "Stage: $InstallStage$\r$\nWindows error: $0$\r$\n"
+  FileClose $1
   RMDir /r "$INSTDIR\app.new"
   SetErrorLevel 13
   Abort "The omw payload could not be installed. The previous installation was preserved."
 
 install_done:
+  Delete "$INSTDIR\installer-error.log"
 SectionEnd
 
 Section /o "Desktop shortcut" SecDesktopShortcut
@@ -250,6 +261,7 @@ Section "Uninstall"
   DeleteRegKey HKCU "${UNINSTALL_KEY}"
 
   Delete "$INSTDIR\Uninstall.exe"
+  Delete "$INSTDIR\installer-error.log"
   RMDir "$INSTDIR"
 
   DetailPrint "User settings, session data, and Credential Manager entries were preserved."

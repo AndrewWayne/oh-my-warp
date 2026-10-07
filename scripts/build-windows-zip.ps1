@@ -474,6 +474,10 @@ Copy-Item -LiteralPath (Join-Path $agentDir "package.json") -Destination (Join-P
 Copy-Item -LiteralPath (Join-Path $agentDir "dist") -Destination (Join-Path $staging "dist") -Recurse
 Copy-Item -LiteralPath (Join-Path $agentDir "vendor") -Destination (Join-Path $staging "vendor") -Recurse
 Copy-Item -LiteralPath (Join-Path $repoRoot "LICENSE") -Destination (Join-Path $staging "LICENSE")
+$provenancePath = Join-Path $repoRoot "docs\upstream\v$Version-windows.json"
+if (Test-Path -LiteralPath $provenancePath -PathType Leaf) {
+    Copy-Item -LiteralPath $provenancePath -Destination (Join-Path $staging "UPSTREAM_PROVENANCE.json")
+}
 
 $runtimeFiles = @(
     @{ Source = "conpty.dll"; Destination = "conpty.dll" },

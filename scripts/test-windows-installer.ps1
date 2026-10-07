@@ -120,6 +120,10 @@ try {
     Write-Host "==> Silent first install"
     $installExit = Invoke-InstallerProcess $InstallerPath @('/S', "/D=$InstallDirectory")
     if ($installExit -ne 0) {
+        $failureLog = Join-Path $InstallDirectory 'installer-error.log'
+        if (Test-Path -LiteralPath $failureLog -PathType Leaf) {
+            Get-Content -LiteralPath $failureLog | ForEach-Object { Write-Host $_ }
+        }
         throw "installer exited with $installExit"
     }
     $cleanupRequired = $true

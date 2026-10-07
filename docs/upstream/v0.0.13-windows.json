@@ -1,0 +1,29 @@
+{
+  "product": "omw",
+  "version": "0.0.13",
+  "track": "local-preview",
+  "platform": "x86_64-pc-windows-msvc",
+  "omw_base": {
+    "repository": "https://github.com/AndrewWayne/oh-my-warp",
+    "tag": "omw-local-preview-v0.0.12",
+    "commit": "299b55e1c53b685fc2ee665b6beb3b8f28e21eb8"
+  },
+  "source_branch": "release/v0.0.13-windows",
+  "preservation": {
+    "application_source_unchanged": true,
+    "windows_features_unchanged": true,
+    "cloud_feature_enabled": false
+  },
+  "packaging_changes": [
+    "Rebuild embedded release tag and package version as 0.0.13",
+    "Include this provenance record and matching Windows release notes",
+    "Guard 0.0.13 release preparation and upload with Draft/Pre-release checks",
+    "Retain failed-build cache for installer diagnosis",
+    "Record installer failure stage and Windows error without changing application behavior"
+  ],
+  "acceptance": {
+    "status": "pending fresh Windows runner verification",
+    "previous_run": 33082661977,
+    "previous_installer_exit_code": 13
+  }
+}

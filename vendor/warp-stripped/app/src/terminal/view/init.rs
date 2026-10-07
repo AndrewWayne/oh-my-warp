@@ -290,6 +290,13 @@ pub fn init(app: &mut AppContext) {
         ]);
     }
 
+    #[cfg(all(feature = "omw_local", target_os = "macos"))]
+    app.register_editable_bindings([EditableBinding::new(
+        "terminal:toggle_omw_phone_share",
+        "Share or stop sharing current pane with phone",
+        TerminalAction::ToggleOmwPhoneShare,
+    ).with_context_predicate(id!("Terminal"))]);
+
     // By default, Windows Terminal recognizes both `ctrl-v` and `ctrl-shift-v` to paste into the
     // terminal. It also allows users to disable it, so we also make this an EditableBinding.
     #[cfg(windows)]

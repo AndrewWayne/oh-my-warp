@@ -260,6 +260,7 @@ impl CodeView {
         ctx: &mut ViewContext<Self>,
     ) -> Self {
         let path = source.path();
+        let line_col = line_col.or_else(|| source.line_col());
         let mut view = Self::new_internal(source, ctx);
         view.open_or_focus_existing(path, line_col, ctx);
         #[cfg(feature = "local_fs")]
@@ -561,11 +562,11 @@ impl CodeView {
                     mgr.maybe_register_external_file(path, *source_server_id);
                 });
 
-                // LSP uses 0-based line numbers, convert to 1-based for LineAndColumnArg
+                // LSP positions are 0-based; LineAndColumnArg positions are 1-based.
                 let line_1based = *line + 1;
                 let line_col = LineAndColumnArg {
                     line_num: line_1based,
-                    column_num: Some(*column),
+                    column_num: Some(*column + 1),
                 };
 
                 me.open_or_focus_existing(Some(path.to_path_buf()), Some(line_col), ctx);
@@ -709,6 +710,16 @@ impl CodeView {
         line_col: Option<LineAndColumnArg>,
         ctx: &mut ViewContext<Self>,
     ) {
+        if let CodeSource::Link {
+            path: source_path,
+            range_start,
+            ..
+        } = &mut self.source
+        {
+            if path.as_ref() == Some(source_path) && line_col.is_some() {
+                *range_start = line_col;
+            }
+        }
         // If the tab already exists, focus it (and optionally jump) without re-opening from disk.
         if let Some(existing_index) = self.focus_existing_tab_if_present(&path, ctx) {
             if let Some(line_col) = line_col {

@@ -67,6 +67,16 @@ pub(crate) fn local_io_handles_for(
     Some((local.event_loop_tx(), local.pty_reads_tx(), local.current_size_info()))
 }
 
+/// Check local capability without locking the terminal model during header paint.
+#[cfg(target_os = "macos")]
+pub(crate) fn has_local_tty_manager(tv: &TerminalView, ctx: &AppContext) -> bool {
+    let Some(stack) = tv.pane_stack_handle(ctx) else {
+        return false;
+    };
+    let manager = stack.as_ref(ctx).active_data().clone();
+    manager.as_ref(ctx).as_any().is::<LocalTtyManager>()
+}
+
 /// Share JUST the supplied `TerminalView`'s pane (no workspace iteration).
 /// Used by the Phone-click handler to register the active pane the user
 /// clicked from. Returns `None` if the pane isn't backed by a

@@ -22,6 +22,8 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::str::FromStr;
+#[cfg(target_os = "macos")]
+use async_compat::CompatExt as _;
 
 use omw_config::{
     AgentConfig, ApprovalConfig, ApprovalMode, BaseUrl, Config, KeyRef, ProviderConfig,
@@ -59,6 +61,14 @@ pub enum ProviderKindForm {
     Ollama,
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderTestStatus {
+    Testing(u64),
+    Succeeded,
+    Failed(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormError {
     InvalidProviderId(String),
@@ -88,6 +98,10 @@ pub struct OmwAgentPageState {
     pub pending_secrets: BTreeMap<String, String>,
     pub is_dirty: bool,
     pub last_save_error: Option<String>,
+    #[cfg(target_os = "macos")]
+    pub provider_test_status: BTreeMap<usize, ProviderTestStatus>,
+    #[cfg(target_os = "macos")]
+    pub next_provider_test_request_id: u64,
     pub default_provider_dropdown: DefaultProviderDropdownState,
     /// Ordered list of `(old_id, new_id)` renames that haven't been
     /// reconciled with the keychain yet. Populated by `SetProviderId`
@@ -98,7 +112,7 @@ pub struct OmwAgentPageState {
     pub pending_renames: Vec<(String, String)>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum OmwAgentPageAction {
     ToggleEnabled,
     SetApprovalMode(ApprovalMode),
@@ -109,12 +123,54 @@ pub enum OmwAgentPageAction {
     SetProviderModel(usize, String),
     SetProviderBaseUrl(usize, String),
     SetProviderApiKey(usize, String),
+    #[cfg(target_os = "macos")]
+    TestProvider(usize),
     SetDefaultProviderById(Option<String>),
     ToggleDefaultProviderDropdown,
     CloseDefaultProviderDropdown,
     SetAgentsMdPath(String),
     Apply,
     Discard,
+}
+
+// upstream: omw #136. Typed actions are logged with Debug; omit the API key.
+impl std::fmt::Debug for OmwAgentPageAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use OmwAgentPageAction::*;
+        match self {
+            ToggleEnabled => f.write_str("ToggleEnabled"),
+            SetApprovalMode(mode) => f.debug_tuple("SetApprovalMode").field(mode).finish(),
+            AddProvider => f.write_str("AddProvider"),
+            RemoveProvider(idx) => f.debug_tuple("RemoveProvider").field(idx).finish(),
+            SetProviderId(idx, s) => f.debug_tuple("SetProviderId").field(idx).field(s).finish(),
+            SetProviderKind(idx, kind) => f
+                .debug_tuple("SetProviderKind")
+                .field(idx)
+                .field(kind)
+                .finish(),
+            SetProviderModel(idx, s) => f
+                .debug_tuple("SetProviderModel")
+                .field(idx)
+                .field(s)
+                .finish(),
+            SetProviderBaseUrl(idx, s) => f
+                .debug_tuple("SetProviderBaseUrl")
+                .field(idx)
+                .field(s)
+                .finish(),
+            SetProviderApiKey(idx, _) => write!(f, "SetProviderApiKey({idx:?}, <redacted>)"),
+            #[cfg(target_os = "macos")]
+            TestProvider(idx) => f.debug_tuple("TestProvider").field(idx).finish(),
+            SetDefaultProviderById(id) => {
+                f.debug_tuple("SetDefaultProviderById").field(id).finish()
+            }
+            ToggleDefaultProviderDropdown => f.write_str("ToggleDefaultProviderDropdown"),
+            CloseDefaultProviderDropdown => f.write_str("CloseDefaultProviderDropdown"),
+            SetAgentsMdPath(s) => f.debug_tuple("SetAgentsMdPath").field(s).finish(),
+            Apply => f.write_str("Apply"),
+            Discard => f.write_str("Discard"),
+        }
+    }
 }
 
 // ---------------------- Pure converters ----------------------
@@ -310,6 +366,92 @@ fn is_row_complete(row: &ProviderRow, has_persisted_key: impl Fn(&str) -> bool) 
     }
 }
 
+/// Check the model-list endpoint without sending conversation content.
+#[cfg(target_os = "macos")]
+pub fn provider_test_endpoint(row: &ProviderRow) -> Result<String, String> {
+    let base = match row.kind {
+        ProviderKindForm::OpenAi if row.base_url.is_empty() => "https://api.openai.com/v1",
+        ProviderKindForm::Anthropic => "https://api.anthropic.com/v1",
+        ProviderKindForm::Ollama if row.base_url.is_empty() => "http://127.0.0.1:11434/v1",
+        ProviderKindForm::OpenAiCompatible if row.base_url.is_empty() => {
+            return Err("base URL is required".to_owned());
+        }
+        _ => &row.base_url,
+    };
+    let mut parsed = BaseUrl::from_str(base).map_err(|_| "base URL is invalid".to_owned())?.into_url();
+    parsed.set_path(&format!("{}/models", parsed.path().trim_end_matches('/')));
+    Ok(parsed.to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub fn validate_provider_test_inputs(row: &ProviderRow, secret_available: bool) -> Result<(), String> {
+    ProviderId::from_str(&row.id).map_err(|_| "provider id is invalid".to_owned())?;
+    if row.model.trim().is_empty() {
+        return Err("model is required".to_owned());
+    }
+    if kind_requires_key(row.kind) && !secret_available {
+        return Err("API key is required".to_owned());
+    }
+    provider_test_endpoint(row)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub async fn test_provider_connection(row: ProviderRow, secret: Option<String>) -> Result<(), String> {
+    validate_provider_test_inputs(&row, secret.is_some())?;
+    let endpoint = reqwest::Url::parse(&provider_test_endpoint(&row)?)
+        .map_err(|_| "base URL is invalid".to_owned())?;
+    let is_loopback = match endpoint.host() {
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        _ => false,
+    };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        // A redirect must not forward credentials to another endpoint.
+        .redirect(reqwest::redirect::Policy::none());
+    // Local Ollama must not depend on system proxy availability.
+    let client = if is_loopback { client.no_proxy() } else { client }.build()
+        .map_err(|_| "could not create HTTP client".to_owned())?;
+    let mut request = client.get(endpoint)
+        .header(reqwest::header::ACCEPT, "application/json");
+    match row.kind {
+        ProviderKindForm::Anthropic => {
+            request = request.header("x-api-key", secret.as_deref().unwrap_or_default())
+                .header("anthropic-version", "2023-06-01");
+        }
+        _ => {
+            if let Some(secret) = secret {
+                request = request.bearer_auth(secret);
+            }
+        }
+    }
+    let response = request.send().await.map_err(|error| {
+        if error.is_timeout() { "request timed out" }
+        else if error.is_connect() { "connection failed" }
+        else { "request failed" }.to_owned()
+    })?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("HTTP {}", response.status()))
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl OmwAgentPageState {
+    pub fn finish_provider_test(&mut self, idx: usize, request_id: u64, result: Result<(), String>) {
+        if self.provider_test_status.get(&idx) != Some(&ProviderTestStatus::Testing(request_id)) {
+            return;
+        }
+        self.provider_test_status.insert(idx, match result {
+            Ok(()) => ProviderTestStatus::Succeeded,
+            Err(message) => ProviderTestStatus::Failed(message),
+        });
+    }
+}
+
 pub fn form_to_config(
     form: &OmwAgentForm,
     persisted_secrets: &BTreeMap<String, KeyRef>,
@@ -411,7 +553,21 @@ pub fn form_to_config(
 }
 
 pub fn apply_action(state: &mut OmwAgentPageState, action: OmwAgentPageAction) {
+    #[cfg(target_os = "macos")]
+    match &action {
+        OmwAgentPageAction::SetProviderId(idx, _)
+        | OmwAgentPageAction::SetProviderKind(idx, _)
+        | OmwAgentPageAction::SetProviderModel(idx, _)
+        | OmwAgentPageAction::SetProviderBaseUrl(idx, _)
+        | OmwAgentPageAction::SetProviderApiKey(idx, _) => { state.provider_test_status.remove(idx); }
+        OmwAgentPageAction::RemoveProvider(_) | OmwAgentPageAction::Discard | OmwAgentPageAction::Apply => {
+            state.provider_test_status.clear();
+        }
+        _ => {}
+    }
     match action {
+        #[cfg(target_os = "macos")]
+        OmwAgentPageAction::TestProvider(_) => return,
         OmwAgentPageAction::ToggleEnabled => state.form.agent_enabled = !state.form.agent_enabled,
         OmwAgentPageAction::SetApprovalMode(m) => state.form.approval_mode = m,
         OmwAgentPageAction::AddProvider => state.form.providers.push(ProviderRow {
@@ -587,6 +743,8 @@ pub struct ProviderRowEditors {
     pub base_url_input: ViewHandle<SubmittableTextInput>,
     pub api_key_input: ViewHandle<SubmittableTextInput>,
     pub set_default_button: MouseStateHandle,
+    #[cfg(target_os = "macos")]
+    pub test_button: MouseStateHandle,
     pub remove_button: MouseStateHandle,
     /// One toggle per provider kind: openai, anthropic,
     /// openai-compatible, ollama. Index lines up with
@@ -704,6 +862,10 @@ impl OmwAgentPageView {
                 pending_secrets: BTreeMap::new(),
                 is_dirty: false,
                 last_save_error: None,
+                #[cfg(target_os = "macos")]
+                provider_test_status: BTreeMap::new(),
+                #[cfg(target_os = "macos")]
+                next_provider_test_request_id: 0,
                 default_provider_dropdown: DefaultProviderDropdownState::default(),
                 pending_renames: Vec::new(),
             },
@@ -766,11 +928,50 @@ impl OmwAgentPageView {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    fn start_provider_test(&mut self, idx: usize, ctx: &mut ViewContext<Self>) {
+        let Some(row) = self.state.form.providers.get(idx).cloned() else { return; };
+        let secret = if let Some(value) = self.state.pending_secrets.get(&row.id) {
+            Ok(Some(value.clone()))
+        } else if !row.api_key_input.is_empty() {
+            Ok(Some(row.api_key_input.clone()))
+        } else if !row.key_ref_token.is_empty() {
+            KeyRef::from_str(&row.key_ref_token)
+                .map_err(|_| "invalid key reference".to_owned())
+                .and_then(|key_ref| match omw_keychain::get(&key_ref) {
+                    Ok(value) => Ok(Some(value.expose().to_owned())),
+                    Err(omw_keychain::KeychainError::NotFound) => Ok(None),
+                    Err(_) => Err("keychain lookup failed".to_owned()),
+                })
+        } else { Ok(None) };
+        let secret = match secret.and_then(|secret| {
+            validate_provider_test_inputs(&row, secret.is_some())?;
+            Ok(secret)
+        }) {
+            Ok(secret) => secret,
+            Err(message) => {
+                self.state.provider_test_status.insert(idx, ProviderTestStatus::Failed(message));
+                return;
+            }
+        };
+        self.state.next_provider_test_request_id = self.state.next_provider_test_request_id.wrapping_add(1);
+        let request_id = self.state.next_provider_test_request_id;
+        self.state.provider_test_status.insert(idx, ProviderTestStatus::Testing(request_id));
+        ctx.spawn(test_provider_connection(row, secret).compat(), move |me, result, ctx| {
+            // Include edits that are still in the live input buffers.
+            me.flush_pending_input_text(ctx);
+            me.state.finish_provider_test(idx, request_id, result);
+            ctx.notify();
+        });
+    }
+
     /// Side-effecting Apply: writes pending API keys to the OS keychain, then
     /// serialises the form to TOML via `omw_config::save_atomic`. On any
     /// failure, sets `last_save_error` and leaves `saved_config` alone.
     /// Per spec D10, the keychain write happens BEFORE the TOML write.
     pub fn apply(&mut self) {
+        #[cfg(target_os = "macos")]
+        self.state.provider_test_status.clear();
         // 1. Pre-flight validation.
         if let Err(errs) = validate_form(&self.state.form) {
             self.state.last_save_error = Some(format!("validation failed: {errs:?}"));
@@ -1027,12 +1228,25 @@ fn make_provider_row_editors(
         }
     });
 
+    #[cfg(target_os = "macos")]
+    for input in [&id_input, &model_input, &base_url_input, &api_key_input] {
+        let editor = input.as_ref(ctx).editor().clone();
+        ctx.subscribe_to_view(&editor, move |me, _, event, ctx| {
+            if matches!(event, crate::editor::Event::Edited(_)) {
+                me.state.provider_test_status.remove(&slot);
+                ctx.notify();
+            }
+        });
+    }
+
     ProviderRowEditors {
         id_input,
         model_input,
         base_url_input,
         api_key_input,
         set_default_button: MouseStateHandle::default(),
+        #[cfg(target_os = "macos")]
+        test_button: MouseStateHandle::default(),
         remove_button: MouseStateHandle::default(),
         kind_buttons: [
             MouseStateHandle::default(),
@@ -1076,6 +1290,13 @@ impl TypedActionView for OmwAgentPageView {
     type Action = OmwAgentPageAction;
 
     fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
+        #[cfg(target_os = "macos")]
+        if let OmwAgentPageAction::TestProvider(idx) = action {
+            self.flush_pending_input_text(ctx);
+            self.start_provider_test(*idx, ctx);
+            ctx.notify();
+            return;
+        }
         // Route every typed action through the existing `dispatch`
         // method so the pure reducer + side-effecting `apply` keep their
         // single source of truth. `notify()` so the new state is
@@ -1737,6 +1958,18 @@ impl SettingsWidget for OmwAgentPageWidget {
                 action_row.add_child(
                     Container::new(default_button).with_margin_right(6.).finish(),
                 );
+                #[cfg(target_os = "macos")]
+                {
+                    let is_testing = matches!(view.state.provider_test_status.get(&idx), Some(ProviderTestStatus::Testing(_)));
+                    let mut button = appearance.ui_builder()
+                        .button(ButtonVariant::Secondary, editors.test_button.clone())
+                        .with_text_label("Test".to_owned())
+                        .build();
+                    if is_testing { button = button.disable(); }
+                    action_row.add_child(Container::new(button.on_click(move |ctx, _, _| {
+                        ctx.dispatch_typed_action(OmwAgentPageAction::TestProvider(idx));
+                    }).finish()).with_margin_right(6.).finish());
+                }
                 let remove_button = appearance
                     .ui_builder()
                     .button(ButtonVariant::Secondary, editors.remove_button.clone())
@@ -1753,6 +1986,16 @@ impl SettingsWidget for OmwAgentPageWidget {
                         .with_margin_bottom(12.)
                         .finish(),
                 );
+                #[cfg(target_os = "macos")]
+                if let Some(status) = view.state.provider_test_status.get(&idx) {
+                    let (message, color) = match status {
+                        ProviderTestStatus::Testing(_) => ("    Testing connection...".to_owned(), muted),
+                        ProviderTestStatus::Succeeded => ("    Connection test passed.".to_owned(), active),
+                        ProviderTestStatus::Failed(reason) => (format!("    Connection test failed: {reason}"), theme.ui_error_color()),
+                    };
+                    col.add_child(Container::new(Text::new(message, appearance.ui_font_family(), CONTENT_FONT_SIZE)
+                        .with_color(color).finish()).with_margin_bottom(12.).finish());
+                }
             }
         }
 

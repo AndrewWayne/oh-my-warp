@@ -159,6 +159,10 @@ mkdir -p "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources"
 
 cp "${BINARY}" "${APP_DIR}/Contents/MacOS/omw-warp-oss"
 chmod +x "${APP_DIR}/Contents/MacOS/omw-warp-oss"
+PROVENANCE="${REPO_ROOT}/docs/upstream/v${VERSION}.json"
+if [[ -f "${PROVENANCE}" ]]; then
+    cp "${PROVENANCE}" "${APP_DIR}/Contents/Resources/UPSTREAM_PROVENANCE.json"
+fi
 
 # Substitute __VERSION__ and write Info.plist.
 sed "s/__VERSION__/${VERSION}/g" "${PLIST_TEMPLATE}" > "${APP_DIR}/Contents/Info.plist"
@@ -298,6 +302,9 @@ mkdir -p "${DMG_PAYLOAD}"
 cp -R "${APP_DIR}" "${DMG_PAYLOAD}/"
 ln -s /Applications "${DMG_PAYLOAD}/Applications"
 cp "${REPO_ROOT}/LICENSE" "${DMG_PAYLOAD}/LICENSE"
+if [[ -f "${PROVENANCE}" ]]; then
+    cp "${PROVENANCE}" "${DMG_PAYLOAD}/UPSTREAM_PROVENANCE.json"
+fi
 if [[ -f "${REPO_ROOT}/RELEASE_NOTES_v${VERSION}.md" ]]; then
     cp "${REPO_ROOT}/RELEASE_NOTES_v${VERSION}.md" "${DMG_PAYLOAD}/README.md"
 fi

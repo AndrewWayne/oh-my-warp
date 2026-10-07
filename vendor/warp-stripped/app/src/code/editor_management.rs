@@ -167,6 +167,13 @@ impl CodeSource {
         )
     }
 
+    pub fn line_col(&self) -> Option<LineAndColumnArg> {
+        match self {
+            Self::Link { range_start, .. } => *range_start,
+            _ => None,
+        }
+    }
+
     pub fn omit_line_col(&self) -> CodeSource {
         if let CodeSource::Link { path, .. } = self {
             CodeSource::Link {

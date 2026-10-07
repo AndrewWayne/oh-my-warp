@@ -3613,9 +3613,9 @@ impl CodeReviewView {
                 self.open_file_in_tab(
                     path,
                     Some(LineAndColumnArg {
-                        // LSP uses 0-indexed lines, but we display 1-indexed
+                        // LSP positions are 0-based; file targets use 1-based positions.
                         line_num: *line + 1,
-                        column_num: Some(*column),
+                        column_num: Some(*column + 1),
                     }),
                     ctx,
                 );

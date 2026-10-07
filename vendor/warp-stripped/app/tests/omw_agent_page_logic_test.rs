@@ -34,9 +34,22 @@ fn empty_state() -> OmwAgentPageState {
         pending_secrets: BTreeMap::new(),
         is_dirty: false,
         last_save_error: None,
+        #[cfg(target_os = "macos")]
+        provider_test_status: BTreeMap::new(),
+        #[cfg(target_os = "macos")]
+        next_provider_test_request_id: 0,
         default_provider_dropdown: DefaultProviderDropdownState::default(),
         pending_renames: Vec::new(),
     }
+}
+
+#[test]
+fn set_provider_api_key_debug_redacts_secret() {
+    let action = OmwAgentPageAction::SetProviderApiKey(0, "sk-test-secret".into());
+    let debug = format!("{action:?}");
+    assert!(!debug.contains("sk-test-secret"), "{debug}");
+    assert!(debug.contains("SetProviderApiKey"), "{debug}");
+    assert!(debug.contains("<redacted>"), "{debug}");
 }
 
 // ---------------- form_from_config / form_to_config ----------------

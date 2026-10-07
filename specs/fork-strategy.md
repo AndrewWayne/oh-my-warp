@@ -28,6 +28,16 @@ It is referenced by [PRD §8.5](../PRD.md#85-fork-strategy--upstream-tracking), 
 - Patch-series management. There are no `omw/local-mode`, `omw/branding`, etc. branches — just regular commits to `vendor/warp-stripped/` on regular feature branches.
 - A separate AGPL repository.
 
+### Authorized maintenance exception (2026-10-05)
+
+The macOS 27 maintenance release is authorized to backport selected fixes
+onto the exact omw 0.0.11 baseline, preserving its complete feature set.
+This exception does not perform the whole-tree sync described in section 2.
+Record each adopted revision and local adaptation in
+[`docs/upstream/v0.0.13.json`](../docs/upstream/v0.0.13.json); see
+[`docs/upstream-tracking.md`](../docs/upstream-tracking.md) for the proposed
+subsystem verification order for future synchronization work.
+
 ---
 
 ## 1. Repository Layout

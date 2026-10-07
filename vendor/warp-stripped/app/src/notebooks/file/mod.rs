@@ -880,7 +880,7 @@ impl TypedActionView for FileNotebookView {
                     ctx.emit(FileNotebookEvent::OpenFileWithTarget {
                         path,
                         target,
-                        line_col: None,
+                        line_col: self.code_source.as_ref().and_then(CodeSource::line_col),
                     });
                 }
             }

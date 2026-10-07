@@ -221,17 +221,28 @@ async fn ws_handler(
         // phones routinely drift 1-2 minutes off true UTC. Anti-replay is
         // still bounded — `nonce_store` dedups within its 60 s window, and
         // the capability-token TTL caps the long horizon.
-        verify_connect_token(
+        let verify = |scope| verify_connect_token(
             &ct,
             &request_path,
             &state.host_pubkey,
             &state.nonce_store,
             &state.revocations,
-            Capability::PtyWrite,
+            scope,
             300,
             now,
-        )
-        .map_err(|e| (e.status(), e.code()))
+        );
+        let result = verify(Capability::PtyWrite);
+        #[cfg(target_os = "macos")]
+        let result = result.or_else(|error| {
+            // Scope rejection does not consume the nonce. Preserve write-only
+            // clients while allowing the embedded daemon's read-only pairing.
+            if error == ConnectTokenError::CapabilityScope {
+                verify(Capability::PtyRead)
+            } else {
+                Err(error)
+            }
+        });
+        result.map_err(|e| (e.status(), e.code()))
     } else {
         eprintln!("[omw-debug] ws_handler -> falling back to header auth (no ?ct=)");
         authenticate_with_headers(&state, &headers, &session_id, now)
@@ -390,7 +401,16 @@ fn authenticate_with_headers(
     };
 
     let verifier = Verifier::new(state.host_pubkey, state.nonce_store.clone());
-    let device_id = match verifier.verify(&canonical, &sig, cap_b64, Capability::PtyWrite, now) {
+    let result = verifier.verify(&canonical, &sig, cap_b64, Capability::PtyWrite, now);
+    #[cfg(target_os = "macos")]
+    let result = result.or_else(|error| {
+        if error == AuthError::CapabilityScope {
+            verifier.verify(&canonical, &sig, cap_b64, Capability::PtyRead, now)
+        } else {
+            Err(error)
+        }
+    });
+    let device_id = match result {
         Ok(id) => id,
         Err(e) => {
             // Every variant historically maps to 401 on this path; the code is

@@ -44,20 +44,41 @@ const PREFIXES_TO_REMOVE: [&str; 2] = ["a/", "b/"];
 #[cfg(feature = "local_fs")]
 const SUFFIXES_TO_REMOVE: [&str; 1] = ["@"];
 
-enum Osc8Target<'a> {
+pub enum Osc8Target<'a> {
     Web(&'a str),
     #[cfg(feature = "local_fs")]
-    File(PathBuf),
+    File(PathBuf, Option<LineAndColumnArg>),
 }
 
-fn osc8_target(destination: &str) -> Option<Osc8Target<'_>> {
-    let url = Url::parse(destination).ok()?;
+pub fn osc8_target(destination: &str) -> Option<Osc8Target<'_>> {
+    let mut url = Url::parse(destination).ok()?;
     match url.scheme() {
         "http" | "https" => Some(Osc8Target::Web(destination)),
         "file" => {
             #[cfg(feature = "local_fs")]
             {
-                url.to_file_path().ok().map(Osc8Target::File)
+                // Parse location suffixes before decoding so escaped ':' and '#' remain filename text.
+                let path = CleanPathResult::with_line_and_column_number(url.path());
+                let fragment_location = url.fragment().and_then(|fragment| {
+                    let parsed =
+                        CleanPathResult::with_line_and_column_number(&format!("#{fragment}"));
+                    parsed
+                        .path
+                        .is_empty()
+                        .then_some(parsed.line_and_column_num)
+                        .flatten()
+                });
+                if path.line_and_column_num.is_some() {
+                    if let Ok(file) = url.to_file_path() {
+                        if file.exists() {
+                            return Some(Osc8Target::File(file, fragment_location));
+                        }
+                    }
+                }
+                url.set_path(&path.path);
+                url.to_file_path().ok().map(|file| {
+                    Osc8Target::File(file, fragment_location.or(path.line_and_column_num))
+                })
             }
             #[cfg(not(feature = "local_fs"))]
             {
@@ -103,9 +124,9 @@ impl GridHighlightedLink {
             GridHighlightedLink::File(_) => "Open file",
             GridHighlightedLink::Osc8(link) => match osc8_target(link.get_inner().destination()) {
                 #[cfg(feature = "local_fs")]
-                Some(Osc8Target::File(path)) if path.is_dir() => "Open folder",
+                Some(Osc8Target::File(path, _)) if path.is_dir() => "Open folder",
                 #[cfg(feature = "local_fs")]
-                Some(Osc8Target::File(_)) => "Open file",
+                Some(Osc8Target::File(_, _)) => "Open file",
                 _ => "Open link",
             },
             GridHighlightedLink::Url(_) => "Open link",
@@ -308,7 +329,7 @@ impl super::TerminalView {
         match osc8_target(destination) {
             Some(Osc8Target::Web(url)) => ctx.open_url(url),
             #[cfg(feature = "local_fs")]
-            Some(Osc8Target::File(path)) => self.open_file_path(path, None, ctx),
+            Some(Osc8Target::File(path, location)) => self.open_file_path(path, location, ctx),
             None => log::warn!("Ignored unsupported OSC 8 destination scheme"),
         }
     }
@@ -530,10 +551,11 @@ mod tests {
     fn osc8_target_decodes_local_file_urls() {
         let target = osc8_target("file:///Users/test/My%20%E6%96%87%E4%BB%B6.md")
             .expect("local file URL should be supported");
-        let Osc8Target::File(path) = target else {
+        let Osc8Target::File(path, location) = target else {
             panic!("file URL should classify as a local file");
         };
         assert_eq!(path, PathBuf::from("/Users/test/My 文件.md"));
+        assert_eq!(location, None);
     }
 
     #[cfg(feature = "local_fs")]

@@ -1259,7 +1259,11 @@ impl CodeEditorView {
                 {
                     match trigger.position {
                         ScrollPosition::LineAndColumn(line_col) => {
-                            self.jump_to_line_column(line_col.line_num, line_col.column_num, ctx);
+                            self.jump_to_line_column(
+                                line_col.line_num,
+                                line_col.column_num.map(|column| column.saturating_sub(1)),
+                                ctx,
+                            );
                         }
                         ScrollPosition::FocusedDiffHunk => {
                             self.navigate_current_diff_hunk(ctx);

@@ -2549,6 +2549,13 @@ impl crate::terminal::TerminalManager for TerminalManager {
         _detach_type: crate::pane_group::pane::DetachType,
         app: &mut AppContext,
     ) {
+        #[cfg(all(feature = "omw_local", target_os = "macos"))]
+        {
+            if crate::terminal::view::omw_phone_share::should_unshare_for_detach(_detach_type) {
+                self.view.update(app, |view, _ctx| view.cancel_pending_omw_phone_share());
+            }
+            crate::terminal::view::omw_phone_share::unshare_phone_pane_after_detach(self.view.id(), _detach_type);
+        }
         let shared_session_status = self.model.lock().shared_session_status().clone();
         if shared_session_status.is_sharer() {
             let is_confirm_close_session =

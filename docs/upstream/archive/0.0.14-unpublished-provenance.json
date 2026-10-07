@@ -1,0 +1,86 @@
+{
+  "product": "omw",
+  "version": "0.0.14",
+  "track": "local-preview",
+  "recorded_on": "2026-10-07",
+  "platform": "aarch64-apple-darwin",
+  "omw_base": {
+    "repository": "https://github.com/AndrewWayne/oh-my-warp",
+    "tag": "omw-local-preview-v0.0.11",
+    "commit": "24c06811dee6cb6b22d715c69657af909ade8d4d"
+  },
+  "inherits_maintenance": {
+    "version": "0.0.13",
+    "source_record": "docs/upstream/v0.0.13.json",
+    "all_local_repairs_preserved": true
+  },
+  "vendor_snapshot": {
+    "repository": "https://github.com/warpdotdev/warp",
+    "upstream_commit": null,
+    "imported_by_omw_commit": "82f15d6606fcb76fe636ad55f9130a1582bd5ebe",
+    "note": "Original upstream snapshot is not established. This is a selective Mac backport, not a whole-tree synchronization."
+  },
+  "adopted_patches": [
+    {
+      "repository": "https://github.com/warpdotdev/warp",
+      "commit": "4aeeebfc8d36a25f719ee95793325838072a4954",
+      "pull_request": 12557,
+      "scope": "Inherited macOS 27 native window event repair"
+    },
+    {
+      "repository": "https://github.com/warpdotdev/warp",
+      "commit": "ec27d06d7dcc08d78a1447ab0c5974e506e936ff",
+      "pull_request": 12770,
+      "scope": "Inherited native event availability repair"
+    },
+    {
+      "repository": "https://github.com/warpdotdev/warp",
+      "commit": "64e3cd4745ff0148437a0982c7b57179646e69ef",
+      "pull_request": 14716,
+      "scope": "Inherited Option-green-button AppKit zoom repair"
+    },
+    {
+      "repository": "https://github.com/AndrewWayne/oh-my-warp",
+      "commit": "8bde12e6ab31f7754768d07556d97c80c7d76c9c",
+      "pull_request": 136,
+      "scope": "Inherited API-key action Debug redaction"
+    },
+    {
+      "repository": "https://github.com/AndrewWayne/oh-my-warp",
+      "commit": "d3dbe0c2f29c713ec97a4ec76d81a8ee31f11d31",
+      "scope": "Provider connection testing and keyless Ollama",
+      "application": "Mac-only Settings UI/state/HTTP probe; darwin-only Agent sentinel and omitted Authorization header. Preserve custom action Debug. No Windows parity changes."
+    },
+    {
+      "repository": "https://github.com/AndrewWayne/oh-my-warp",
+      "commit": "359d14296caaf6552cbf842375904e2b932ab2e3",
+      "scope": "Persistent per-pane phone controls and lifecycle",
+      "application": "Mac-only header/overflow/palette action, lifetime subscriptions, local capability check and cancellation/cleanup; reuse existing same-pane bridge and pairing surface. No Windows PTY/layout/migrations."
+    },
+    {
+      "repository": "https://github.com/AndrewWayne/oh-my-warp",
+      "commit": "f5e52613c662e49be3cea01ef6c7ebfa6328d34e",
+      "scope": "Pairing URL logging privacy",
+      "application": "Mac startup output omits the URL; also redact status Debug and omit the token-bearing modal text from stderr. Intentional browser/QR/clipboard pairing retains the URL."
+    }
+  ],
+  "selected_release_reference": {
+    "repository": "https://github.com/AndrewWayne/oh-my-warp",
+    "tag": "omw-local-preview-v0.0.12",
+    "commit": "299b55e1c53b685fc2ee665b6beb3b8f28e21eb8",
+    "tree_merged": false
+  },
+  "local_adaptations": [
+    {
+      "scope": "Mac read-only phone attachment",
+      "reason": "Acceptance exposed a baseline mismatch: default pairing grants pty:read, but WebSocket attachment required pty:write.",
+      "application": "Mac-only read-scope fallback after write-scope rejection. Reject input and ignore resize/control mutations without write scope. Preserve existing write clients, signature/origin/replay checks and all non-Mac behavior."
+    }
+  ],
+  "preservation": {
+    "feature_baseline": "All source features of omw 0.0.11 plus 0.0.13 maintenance repairs",
+    "windows_runtime_changes": false,
+    "windows_artifact_rebuilt": false,
+    "cloud_feature_enabled": false
+  }
+}

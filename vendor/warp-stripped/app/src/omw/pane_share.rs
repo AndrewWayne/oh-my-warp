@@ -359,13 +359,13 @@ pub async fn share_pane(
     })
 }
 
-#[cfg(test)]
+#[cfg(any(test, all(feature = "test-exports", target_os = "macos")))]
 impl PaneShareHandle {
     /// Test-only constructor: builds a handle whose `stop` closure runs the
     /// supplied callback exactly once (via `Drop` or via `stop()`). Lets unit
     /// tests verify share-map idempotency without spinning up a real
     /// `SessionRegistry`.
-    pub(crate) fn new_for_test<F>(session_id: omw_server::SessionId, on_stop: F) -> Self
+    pub fn new_for_test<F>(session_id: omw_server::SessionId, on_stop: F) -> Self
     where
         F: FnOnce() + Send + 'static,
     {

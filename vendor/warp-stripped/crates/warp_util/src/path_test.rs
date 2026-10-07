@@ -297,6 +297,39 @@ fn test_powershell_unescape() {
 }
 
 #[test]
+fn clean_path_supports_codex_location_ranges() {
+    for (suffix, column_num) in [
+        (":12:3-20", Some(3)),
+        (":12-20:9", None),
+        (":12:3-20:9", Some(3)),
+        ("#L12C3", Some(3)),
+        ("#L12-L20", None),
+        ("#L12C3-L20C9", Some(3)),
+    ] {
+        assert_eq!(
+            CleanPathResult::with_line_and_column_number(&format!("src/main.rs{suffix}")),
+            CleanPathResult {
+                path: "src/main.rs".into(),
+                line_and_column_num: Some(LineAndColumnArg {
+                    line_num: 12,
+                    column_num
+                }),
+            },
+            "suffix {suffix}"
+        );
+    }
+    for path in [
+        "src/main.rs#License",
+        "src/main.rs#L12Cabc",
+        "src/main.rs:12-20abc",
+    ] {
+        let result = CleanPathResult::with_line_and_column_number(path);
+        assert_eq!(result.path, path);
+        assert_eq!(result.line_and_column_num, None);
+    }
+}
+
+#[test]
 fn test_clean_path() {
     assert_eq!(
         CleanPathResult::with_line_and_column_number("Cargo.toml:10:5"),

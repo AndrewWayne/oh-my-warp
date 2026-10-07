@@ -5718,7 +5718,7 @@ impl Workspace {
         path: PathBuf,
         target: FileTarget,
         line_col: Option<LineAndColumnArg>,
-        code_source: CodeSource,
+        mut code_source: CodeSource,
         ctx: &mut ViewContext<Self>,
     ) {
         // Handle directories for CodeEditor(NewTab) target by opening a new terminal tab
@@ -5736,11 +5736,15 @@ impl Workspace {
             return;
         }
 
-        match target {
+        let line_col = line_col.or_else(|| code_source.line_col());
+        if let CodeSource::Link { range_start, .. } = &mut code_source {
+            *range_start = line_col;
+        }
+        match target.with_line_column(line_col) {
             FileTarget::MarkdownViewer(layout) => {
                 let session = self.get_active_session(ctx);
 
-                self.open_file_notebook(path.clone(), session, layout, ctx);
+                self.open_file_notebook(path.clone(), session, layout, Some(code_source), ctx);
             }
             FileTarget::EnvEditor => {
                 let editor_value: Option<String> = self
@@ -7192,6 +7196,7 @@ impl Workspace {
         path: PathBuf,
         session: Option<Arc<Session>>,
         layout: EditorLayout,
+        code_source: Option<CodeSource>,
         ctx: &mut ViewContext<Self>,
     ) {
         // TODO(ben): It might be worth managing file-based notebooks via NotebookManager
@@ -7200,7 +7205,7 @@ impl Workspace {
             Some(path),
             session,
             #[cfg(feature = "local_fs")]
-            None,
+            code_source,
             ctx,
         );
 
@@ -12123,14 +12128,25 @@ impl Workspace {
         if current_mode == NotificationsMode::Enabled || escape_default_on {
             ctx.request_desktop_notification_permissions(move |view, outcome, ctx| {
                 match &outcome {
-                    RequestPermissionsOutcome::Accepted => (),
+                    RequestPermissionsOutcome::Accepted => {
+                        view.dismiss_older_toasts("notification_permissions", ctx);
+                        for tab in &view.tabs {
+                            let terminals = tab.pane_group.as_ref(ctx).terminal_views(ctx);
+                            for terminal in terminals {
+                                terminal.update(ctx, |terminal, ctx| {
+                                    terminal.clear_notification_permission_error(ctx);
+                                });
+                            }
+                        }
+                    }
                     RequestPermissionsOutcome::PermissionsDenied => {
                         // Show a helpful toast if the user denied permissions.
                         let url = NOTIFICATIONS_TROUBLESHOOT_URL.to_string();
                         view.toast_stack.update(ctx, |toast_stack, ctx| {
                             let toast = DismissibleToast::error(
-                                "Warp doesn't have permission to send desktop notifications.".to_string(),
+                                "omw doesn't have permission to send desktop notifications.".to_string(),
                             )
+                            .with_object_id("notification_permissions".to_string())
                             .with_link(ToastLink::new("Troubleshoot notifications".to_string()).with_href(url));
                             toast_stack.add_persistent_toast(toast, ctx);
                         });
@@ -13204,7 +13220,7 @@ impl Workspace {
                 #[cfg(feature = "local_fs")]
                 {
                     let layout = *EditorSettings::as_ref(ctx).open_file_layout.value();
-                    self.open_file_notebook(path.clone(), Some(session.clone()), layout, ctx);
+                    self.open_file_notebook(path.clone(), Some(session.clone()), layout, None, ctx);
                 }
             }
             pane_group::Event::MoveToSpace {

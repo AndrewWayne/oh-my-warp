@@ -92,7 +92,10 @@ fn clicking_apply_with_invalid_form_sets_save_error() {
     std::env::set_var("OMW_CONFIG", &cfg_path);
 
     let mut view = OmwAgentPageView::new_inner();
+    let original_config = std::fs::read(&cfg_path).unwrap();
     view.dispatch(OmwAgentPageAction::AddProvider);
+    let provider_id = view.state.form.providers[0].id.clone();
+    view.dispatch(OmwAgentPageAction::SetDefaultProviderById(Some(provider_id)));
     view.dispatch(OmwAgentPageAction::Apply);
 
     std::env::remove_var("OMW_CONFIG");
@@ -102,9 +105,27 @@ fn clicking_apply_with_invalid_form_sets_save_error() {
         "expected last_save_error to be set; got None"
     );
     assert!(
-        !cfg_path.exists(),
-        "config file should not exist after a failed Apply"
+        original_config == std::fs::read(&cfg_path).unwrap(),
+        "failed Apply must preserve the bootstrapped config"
     );
+}
+
+#[test]
+fn clicking_apply_skips_incomplete_non_default_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg_path = dir.path().join("config.toml");
+    std::env::set_var("OMW_CONFIG", &cfg_path);
+
+    let mut view = OmwAgentPageView::new_inner();
+    view.dispatch(OmwAgentPageAction::AddProvider);
+    view.dispatch(OmwAgentPageAction::Apply);
+
+    std::env::remove_var("OMW_CONFIG");
+
+    assert!(view.state.last_save_error.is_none());
+    let saved = omw_config::Config::load_from(&cfg_path).unwrap();
+    assert!(saved.providers.is_empty());
+    assert!(saved.default_provider.is_none());
 }
 
 #[test]

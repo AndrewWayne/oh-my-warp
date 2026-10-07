@@ -52,7 +52,12 @@ fn claude_settings_path() -> anyhow::Result<PathBuf> {
 }
 
 fn codex_hooks_path() -> anyhow::Result<PathBuf> {
-    Ok(home_dir()?.join(".codex").join("hooks.json"))
+    let root = std::env::var_os("CODEX_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(|| home_dir().map(|home| home.join(".codex")))?;
+    Ok(root.join("hooks.json"))
 }
 
 fn scripts_dir() -> anyhow::Result<PathBuf> {
@@ -111,8 +116,21 @@ fn read_json_or_empty(path: &Path) -> anyhow::Result<Value> {
     }
 }
 
-/// Whether any hook group in `arr` has a command belonging to omw (command
-/// string starts with our dispatch path).
+/// Recognize both legacy unquoted paths and correctly shell-quoted commands.
+fn is_omw_command(command: &str, dispatch_path: &str) -> bool {
+    // Older installs wrote the path without quotes, even when it contained spaces.
+    if command
+        .strip_prefix(dispatch_path)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+    {
+        return true;
+    }
+    shell_words::split(command)
+        .ok()
+        .and_then(|words| words.into_iter().next())
+        .is_some_and(|program| program == dispatch_path)
+}
+
 fn array_has_omw(arr: &[Value], dispatch_path: &str) -> bool {
     arr.iter().any(|group| {
         group
@@ -122,7 +140,7 @@ fn array_has_omw(arr: &[Value], dispatch_path: &str) -> bool {
                 hooks.iter().any(|h| {
                     h.get("command")
                         .and_then(Value::as_str)
-                        .is_some_and(|c| c.starts_with(dispatch_path))
+                        .is_some_and(|c| is_omw_command(c, dispatch_path))
                 })
             })
             .unwrap_or(false)
@@ -155,6 +173,22 @@ fn configure_hooks(
         let arr = entry
             .as_array_mut()
             .with_context(|| format!("`hooks.{event}` is not an array"))?;
+        for hook in arr
+            .iter_mut()
+            .filter_map(|group| group.get_mut("hooks").and_then(Value::as_array_mut))
+            .flatten()
+        {
+            if hook
+                .get("command")
+                .and_then(Value::as_str)
+                .is_some_and(|existing| {
+                    is_omw_command(existing, dispatch_path) && existing != command
+                })
+            {
+                hook["command"] = Value::String(command.to_string());
+                changed = true;
+            }
+        }
         if !array_has_omw(arr, dispatch_path) {
             arr.push(hook_group(command.to_string()));
             changed = true;
@@ -176,7 +210,7 @@ fn hooks_installed(path: &Path, dispatch_path: &str) -> anyhow::Result<bool> {
         .unwrap_or(false))
 }
 
-/// Remove only omw-owned hook groups from every event. Returns true if changed.
+/// Remove only omw-owned commands from every event. Returns true if changed.
 fn remove_hooks(path: &Path, dispatch_path: &str) -> anyhow::Result<bool> {
     if !path.exists() {
         return Ok(false);
@@ -193,23 +227,21 @@ fn remove_hooks(path: &Path, dispatch_path: &str) -> anyhow::Result<bool> {
     let events: Vec<String> = hooks.keys().cloned().collect();
     for event in &events {
         if let Some(arr) = hooks.get_mut(event).and_then(Value::as_array_mut) {
-            let before = arr.len();
-            arr.retain(|group| {
-                group
-                    .get("hooks")
-                    .and_then(Value::as_array)
-                    .map(|hs| {
-                        !hs.iter().any(|h| {
-                            h.get("command")
-                                .and_then(Value::as_str)
-                                .is_some_and(|c| c.starts_with(dispatch_path))
-                        })
-                    })
-                    .unwrap_or(true)
+            arr.retain_mut(|group| {
+                let Some(commands) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
+                    return true;
+                };
+                let before = commands.len();
+                commands.retain(|hook| {
+                    !hook
+                        .get("command")
+                        .and_then(Value::as_str)
+                        .is_some_and(|command| is_omw_command(command, dispatch_path))
+                });
+                let removed = before != commands.len();
+                changed |= removed;
+                !removed || !commands.is_empty()
             });
-            if arr.len() != before {
-                changed = true;
-            }
         }
     }
     // Prune emptied containers.
@@ -250,7 +282,7 @@ pub(crate) fn install(
     let claude_changed = configure_hooks(
         &claude_settings_path()?,
         &["Stop", "Notification"],
-        &format!("{dispatch} Claude"),
+        &format!("{} Claude", shell_words::quote(dispatch)),
         dispatch,
     )?;
     writeln!(
@@ -263,20 +295,22 @@ pub(crate) fn install(
         }
     )?;
 
+    let codex_path = codex_hooks_path()?;
     let codex_changed = configure_hooks(
-        &codex_hooks_path()?,
+        &codex_path,
         &["Stop", "PermissionRequest"],
-        &format!("{dispatch} Codex"),
+        &format!("{} Codex", shell_words::quote(dispatch)),
         dispatch,
     )?;
     writeln!(
         stdout,
-        "Codex: {}",
+        "Codex: {} ({})",
         if codex_changed {
-            "hooks installed (~/.codex/hooks.json)"
+            "hooks installed"
         } else {
             "already installed"
-        }
+        },
+        codex_path.display()
     )?;
 
     writeln!(

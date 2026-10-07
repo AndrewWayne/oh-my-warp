@@ -65,7 +65,8 @@ const NONCE_WINDOW: Duration = Duration::from_secs(60);
 /// for this run. With option D (drop WebCrypto.subtle on the Web Controller
 /// side), phone-side pairing works over plain HTTP via the tailnet IP, so
 /// Serve isn't required for the demo to function.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(not(target_os = "macos"), derive(Debug))]
 #[allow(dead_code)]
 pub enum OmwRemoteStatus {
     Stopped,
@@ -77,6 +78,20 @@ pub enum OmwRemoteStatus {
     Failed {
         error: String,
     },
+}
+
+#[cfg(target_os = "macos")]
+impl std::fmt::Debug for OmwRemoteStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Stopped => f.write_str("Stopped"),
+            Self::Starting => f.write_str("Starting"),
+            Self::Running { tailscale_serving, .. } => f.debug_struct("Running")
+                .field("pair_url", &"<redacted>")
+                .field("tailscale_serving", tailscale_serving).finish(),
+            Self::Failed { error } => f.debug_struct("Failed").field("error", error).finish(),
+        }
+    }
 }
 
 /// Process-wide launcher state.
@@ -157,6 +172,33 @@ impl OmwRemoteState {
     /// button's label/tooltip/icon in sync (Gap 3).
     pub fn status_rx(&self) -> watch::Receiver<OmwRemoteStatus> {
         self.status_tx.subscribe()
+    }
+
+    // Mac header subscriptions end with the view and need no daemon runtime.
+    #[cfg(target_os = "macos")]
+    pub fn phone_status_stream(&self) -> impl futures::Stream<Item = OmwRemoteStatus> + 'static {
+        let mut rx = self.status_rx();
+        async_stream::stream! {
+            let initial = rx.borrow_and_update().clone();
+            yield initial;
+            while rx.changed().await.is_ok() {
+                let status = rx.borrow_and_update().clone();
+                yield status;
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn phone_share_stream(&self) -> impl futures::Stream<Item = u64> + 'static {
+        let mut rx = self.share_tx.subscribe();
+        async_stream::stream! {
+            let initial = *rx.borrow_and_update();
+            yield initial;
+            while rx.changed().await.is_ok() {
+                let version = *rx.borrow_and_update();
+                yield version;
+            }
+        }
     }
 
     /// Bridge the watch channel into an [`async_channel::Receiver`] suitable
@@ -280,9 +322,12 @@ impl OmwRemoteState {
             .map_err(|e| format!("init channel closed: {e}"))?
         {
             Ok((pair_url, tailscale_serving, serve_task, pty_registry)) => {
+                #[cfg(not(target_os = "macos"))]
                 eprintln!(
                     "omw-remote running. Pair URL: {pair_url} (tailscale_serving={tailscale_serving})"
                 );
+                #[cfg(target_os = "macos")]
+                eprintln!("omw-remote running (tailscale_serving={tailscale_serving})");
                 let mut g = self.inner.lock();
                 self.set_status(
                     &mut g,
@@ -612,13 +657,13 @@ async fn bring_up_daemon(
     Ok((pair_url, tailscale_serving, serve_task, pty_registry_for_state))
 }
 
-#[cfg(test)]
+#[cfg(any(test, all(feature = "test-exports", target_os = "macos")))]
 impl OmwRemoteState {
     /// Test-only constructor: builds a fresh instance independent of the
     /// process-wide `SHARED` singleton, so unit tests can exercise the
     /// watch-channel transition logic without contending with each other or
     /// with a daemon a previous test left running.
-    fn new_for_test() -> Arc<Self> {
+    pub fn new_for_test() -> Arc<Self> {
         let (status_tx, _rx) = watch::channel(OmwRemoteStatus::Stopped);
         let (share_tx, _share_rx) = watch::channel(0u64);
         Arc::new(Self {
@@ -638,7 +683,7 @@ impl OmwRemoteState {
     /// Test-only mutation hook: drives the same `set_status` that the real
     /// `start`/`stop`/failure paths invoke, without bringing up the daemon
     /// runtime. Used by the watch-channel unit tests.
-    fn set_status_for_test(&self, status: OmwRemoteStatus) {
+    pub fn set_status_for_test(&self, status: OmwRemoteStatus) {
         let mut g = self.inner.lock();
         self.set_status(&mut g, status);
     }

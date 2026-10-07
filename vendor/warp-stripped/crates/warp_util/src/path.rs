@@ -45,15 +45,12 @@ lazy_static! {
 
     /// Regex for valid line and column number formats.
     static ref LINE_AND_COLUMN_REGEX: Vec<Regex> = vec![
-        Regex::new(":(\\d+)").expect("Regex is valid"), // e.g. ":100".
-        Regex::new(":(\\d+)-(?:\\d+)").expect("Regex is valid"), // e.g. ":100-200".
-        Regex::new(":(\\d+):(\\d+)").expect("Regex is valid"), // e.g. ":100:300".
+        Regex::new(r":(\d+)(?::(\d+))?(?:-\d+(?::\d+)?)?$").expect("Regex is valid"),
         Regex::new("\\[(\\d+), ?(\\d+)]").expect("Regex is valid"), // e.g. "[100, 300]".
         Regex::new("\", line (\\d+), column (\\d+)").expect("Regex is valid"), // e.g. `", line 100, column 300`.
         Regex::new("\", line (\\d+), in").expect("Regex is valid"), // e.g. `", line 100, in`.
         Regex::new("\\((\\d+), ?(\\d+)\\)").expect("Regex is valid"), // e.g. "(100, 300)".
-        Regex::new("#L(\\d+)").expect("Regex is valid"), // e.g. "#L100".
-        Regex::new("#L(\\d+):(\\d+)").expect("Regex is valid"), // e.g. "#L100:300"
+        Regex::new(r"#L(\d+)(?:[C:](\d+))?(?:-L\d+(?:[C:]\d+)?)?$").expect("Regex is valid"),
     ];
 }
 

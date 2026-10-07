@@ -18,11 +18,16 @@
 SOURCE="${1:-Agent}"
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 NOTIFY="$SELF_DIR/ai-notify.sh"
+PYTHON=/usr/bin/python3
+# The system launcher can be blocked by an unaccepted Xcode license.
+if [ -x /Library/Developer/CommandLineTools/usr/bin/python3 ]; then
+  PYTHON=/Library/Developer/CommandLineTools/usr/bin/python3
+fi
 
 input="$(cat)"
 
 {
-  parsed="$(printf '%s' "$input" | /usr/bin/python3 -c '
+  parsed="$(printf '%s' "$input" | "$PYTHON" -c '
 import sys, os, json, time
 try:
     d = json.load(sys.stdin)

@@ -1,0 +1,66 @@
+{
+  "product": "omw",
+  "version": "0.0.13",
+  "track": "local-preview",
+  "recorded_on": "2026-10-05",
+  "omw_base": {
+    "repository": "https://github.com/AndrewWayne/oh-my-warp",
+    "tag": "omw-local-preview-v0.0.11",
+    "commit": "24c06811dee6cb6b22d715c69657af909ade8d4d"
+  },
+  "vendor_snapshot": {
+    "repository": "https://github.com/warpdotdev/warp",
+    "upstream_commit": null,
+    "imported_by_omw_commit": "82f15d6606fcb76fe636ad55f9130a1582bd5ebe",
+    "note": "The exact original upstream snapshot has not been established. This maintenance release is not a whole-tree upstream sync."
+  },
+  "adopted_patches": [
+    {
+      "repository": "https://github.com/warpdotdev/warp",
+      "commit": "4aeeebfc8d36a25f719ee95793325838072a4954",
+      "pull_request": 12557,
+      "scope": "Preserve native window chrome events on macOS 27",
+      "application": "Adapted to the existing 0.0.11 window implementation"
+    },
+    {
+      "repository": "https://github.com/warpdotdev/warp",
+      "commit": "ec27d06d7dcc08d78a1447ab0c5974e506e936ff",
+      "pull_request": 12770,
+      "scope": "Correct macOS availability checks in native event routing",
+      "application": "Included in the combined window backport"
+    },
+    {
+      "repository": "https://github.com/warpdotdev/warp",
+      "commit": "64e3cd4745ff0148437a0982c7b57179646e69ef",
+      "pull_request": 14716,
+      "scope": "Route Option-click green-button zoom through AppKit",
+      "application": "Included in the combined window backport"
+    },
+    {
+      "repository": "https://github.com/AndrewWayne/oh-my-warp",
+      "commit": "8bde12e6ab31f7754768d07556d97c80c7d76c9c",
+      "pull_request": 136,
+      "scope": "Redact API keys from settings action Debug logging",
+      "application": "Adapted to the 0.0.11 action variants"
+    }
+  ],
+  "local_repairs": [
+    "Codex colon and hash line/column ranges resolve to their start location",
+    "OSC 8 file URLs pass locations to the existing file opener and preserve escaped filename characters",
+    "Notification setup honors nonempty CODEX_HOME and recognizes quoted or legacy dispatcher paths",
+    "Notification installation repairs legacy quoting; uninstall preserves unrelated commands in mixed hook groups",
+    "Notification dispatcher uses the installed Command Line Tools Python executable when available to avoid the system launcher's Xcode license failure",
+    "Anchored Markdown links use the existing Raw editor for exact source positioning; ordinary Markdown retains the viewer preference",
+    "Markdown preview retains CodeSource, and Raw/editor transitions reuse the link's start location",
+    "Internal file-link jumps convert one-based source columns to zero-based buffer offsets",
+    "Editor and code-review LSP definition targets convert zero-based columns to the one-based file-opening contract",
+    "Notification permission feedback deduplicates and clears only permission errors after authorization recovery",
+    "Notification troubleshooting opens macOS notification settings; the help link opens Apple notification documentation",
+    "Native notification response delegate completes every action exactly once"
+  ],
+  "preservation": {
+    "feature_baseline": "All source features of omw-local-preview-v0.0.11",
+    "divergent_0_0_12_tree_merged": false,
+    "cloud_feature_enabled": false
+  }
+}

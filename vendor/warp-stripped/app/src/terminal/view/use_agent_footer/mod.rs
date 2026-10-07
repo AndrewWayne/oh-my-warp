@@ -107,11 +107,13 @@ const CLI_AGENT_MODE_SWITCH_PREFIXES: &[u8] = &[b'!', b'&'];
 /// `TerminalView::handle_use_agent_footer_event` (`ctx: ViewContext<TerminalView>`)
 /// while previous Wiring 5 code anchored it in `UseAgentToolbar`.
 #[cfg(feature = "omw_local")]
-fn surface_pair_modal<V: warpui::Entity>(
+pub(super) fn surface_pair_modal<V: warpui::Entity>(
     state: &crate::omw::OmwRemoteState,
     ctx: &mut ViewContext<V>,
 ) {
-    use crate::omw::pair_modal::{format_pair_modal_text_block, PairModalContent};
+    use crate::omw::pair_modal::PairModalContent;
+    #[cfg(not(target_os = "macos"))]
+    use crate::omw::pair_modal::format_pair_modal_text_block;
     use crate::omw::tailscale::detect_status as detect_tailscale_status;
     use crate::omw::OmwRemoteStatus;
 
@@ -130,6 +132,7 @@ fn surface_pair_modal<V: warpui::Entity>(
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     eprintln!(
         "\n=== omw Remote Control ===\n{}\n==========================\n",
         format_pair_modal_text_block(&content)
@@ -323,6 +326,10 @@ impl TerminalView {
             }
             #[cfg(feature = "omw_local")]
             UseAgentToolbarEvent::ToggleOmwPair => {
+                #[cfg(target_os = "macos")]
+                self.toggle_omw_phone_share(ctx);
+                #[cfg(not(target_os = "macos"))]
+                {
                 use crate::omw::{OmwRemoteState, OmwRemoteStatus};
 
                 // Per-pane click dispatch (v0.4-thin multi-pane share, design §3.4).
@@ -462,6 +469,7 @@ impl TerminalView {
                 self.use_agent_footer.update(ctx, |footer, ctx| {
                     footer.notify_and_notify_children(ctx);
                 });
+                }
             }
         }
     }

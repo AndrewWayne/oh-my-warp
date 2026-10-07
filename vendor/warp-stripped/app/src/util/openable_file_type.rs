@@ -56,6 +56,16 @@ pub enum FileTarget {
     SystemGeneric,
 }
 
+impl FileTarget {
+    pub fn with_line_column(self, line_col: Option<warp_util::path::LineAndColumnArg>) -> Self {
+        // Source line numbers have no exact equivalent in rendered Markdown.
+        match self {
+            Self::MarkdownViewer(layout) if line_col.is_some() => Self::CodeEditor(layout),
+            target => target,
+        }
+    }
+}
+
 /// Checks if a file is a code file with language support.
 #[cfg(feature = "local_fs")]
 pub fn is_supported_code_file(path: impl AsRef<Path>) -> bool {

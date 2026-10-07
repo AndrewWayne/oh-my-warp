@@ -25,7 +25,9 @@ pub use init_project::{
 use onboarding::callout::{FinalState, OnboardingCalloutViewEvent, OnboardingQuery};
 use onboarding::{OnboardingCalloutView, OnboardingKeybindings};
 pub(crate) mod docker_sandbox;
-mod link_detection;
+pub(crate) mod link_detection;
+#[cfg(all(feature = "omw_local", target_os = "macos"))]
+pub(crate) mod omw_phone_share;
 mod open_in_warp;
 mod pane_impl;
 mod passive_suggestions;
@@ -689,11 +691,13 @@ const CONTEXT_MENU_WIDTH: f32 = 280.;
 const MIN_DELTA_FOR_TEXT_SELECTION: f32 = 0.5;
 
 /// Notifications-specific info
-/// TODO (suraj): add documentation for notifications in gitbook
 const NOTIFICATIONS_LEARN_MORE_URL: &str =
-    "";
+    "https://support.apple.com/guide/mac-help/change-notifications-settings-mh40583/mac";
+#[cfg(target_os = "macos")]
 pub const NOTIFICATIONS_TROUBLESHOOT_URL: &str =
-    "";
+    "x-apple.systempreferences:com.apple.Notifications-Settings.extension";
+#[cfg(not(target_os = "macos"))]
+pub const NOTIFICATIONS_TROUBLESHOOT_URL: &str = "https://docs.warp.dev/terminal/notifications";
 
 const DEBOUNCE_PERIOD: Duration = Duration::from_millis(40);
 
@@ -2757,6 +2761,18 @@ pub struct TerminalView {
     cloud_mode_details_panel_toggle_mouse_state: warpui::elements::MouseStateHandle,
     /// Mouse state handle for the ambient agent cancel button in the pane header.
     ambient_agent_cancel_mouse_state: warpui::elements::MouseStateHandle,
+    #[cfg(all(feature = "omw_local", target_os = "macos"))]
+    omw_phone_share_mouse_state: warpui::elements::MouseStateHandle,
+    #[cfg(all(feature = "omw_local", target_os = "macos"))]
+    omw_phone_share_generation: u64,
+    #[cfg(all(feature = "omw_local", target_os = "macos"))]
+    omw_phone_share_pending_generation: Option<u64>,
+    #[cfg(all(feature = "omw_local", target_os = "macos"))]
+    omw_phone_share_pending_started_daemon: bool,
+    #[cfg(all(feature = "omw_local", target_os = "macos"))]
+    omw_phone_share_pending_active: Option<Arc<std::sync::atomic::AtomicBool>>,
+    #[cfg(all(feature = "omw_local", target_os = "macos"))]
+    omw_phone_share_subscription_lifetime: Option<async_channel::Sender<()>>,
 
     /// First-time cloud agent setup view (full-screen overlay for creating initial environment).
     first_time_cloud_agent_setup_view: ViewHandle<ambient_agent::FirstTimeCloudAgentSetupView>,
@@ -4196,6 +4212,18 @@ impl TerminalView {
             #[cfg(not(target_arch = "wasm32"))]
             cloud_mode_details_panel_toggle_mouse_state: Default::default(),
             ambient_agent_cancel_mouse_state: Default::default(),
+            #[cfg(all(feature = "omw_local", target_os = "macos"))]
+            omw_phone_share_mouse_state: Default::default(),
+            #[cfg(all(feature = "omw_local", target_os = "macos"))]
+            omw_phone_share_generation: 0,
+            #[cfg(all(feature = "omw_local", target_os = "macos"))]
+            omw_phone_share_pending_generation: None,
+            #[cfg(all(feature = "omw_local", target_os = "macos"))]
+            omw_phone_share_pending_started_daemon: false,
+            #[cfg(all(feature = "omw_local", target_os = "macos"))]
+            omw_phone_share_pending_active: None,
+            #[cfg(all(feature = "omw_local", target_os = "macos"))]
+            omw_phone_share_subscription_lifetime: None,
             active_init_project_model: None,
             is_pending_aws_login: false,
             manual_pty_shutdown_requested: false,
@@ -4213,6 +4241,8 @@ impl TerminalView {
             active_viewer_driven_size: None,
         };
         terminal_view.register_subscriptions_for_use_agent_footer(ctx);
+        #[cfg(all(feature = "omw_local", target_os = "macos"))]
+        terminal_view.register_omw_phone_share_subscriptions(ctx);
 
         // Forward RemoteServerManager setup events into the terminal event stream
         // so the ModelEventDispatcher can gate session initialization on them.
@@ -23397,6 +23427,18 @@ impl TerminalView {
         send_telemetry_from_ctx!(TelemetryEvent::NotificationsErrorBannerAction(action), ctx);
     }
 
+    pub fn clear_notification_permission_error(&mut self, ctx: &mut ViewContext<Self>) {
+        if matches!(
+            self.inline_banners_state.notifications_error_banner.error,
+            Some(
+                NotificationSendError::PermissionsDenied
+                    | NotificationSendError::PermissionsNotYetGranted
+            )
+        ) {
+            self.close_notification_error_banner(ctx);
+        }
+    }
+
     fn close_notification_error_banner(&mut self, ctx: &mut ViewContext<Self>) {
         if let NotificationsErrorBannerType::Open { state, .. } = &self
             .inline_banners_state
@@ -23411,6 +23453,7 @@ impl TerminalView {
         self.inline_banners_state
             .notifications_error_banner
             .banner_type = NotificationsErrorBannerType::Closed;
+        self.inline_banners_state.notifications_error_banner.error = None;
         ctx.notify();
     }
 
@@ -24598,6 +24641,12 @@ impl TypedActionView for TerminalView {
             )),
             #[cfg(feature = "voice_input")]
             ToggleCLIAgentVoiceInput(_) => Empty,
+            #[cfg(all(feature = "omw_local", target_os = "macos"))]
+            ToggleOmwPhoneShare => Custom(AccessibilityContent::new_without_help(
+                self.omw_phone_share_presentation(ctx).map(|p| p.label)
+                    .unwrap_or("Phone sharing is unavailable for this pane").to_owned(),
+                WarpA11yRole::ButtonRole,
+            )),
             // Below are actions that are most likely irrelevant to users or are very noisy and the
             // debug version shouldn't be announced.
             Scroll { .. }
@@ -25717,6 +25766,8 @@ impl TypedActionView for TerminalView {
                     recorder.toggle_recording(ctx);
                 });
             }
+            #[cfg(all(feature = "omw_local", target_os = "macos"))]
+            ToggleOmwPhoneShare => self.toggle_omw_phone_share(ctx),
             OpenCLIAgentRichInput => {
                 if self.has_active_cli_agent_input_session(ctx) {
                     self.close_cli_agent_rich_input_and_disable_auto_toggle(ctx);
@@ -26663,6 +26714,11 @@ impl MenuPositioningProvider for TerminalViewMenuPositioningProvider {
 
 impl Drop for TerminalView {
     fn drop(&mut self) {
+        #[cfg(all(feature = "omw_local", target_os = "macos"))]
+        {
+            self.cancel_pending_omw_phone_share();
+            omw_phone_share::unshare_phone_pane_after_detach(self.view_id, crate::pane_group::pane::DetachType::Closed);
+        }
         if let Some((is_bootstrapped, pending_shell, has_pending_ssh_session)) =
             self.model.try_lock().map(|model| {
                 (

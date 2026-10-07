@@ -48,6 +48,177 @@ fn first_command(v: &serde_json::Value, event: &str) -> String {
         .to_string()
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn installed_dispatcher_emits_notifications_without_developer_environment() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    omw(dir)
+        .args(["notify-setup", "install"])
+        .assert()
+        .success();
+    let target = dir.join("captured-tty");
+    for (payload, expected) in [
+        (
+            serde_json::json!({"hook_event_name":"Stop", "last_assistant_message":"QA complete"}),
+            Some("QA complete"),
+        ),
+        (
+            serde_json::json!({"hook_event_name":"PermissionRequest", "tool_name":"bash", "tool_input":{"command":"echo approval-qa"}}),
+            Some("echo approval-qa"),
+        ),
+        (
+            serde_json::json!({"hook_event_name":"Notification", "message":"QA answer required"}),
+            Some("QA answer required"),
+        ),
+        (
+            serde_json::json!({"hook_event_name":"Notification", "message":"Waiting for your input"}),
+            None,
+        ),
+        (serde_json::json!({"hook_event_name":"Unknown"}), None),
+    ] {
+        std::fs::write(&target, "").unwrap();
+        let mut child = Command::new("/bin/bash")
+            .arg(scripts_dir(dir).join("agent-notify.sh"))
+            .arg("Codex")
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+            .env("HOME", dir)
+            .env("AI_PANE_TTY", &target)
+            .env("AI_NOTIFY_THROTTLE_SEC", "0")
+            .env("AI_NOTIFY_LOG", "0")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.to_string().as_bytes())
+            .unwrap();
+        let result = child.wait_with_output().unwrap();
+        assert!(result.status.success());
+        assert!(result.stdout.is_empty(), "hook must not approve a request");
+        assert!(result.stderr.is_empty());
+        let deadline = Instant::now()
+            + if expected.is_some() {
+                Duration::from_secs(5)
+            } else {
+                Duration::from_millis(500)
+            };
+        let output = loop {
+            std::thread::sleep(Duration::from_millis(50));
+            let output = read(&target);
+            if !output.is_empty() || Instant::now() >= deadline {
+                break output;
+            }
+        };
+        match expected {
+            Some(message) => {
+                assert!(output.starts_with("\u{1b}]777;notify;"), "event: {payload}");
+                assert!(output.ends_with('\u{7}'));
+                assert!(output.contains("Codex"));
+                assert!(output.contains(message));
+            }
+            None => assert!(output.is_empty()),
+        }
+    }
+}
+
+#[test]
+fn install_recognizes_and_repairs_legacy_and_quoted_hooks_without_duplicates() {
+    for quoted in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let data_dir = dir.join("Application Support").join("omw");
+        let dispatch = data_dir.join("notify-hooks").join("agent-notify.sh");
+        let command = if quoted {
+            format!("\"{}\" Codex", dispatch.display())
+        } else {
+            format!("{} Codex", dispatch.display())
+        };
+        std::fs::create_dir_all(dir.join(".codex")).unwrap();
+        let unrelated = format!("{}.other Codex", dispatch.display());
+        let hooks = serde_json::json!({"hooks":{"Stop":[{"hooks":[
+            {"type":"command", "command":command},
+            {"type":"command", "command":unrelated},
+        ]}]}});
+        std::fs::write(codex(dir), hooks.to_string()).unwrap();
+        let run = |args: &[&str]| {
+            omw(dir)
+                .env("OMW_DATA_DIR", &data_dir)
+                .args(args)
+                .assert()
+                .success()
+        };
+        let status = run(&["notify-setup", "status", "--json"]);
+        let status: serde_json::Value =
+            serde_json::from_slice(&status.get_output().stdout).unwrap();
+        assert_eq!(status["codex"], true);
+        run(&["notify-setup", "install"]);
+        let installed = json_of(&codex(dir));
+        assert_eq!(installed["hooks"]["Stop"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            first_command(&installed, "Stop"),
+            format!("{} Codex", shell_words::quote(dispatch.to_str().unwrap()))
+        );
+        assert_eq!(
+            installed["hooks"]["Stop"][0]["hooks"][1]["command"],
+            unrelated
+        );
+        run(&["notify-setup", "uninstall"]);
+        let uninstalled = json_of(&codex(dir));
+        assert_eq!(uninstalled["hooks"]["Stop"].as_array().unwrap().len(), 1);
+        assert_eq!(first_command(&uninstalled, "Stop"), unrelated);
+        assert!(uninstalled["hooks"].get("PermissionRequest").is_none());
+    }
+}
+
+#[test]
+fn custom_codex_home_with_spaces_is_used_for_the_complete_lifecycle() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let custom_home = dir.join("custom codex home");
+    let data_dir = dir.join("Application Support").join("omw");
+    let run = |args: &[&str]| {
+        omw(dir)
+            .env("CODEX_HOME", &custom_home)
+            .env("OMW_DATA_DIR", &data_dir)
+            .args(args)
+            .assert()
+            .success()
+    };
+
+    run(&["notify-setup", "install"]);
+    assert!(!codex(dir).exists(), "default home must not be modified");
+    let hooks_path = custom_home.join("hooks.json");
+    let installed = json_of(&hooks_path);
+    let dispatch = data_dir.join("notify-hooks").join("agent-notify.sh");
+    assert_eq!(
+        first_command(&installed, "Stop"),
+        format!("{} Codex", shell_words::quote(dispatch.to_str().unwrap()))
+    );
+    run(&["notify-setup", "install"]);
+    assert_eq!(
+        json_of(&hooks_path)["hooks"]["Stop"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let status = run(&["notify-setup", "status", "--json"]);
+    let status: serde_json::Value = serde_json::from_slice(&status.get_output().stdout).unwrap();
+    assert_eq!(status["codex"], true);
+    run(&["notify-setup", "uninstall"]);
+    assert!(json_of(&hooks_path).get("hooks").is_none());
+}
+
 #[test]
 fn install_writes_scripts_and_configs() {
     let tmp = tempfile::tempdir().unwrap();

@@ -451,6 +451,7 @@ NSUInteger activeScreenId() {
                                           data);
         }
     }
+    completionHandler();
 }
 
 // Present notifications even while omw is the foreground/active app. Without this

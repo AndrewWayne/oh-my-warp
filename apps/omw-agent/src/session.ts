@@ -139,6 +139,15 @@ export class Session {
 
 		const config: AgentLoopConfig = {
 			model: this.model,
+			// The SDK requires a nonempty key even for local Ollama. Its HTTP
+			// client accepts null to remove a default header from the request.
+			...(process.platform === "darwin" &&
+			this.providerConfig.kind === "ollama" && !this.providerConfig.key_ref
+				? {
+					apiKey: "omw-keyless-ollama",
+					headers: { Authorization: null } as unknown as Record<string, string>,
+				}
+				: {}),
 			// AgentMessage = Message in our config (no CustomAgentMessages
 			// declaration merging) — identity is correct.
 			convertToLlm: (msgs) => msgs as Message[],

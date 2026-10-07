@@ -120,6 +120,24 @@ pub mod appearance;
 /// in shipped binaries.
 #[cfg(any(test, feature = "test-exports"))]
 pub mod test_exports {
+    #[cfg(all(feature = "omw_local", target_os = "macos"))]
+    pub use crate::omw::{OmwRemoteState, OmwRemoteStatus};
+    #[cfg(all(feature = "omw_local", target_os = "macos"))]
+    pub use crate::omw::pane_share::PaneShareHandle;
+    #[cfg(all(feature = "omw_local", target_os = "macos"))]
+    pub use crate::pane_group::pane::DetachType;
+    #[cfg(all(feature = "omw_local", target_os = "macos"))]
+    pub use crate::terminal::view::omw_phone_share::{
+        phone_share_transition, should_unshare_for_detach, until_view_dropped,
+        PhoneSharePresentation, PhoneShareTransition,
+    };
+    #[cfg(all(feature = "omw_local", target_os = "macos"))]
+    pub use crate::settings_view::omw_agent_page::{
+        provider_test_endpoint, test_provider_connection, validate_provider_test_inputs, ProviderTestStatus,
+    };
+    pub use crate::code::editor_management::CodeSource;
+    pub use crate::util::openable_file_type::{EditorLayout, FileTarget};
+    pub use crate::terminal::view::link_detection::{osc8_target, Osc8Target};
     #[cfg(feature = "omw_local")]
     pub use crate::settings_view::omw_agent_page::{
         apply_action, form_from_config, form_from_config_with_order, form_to_config,

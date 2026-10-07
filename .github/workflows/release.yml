@@ -91,8 +91,10 @@ jobs:
     # build script's omw-keychain-helper bundling fix was verified there
     # first); skip the CI rebuild + clobber for that one tag. Future tags
     # fall through to the standard tag-push / workflow_dispatch behavior.
+    # 0.0.13 retains the accepted local Mac artifact and a separate Windows base.
     if: >-
       needs.prepare.outputs.ref != 'omw-local-preview-v0.0.3'
+      && needs.prepare.outputs.ref != 'omw-local-preview-v0.0.13'
       && (github.event_name != 'workflow_dispatch' || github.event.inputs.targets != 'windows')
     # 90 min was too tight — v0.0.4 and v0.0.6 both hit the timeout cold-cache;
     # v0.0.5 squeezed in at ~85 min. A full vendor/warp-stripped Rust build is
@@ -130,8 +132,10 @@ jobs:
     # omw-agent kernel or omw-keychain-helper.exe, so a Windows build at
     # this tag would ship without the v0.0.3 inline-agent feature working
     # at runtime. Skip until build-windows-zip.ps1 is brought to parity.
+    # 0.0.13 Windows artifacts are built from release/v0.0.13-windows.
     if: >-
       needs.prepare.outputs.ref != 'omw-local-preview-v0.0.3'
+      && needs.prepare.outputs.ref != 'omw-local-preview-v0.0.13'
       && (github.event_name != 'workflow_dispatch' || github.event.inputs.targets != 'mac')
     # Same rationale as mac: 90 was tight (Windows finished at ~67 min in
     # v0.0.6, still inside the budget but no headroom). 180 leaves room.

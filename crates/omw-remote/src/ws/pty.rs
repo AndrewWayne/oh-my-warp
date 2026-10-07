@@ -298,6 +298,11 @@ pub(crate) async fn handle_authed_socket(
                     }
                     match frame.kind {
                         FrameKind::Input => {
+                            #[cfg(target_os = "macos")]
+                            if !inbound_auth.capability.allows(crate::capability::Capability::PtyWrite) {
+                                let _ = inbound_tx.send(Outbound::Close(4403, "capability_scope".into()));
+                                return;
+                            }
                             if inbound_registry
                                 .write_input(session_id, &frame.payload)
                                 .await
@@ -319,6 +324,10 @@ pub(crate) async fn handle_authed_socket(
                             let _ = inbound_tx.send(Outbound::Frame(pong));
                         }
                         FrameKind::Control => {
+                            #[cfg(target_os = "macos")]
+                            if !inbound_auth.capability.allows(crate::capability::Capability::PtyWrite) {
+                                continue;
+                            }
                             // Resize control: { "type": "resize", "rows": N, "cols": N }.
                             // Updates the per-session vt100 parser's screen
                             // size so subsequent snapshots match the phone's

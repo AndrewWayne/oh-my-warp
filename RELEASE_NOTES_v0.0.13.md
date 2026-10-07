@@ -60,7 +60,8 @@ omit provider response bodies, credentials and configured URLs.
 ## Installation
 
 Apple Silicon only (`aarch64-apple-darwin`), with minimum macOS 11.0 retained.
-Windows behavior and packages remain unchanged. The bundle is ad-hoc signed,
+Windows application behavior remains at 0.0.12; its 0.0.13 packages are built
+separately from the recorded Windows source. The Mac bundle is ad-hoc signed,
 without Apple notarization. Open the DMG and install `omw-warp-oss.app`
 when current terminal sessions can be closed. This local build does not
 replace the installed application automatically.
@@ -82,6 +83,11 @@ setting back to the app; use the explicit CLI command in that case.
 `UPSTREAM_PROVENANCE.json` in the package records the exact omw baseline
 and adopted upstream commits. This is a selective maintenance backport,
 not a whole-tree synchronization with upstream master.
+
+The embedded provenance is the Mac maintenance build-time record:
+`windows_artifact_rebuilt=false` refers to that Mac work, and `published=false`
+records its state when built. The combined GitHub release's platform manifest
+records the separate Windows rebuild and exact source commits for both packages.
 
 ## Acceptance Limits
 

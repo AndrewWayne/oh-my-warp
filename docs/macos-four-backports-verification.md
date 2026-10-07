@@ -17,9 +17,12 @@ The renumbering changes release identity and documentation only. Earlier test
 observations and hashes are preserved in
 [the archived candidate report](upstream/archive/0.0.14-unpublished-verification.md).
 
-Work remains in the existing `fix/macos27-maintenance` worktree. No whole-tree
-upstream merge, dependency upgrade, commit, push, installation, publication, or
-Windows package rebuild was performed. Rust runtime additions are Mac-gated;
+The Mac adaptation was completed in the `fix/macos27-maintenance` worktree
+without a whole-tree upstream merge, dependency upgrade, installed-app replacement
+or Windows rebuild. The subsequent combined release preparation commits/pushes
+the source and builds Windows separately; see
+[the release plan](superpowers/plans/2026-10-07-v0013-draft-release.md).
+Rust runtime additions are Mac-gated;
 the Agent authentication adjustment checks `process.platform === "darwin"`.
 Existing Windows footer/authentication paths and the shared web controller remain.
 
@@ -79,9 +82,13 @@ the clipboard guard restores our pairing clipboard only while it is still ours.
 Final package target:
 `dist/omw-warp-oss-v0.0.13-aarch64-apple-darwin.dmg`.
 
-The 0.0.13 rebuild and fresh package checks passed. Size: 281,810,096 bytes
-(approximately 269 MiB). DMG SHA-256:
-`dbe880f4ec2b0733cc20e054b6f2edefac9f4f9c02d7c1c10c4c68cb691d633a`.
+The 0.0.13 rebuild and fresh package checks passed. The final combined-release
+DMG changes only its outer README to clarify the separate Windows rebuild.
+Size: 281,455,711 bytes (approximately 268 MiB). DMG SHA-256:
+`bc6df1c2874c43ef919352761424fba96ef80455f856607e8e0e4d0b0cde6e8f`.
+The preceding DMG (`dbe880f4ec2b0733cc20e054b6f2edefac9f4f9c02d7c1c10c4c68cb691d633a`)
+is retained in `dist/archive/2026-10-07-unpublished/before-dual-platform-notes/`.
+Fresh repack checks are in `.tmp/dual-platform-0013-package-check.log`.
 
 Read-only mounting verified the DMG's internal integrity and companion checksum.
 Strict/deep bundle signature checks passed. The app, CLI, Node and keychain helper
@@ -130,9 +137,10 @@ available for this acceptance. Read-only pairing remains the default; this work
 does not add a phone write-permission UI or enable network exposure automatically.
 
 Minimum macOS 11.0 is retained in the package, but older macOS and actual Windows
-execution require those environments. Windows preservation is supported by the
-platform gates, simulated Agent tests and unchanged Windows artifacts, not an
-executed Windows build. This preview is ad-hoc signed and not Apple-notarized.
+execution require those environments. This Mac acceptance supports Windows
+preservation through platform gates and simulated Agent tests. The separate
+Windows build is recorded in the combined release manifest; it does not change
+the scope of this Mac report. This preview is ad-hoc signed and not Apple-notarized.
 Installation/update swapping and cross-process production keychain authorization
 were not performed. Existing logs were not rewritten.
 

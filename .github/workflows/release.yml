@@ -30,6 +30,11 @@ on:
           - both
           - mac
           - windows
+      installer_fixture:
+        description: 'Run only the small Windows installer contract fixture'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -149,6 +154,7 @@ jobs:
     if: >-
       needs.prepare.outputs.ref != 'omw-local-preview-v0.0.3'
       && (github.event_name != 'workflow_dispatch' || github.event.inputs.targets != 'mac')
+      && github.event.inputs.installer_fixture != 'true'
     # Same rationale as mac: 90 was tight (Windows finished at ~67 min in
     # v0.0.6, still inside the budget but no headroom). 180 leaves room.
     timeout-minutes: 180
@@ -271,3 +277,41 @@ jobs:
             "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc-setup.exe" `
             "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc-setup.exe.sha256" `
             --clobber
+
+  installer-fixture:
+    name: Windows installer contract fixture
+    runs-on: windows-latest
+    needs: prepare
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.installer_fixture == 'true'
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+      - name: Build and exercise the production installer with a small payload
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $root = Join-Path $PWD "dist/staging-v$env:RELEASE_VERSION-windows"
+          $files = @(
+            'omw-warp-oss.exe', 'omw-keychain-helper.exe', 'bin/node.exe',
+            'bin/omw-agent.mjs', 'x64/OpenConsole.exe', 'LICENSE',
+            'node_modules/@mistralai/mistralai/esm/models/operations/postdatasetrecordsfromplaygroundv1observabilitydatasetsdatasetidimportsfromplaygroundpost.d.ts.map'
+          )
+          foreach ($relative in $files) {
+            $file = Join-Path $root $relative
+            New-Item -ItemType Directory -Force (Split-Path $file) | Out-Null
+            [IO.File]::WriteAllText($file, 'MZ installer contract fixture')
+          }
+          $manifest = foreach ($relative in $files) {
+            $hash = (Get-FileHash -Algorithm SHA256 (Join-Path $root $relative)).Hash.ToLowerInvariant()
+            "$hash  $relative"
+          }
+          [IO.File]::WriteAllLines((Join-Path $root 'SHA256SUMS'), $manifest, [Text.Encoding]::ASCII)
+          & pwsh -NoProfile -File scripts/build-windows-installer.ps1 -Version $env:RELEASE_VERSION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $installer = "dist/omw-warp-oss-v$env:RELEASE_VERSION-x86_64-pc-windows-msvc-setup.exe"
+          & pwsh -NoProfile -File scripts/test-windows-installer.ps1 -InstallerPath $installer -StagingDirectory $root -Version $env:RELEASE_VERSION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

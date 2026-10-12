@@ -265,10 +265,10 @@ jobs:
           RELEASE_REF: ${{ needs.prepare.outputs.ref }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          if ($env:RELEASE_REF -eq 'omw-local-preview-v0.0.13') {
+          if ($env:RELEASE_REF -in @('omw-local-preview-v0.0.13', 'omw-local-preview-v0.0.14')) {
             $draftState = gh release view $env:RELEASE_REF --json isDraft,isPrerelease --jq '.isDraft and .isPrerelease'
             if ($LASTEXITCODE -ne 0 -or $draftState -ne 'true') {
-              throw '0.0.13 destination must remain Draft and Pre-release'
+              throw 'Destination must remain Draft and Pre-release during packaging'
             }
           }
           gh release upload "$env:RELEASE_REF" `

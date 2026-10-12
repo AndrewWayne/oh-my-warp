@@ -78,7 +78,7 @@ jobs:
         run: |
           ref="$RELEASE_REF"
           version="$RELEASE_VERSION"
-          if [[ "$ref" == "omw-local-preview-v0.0.13" ]]; then
+          if [[ "$ref" == "omw-local-preview-v0.0.13" || "$ref" == "omw-local-preview-v0.0.14" ]]; then
             test "$(gh release view "$ref" --json isDraft,isPrerelease --jq '.isDraft and .isPrerelease')" = "true"
             exit 0
           fi

@@ -1,0 +1,69 @@
+{
+  "product": "oh my warp",
+  "version": "0.0.14",
+  "track": "local-preview",
+  "recorded_on": "2026-10-12",
+  "platform": "aarch64-apple-darwin",
+  "omw_base": {
+    "repository": "https://github.com/AndrewWayne/oh-my-warp",
+    "tag": "omw-local-preview-v0.0.11",
+    "commit": "24c06811dee6cb6b22d715c69657af909ade8d4d"
+  },
+  "previous_release": {
+    "tag": "omw-local-preview-v0.0.13",
+    "mac_source_commit": "47ed36e813f08da521a428267ce77856da8c9dc8",
+    "maintenance_record": "docs/upstream/v0.0.13.json",
+    "all_maintenance_repairs_and_selected_backports_preserved": true
+  },
+  "vendor_snapshot": {
+    "repository": "https://github.com/warpdotdev/warp",
+    "upstream_commit": null,
+    "imported_by_omw_commit": "82f15d6606fcb76fe636ad55f9130a1582bd5ebe",
+    "note": "Original upstream snapshot is not established; this release performs no whole-tree synchronization."
+  },
+  "inherited_adopted_commits": [
+    "4aeeebfc8d36a25f719ee95793325838072a4954",
+    "ec27d06d7dcc08d78a1447ab0c5974e506e936ff",
+    "64e3cd4745ff0148437a0982c7b57179646e69ef",
+    "8bde12e6ab31f7754768d07556d97c80c7d76c9c",
+    "d3dbe0c2f29c713ec97a4ec76d81a8ee31f11d31",
+    "359d14296caaf6552cbf842375904e2b932ab2e3",
+    "f5e52613c662e49be3cea01ef6c7ebfa6328d34e"
+  ],
+  "local_adaptations": [
+    {
+      "scope": "Mac Codex mouse-reporting file-link scanning",
+      "application": "Allow the existing file scanner for Codex without changing other terminal editors or mouse-reporting policy."
+    },
+    {
+      "scope": "Complete Chinese and wrapped file-reference ranges",
+      "application": "Preserve both cells of wide characters, complete suffixes, soft/hard wraps, spaces and consecutive path lists. Retain existing file validation and opener."
+    },
+    {
+      "scope": "Relative paths in the associated Codex session",
+      "application": "Use the pane PTY PID and a unique descendant Codex process. Explicit -C/--cd takes precedence; otherwise use the associated rollout or exact fresh read-only state row. Skip relative references for unknown/ambiguous contexts. No global latest-session lookup, prompt injection, or session-content logging."
+    }
+  ],
+  "preservation": {
+    "feature_baseline": "Complete 0.0.13 Mac features, retaining 0.0.11 custom behavior and selected 0.0.12 backports",
+    "windows_runtime_changes": false,
+    "windows_artifact_rebuilt": false,
+    "windows_note": "This is the Mac build record. The release platform manifest records a separate Windows rebuild with unchanged runtime source and a 0.0.14 version label.",
+    "cloud_feature_enabled": false,
+    "codex_configuration_modified": false,
+    "input_editing_changes": false
+  },
+  "acceptance_reference": {
+    "diagnosis": "docs/codex-mouse-file-links-diagnosis.md",
+    "experiments": "docs/codex-path-environment-experiments-2026-10-10.md",
+    "plan": "docs/superpowers/plans/2026-10-10-codex-relative-file-links.md",
+    "gui": "Aggregate user-reported root/worktree mouse pass; no independent screenshot or mouse-control observation."
+  },
+  "limits": [
+    "Unknown or ambiguous Codex directory context skips relative links.",
+    "Default shared-daemon mode without explicit -C is outside verified relative-link support.",
+    "Reconstruction is bounded to eight physical rows and 8192 bytes.",
+    "Older Codex state schemas and directory changes inside the TUI are not exhaustively verified.",
+    "Older operating systems, physical phone/Tailscale and real provider credentials remain unverified."
+  ]
+}

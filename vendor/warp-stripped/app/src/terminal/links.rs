@@ -3,6 +3,16 @@
 use warpui::event::ModifiersState;
 use warpui::platform::OperatingSystem;
 
+use super::{view::TerminalEditor, CLIAgent};
+
+/// Determines whether bare file paths should be scanned in the hovered terminal program.
+pub fn should_scan_file_paths(from_editor: TerminalEditor, agent: Option<CLIAgent>) -> bool {
+    matches!(from_editor, TerminalEditor::No)
+        // Codex now uses SGR mouse reporting without being a terminal text editor.
+        || (cfg!(all(target_os = "macos", feature = "omw_local"))
+            && matches!(agent, Some(CLIAgent::Codex)))
+}
+
 /// Returns a string denoting the keybinding to directly open a link.
 pub fn directly_open_link_keybinding_string() -> &'static str {
     match OperatingSystem::get() {

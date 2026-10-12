@@ -158,9 +158,11 @@ pub struct TerminalManager {
     #[expect(dead_code)]
     remote_server_controller: ModelHandle<RemoteServerController>,
 
-    /// The process ID of the PTY. Purely used for integration tests. None if the PTY has not yet
-    /// been started.
-    #[cfg(feature = "integration_tests")]
+    /// The PTY process ID, used by integration tests and local Codex file-link context.
+    #[cfg(any(
+        feature = "integration_tests",
+        all(target_os = "macos", feature = "omw_local")
+    ))]
     pid: Option<u32>,
 
     /// An inactive receiver for PTY reads that we can upgrade to an active
@@ -779,7 +781,10 @@ impl TerminalManager {
             pty_controller,
             remote_server_controller,
 
-            #[cfg(feature = "integration_tests")]
+            #[cfg(any(
+                feature = "integration_tests",
+                all(target_os = "macos", feature = "omw_local")
+            ))]
             pid: None,
 
             inactive_pty_reads_rx,
@@ -947,7 +952,10 @@ impl TerminalManager {
             }
         };
 
-        #[cfg(feature = "integration_tests")]
+        #[cfg(any(
+            feature = "integration_tests",
+            all(target_os = "macos", feature = "omw_local")
+        ))]
         let pid = pty.get_pid();
         #[cfg(unix)]
         let fd = pty.get_fd();
@@ -961,7 +969,10 @@ impl TerminalManager {
         );
 
         self.event_loop_handle = Some(event_loop_handle);
-        #[cfg(feature = "integration_tests")]
+        #[cfg(any(
+            feature = "integration_tests",
+            all(target_os = "macos", feature = "omw_local")
+        ))]
         {
             self.pid = Some(pid);
         }
@@ -2435,7 +2446,10 @@ impl TerminalManager {
         });
     }
 
-    #[cfg(feature = "integration_tests")]
+    #[cfg(any(
+        feature = "integration_tests",
+        all(target_os = "macos", feature = "omw_local")
+    ))]
     pub fn pid(&self) -> Option<u32> {
         self.pid
     }

@@ -631,11 +631,52 @@ impl super::TerminalView {
                 .and_then(|block| block.pwd().map(String::from)),
         };
 
+        let agent = if (matches!(from_editor, TerminalEditor::Yes)
+            || matches!(position, WithinModel::AltScreen(_)))
+            && cfg!(all(target_os = "macos", feature = "omw_local"))
+        {
+            self.detect_cli_agent_from_model(&self.model.lock(), ctx)
+                .map(|(agent, _)| agent)
+        } else {
+            None
+        };
+
+        #[cfg(all(target_os = "macos", feature = "omw_local"))]
+        let codex = matches!(agent, Some(crate::terminal::CLIAgent::Codex))
+            && matches!(position, WithinModel::AltScreen(_));
+
         match pwd_to_scan_for {
             // Check if we are hovering on any file path. Don't scan for file path
             // if user is hovering from an editor like vim or nano.
-            Some(path) if matches!(from_editor, TerminalEditor::No) => {
-                let possible_paths = self.model.lock().possible_file_paths_at_point(position);
+            Some(path) if crate::terminal::links::should_scan_file_paths(from_editor, agent) => {
+                let possible_paths = {
+                    let model = self.model.lock();
+                    #[cfg(all(target_os = "macos", feature = "omw_local"))]
+                    if codex {
+                        model.possible_codex_file_paths_at_point(position)
+                    } else {
+                        model
+                            .possible_file_paths_at_point(position)
+                            .collect::<Vec<_>>()
+                    }
+                    #[cfg(not(all(target_os = "macos", feature = "omw_local")))]
+                    model
+                        .possible_file_paths_at_point(position)
+                        .collect::<Vec<_>>()
+                };
+                #[cfg(all(target_os = "macos", feature = "omw_local"))]
+                let shell_pid = if codex {
+                    self.pane_stack_handle(ctx).and_then(|stack| {
+                        let manager = stack.as_ref(ctx).active_data().clone();
+                        manager
+                            .as_ref(ctx)
+                            .as_any()
+                            .downcast_ref::<crate::terminal::local_tty::TerminalManager>()
+                            .and_then(|manager| manager.pid())
+                    })
+                } else {
+                    None
+                };
                 let max_columns = self.size_info.columns;
                 let shell_launch_data = self
                     .active_block_session_id()
@@ -648,9 +689,34 @@ impl super::TerminalView {
                 self.file_link_scanning_join_handle = std::thread::Builder::new()
                     .name("Compute file paths".into())
                     .spawn(move || {
+                        #[cfg(all(target_os = "macos", feature = "omw_local"))]
+                        let codex_directory = shell_pid.and_then(
+                            crate::terminal::codex_file_links::working_directory_for_shell_pid,
+                        );
+                        #[cfg(all(target_os = "macos", feature = "omw_local"))]
+                        let working_directory = codex_directory
+                            .as_ref()
+                            .and_then(|directory| directory.to_str())
+                            .unwrap_or(&path);
+                        #[cfg(not(all(target_os = "macos", feature = "omw_local")))]
+                        let working_directory = &path;
+                        let candidates = possible_paths.into_iter().filter(|candidate| {
+                            #[cfg(all(target_os = "macos", feature = "omw_local"))]
+                            {
+                                !codex
+                                    || codex_directory.is_some()
+                                    || std::path::Path::new(&candidate.get_inner().path.path)
+                                        .is_absolute()
+                            }
+                            #[cfg(not(all(target_os = "macos", feature = "omw_local")))]
+                            {
+                                let _ = candidate;
+                                true
+                            }
+                        });
                         let paths = Self::compute_valid_paths(
-                            &path,
-                            possible_paths,
+                            working_directory,
+                            candidates,
                             max_columns,
                             shell_launch_data,
                         );

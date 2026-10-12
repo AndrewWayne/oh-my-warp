@@ -1,0 +1,57 @@
+{
+  "codex_version": "0.161.0",
+  "fixtures": [
+    {
+      "columns": 40,
+      "path_rows": [
+        [
+          "› /Users/shuokong/Desktop/cailab/",
+          "  AI_Learn/02_concepts/服务器运维与AI工",
+          "  具入门讲义.md"
+        ],
+        [
+          "• /Users/shuokong/Desktop/cailab/",
+          "  AI_Learn/02_concepts/服务器运维与AI工",
+          "  具入门讲义.md"
+        ]
+      ]
+    },
+    {
+      "columns": 60,
+      "path_rows": [
+        [
+          "› /Users/shuokong/Desktop/cailab/AI_Learn/02_concepts/服务",
+          "  器运维与AI工具入门讲义.md"
+        ],
+        [
+          "• /Users/shuokong/Desktop/cailab/AI_Learn/02_concepts/服务器",
+          "  运维与AI工具入门讲义.md"
+        ]
+      ]
+    },
+    {
+      "columns": 80,
+      "path_rows": [
+        [
+          "› /Users/shuokong/Desktop/cailab/AI_Learn/02_concepts/服务器运维与AI工具入门讲",
+          "  义.md"
+        ],
+        [
+          "• /Users/shuokong/Desktop/cailab/AI_Learn/02_concepts/服务器运维与AI工具入门讲",
+          "  义.md"
+        ]
+      ]
+    },
+    {
+      "columns": 160,
+      "path_rows": [
+        [
+          "› /Users/shuokong/Desktop/cailab/AI_Learn/02_concepts/服务器运维与AI工具入门讲义.md"
+        ],
+        [
+          "• /Users/shuokong/Desktop/cailab/AI_Learn/02_concepts/服务器运维与AI工具入门讲义.md"
+        ]
+      ]
+    }
+  ]
+}

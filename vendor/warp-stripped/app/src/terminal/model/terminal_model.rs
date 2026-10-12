@@ -1839,6 +1839,23 @@ impl TerminalModel {
         }
     }
 
+    #[cfg(all(target_os = "macos", feature = "omw_local"))]
+    pub fn possible_codex_file_paths_at_point(
+        &self,
+        point: WithinModel<Point>,
+    ) -> Vec<WithinModel<PossiblePath>> {
+        match point {
+            WithinModel::AltScreen(point) => self
+                .alt_screen
+                .grid_handler()
+                .possible_codex_file_paths_at_point(point)
+                .into_iter()
+                .map(WithinModel::AltScreen)
+                .collect(),
+            WithinModel::BlockList(_) => self.possible_file_paths_at_point(point).collect(),
+        }
+    }
+
     pub fn url_at_point(&self, point: &WithinModel<Point>) -> Option<WithinModel<Link>> {
         match point {
             WithinModel::AltScreen(inner_point) => self

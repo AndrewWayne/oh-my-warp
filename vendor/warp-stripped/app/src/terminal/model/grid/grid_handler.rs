@@ -1175,8 +1175,188 @@ impl GridHandler {
     }
 
     /// Return all possible file paths containing the grid point ordered from longest to shortest.
+    #[cfg(all(target_os = "macos", feature = "omw_local"))]
+    pub fn possible_codex_file_paths_at_point(&self, displayed_point: Point) -> Vec<PossiblePath> {
+        let mut point = self.maybe_translate_point_from_displayed_to_original(displayed_point);
+        if matches!(self.cell_type(point), Some(CellType::WideCharSpacer)) {
+            point.col = point.col.saturating_sub(1);
+        }
+        let mut paths = self.codex_wrapped_file_paths_at_point(point);
+        paths.extend(self.possible_file_paths_at_point(displayed_point));
+        paths
+    }
+
+    #[cfg(all(target_os = "macos", feature = "omw_local"))]
+    fn codex_wrapped_file_paths_at_point(&self, point: Point) -> Vec<PossiblePath> {
+        struct Glyph {
+            byte: usize,
+            start: Point,
+            end: Point,
+            c: char,
+        }
+        let row_text = |row| {
+            let text: String = self
+                .line_to_fragments(
+                    row,
+                    0..self.columns().saturating_sub(1),
+                    IncludeFirstWideChar::Yes,
+                )
+                .into_iter()
+                .map(|f| f.content)
+                .collect();
+            if self.row_wraps(row) {
+                text.trim_end_matches('\0').to_owned()
+            } else {
+                text.trim_end_matches(|c: char| c == '\0' || c.is_whitespace())
+                    .to_owned()
+            }
+        };
+        let is_cjk = |c: char| matches!(c as u32,0x3400..=0x9fff|0xf900..=0xfaff);
+        let continues = |previous: usize, next: usize| {
+            if self.row_wraps(previous) {
+                return true;
+            }
+            let before = row_text(previous);
+            let after = row_text(next);
+            let body = after.trim_start();
+            let indent = after.len() - body.len();
+            if indent < HARD_WRAPPED_FILE_PATH_CONTINUATION_INDENT
+                || body.is_empty()
+                || body.starts_with('\u{2022}')
+            {
+                return false;
+            }
+            let width: usize = before.chars().map(|c| c.width().unwrap_or(1)).sum();
+            before.ends_with(['/', '\\', '-'])
+                || width + 4 >= self.columns()
+                || (before.chars().last().is_some_and(is_cjk)
+                    && body.chars().next().is_some_and(is_cjk))
+        };
+        if point.row >= self.total_rows() || self.columns() == 0 {
+            return Vec::new();
+        }
+        let mut first = point.row;
+        while point.row - first + 1 < HARD_WRAPPED_FILE_PATH_MAX_ROWS
+            && first > 0
+            && continues(first - 1, first)
+        {
+            first -= 1;
+        }
+        let mut last = point.row;
+        while last - first + 1 < HARD_WRAPPED_FILE_PATH_MAX_ROWS
+            && last + 1 < self.total_rows()
+            && continues(last, last + 1)
+        {
+            last += 1;
+        }
+        if first == last {
+            return Vec::new();
+        }
+        let mut text = String::new();
+        let mut glyphs = Vec::new();
+        for row in first..=last {
+            let line = row_text(row);
+            let indent = if row > first && !self.row_wraps(row - 1) {
+                line.len() - line.trim_start().len()
+            } else {
+                0
+            };
+            if text.len() + line.len() - indent > HARD_WRAPPED_FILE_PATH_MAX_BYTES {
+                return Vec::new();
+            }
+            let mut col = 0;
+            for (byte, c) in line.char_indices() {
+                let width = c.width().unwrap_or(1);
+                if byte >= indent {
+                    glyphs.push(Glyph {
+                        byte: text.len(),
+                        start: Point::new(row, col),
+                        end: Point::new(row, col + width.saturating_sub(1)),
+                        c,
+                    });
+                    text.push(c);
+                }
+                col += width;
+            }
+        }
+        let Some(hover) = glyphs
+            .iter()
+            .position(|g| g.start <= point && point <= g.end)
+        else {
+            return Vec::new();
+        };
+        let starts: Vec<_> = (0..=hover)
+            .filter(|i| {
+                !FILE_LINK_SEPARATORS.contains(&glyphs[*i].c)
+                    && glyphs[*i].c != '\u{2022}'
+                    && (*i == 0
+                        || FILE_LINK_SEPARATORS.contains(&glyphs[*i - 1].c)
+                        || glyphs[*i - 1].start.row != glyphs[*i].start.row)
+            })
+            .rev()
+            .take(128)
+            .collect();
+        let ends: Vec<_> = (hover + 1..=glyphs.len())
+            .rev()
+            .filter(|i| *i == glyphs.len() || FILE_LINK_SEPARATORS.contains(&glyphs[*i].c))
+            .take(128)
+            .collect();
+        let mut separators = vec![0];
+        for glyph in &glyphs {
+            separators
+                .push(separators.last().unwrap() + usize::from(glyph.c == '/' || glyph.c == '\\'));
+        }
+        let mut paths = Vec::new();
+        'candidates: for start in starts {
+            for end in &ends {
+                if separators[*end] == separators[start] {
+                    continue;
+                }
+                let end_byte = if *end == glyphs.len() {
+                    text.len()
+                } else {
+                    glyphs[*end].byte
+                };
+                let raw = &text[glyphs[start].byte..end_byte];
+                if raw.contains("://") {
+                    continue;
+                }
+                let path = CleanPathResult::with_line_and_column_number(&shellexpand::tilde(raw));
+                let begin =
+                    self.maybe_translate_point_from_original_to_displayed(glyphs[start].start);
+                let finish =
+                    self.maybe_translate_point_from_original_to_displayed(glyphs[*end - 1].end);
+                if begin <= finish {
+                    paths.push(PossiblePath {
+                        path,
+                        range: begin..=finish,
+                    });
+                }
+                if paths.len() == 128 {
+                    break 'candidates;
+                }
+            }
+        }
+        paths.sort_by(|a, b| {
+            b.path.path.len().cmp(&a.path.path.len()).then_with(|| {
+                b.path
+                    .line_and_column_num
+                    .is_some()
+                    .cmp(&a.path.line_and_column_num.is_some())
+            })
+        });
+        paths
+    }
+
+    /// Return all possible file paths containing the grid point ordered from longest to shortest.
     pub fn possible_file_paths_at_point(&self, displayed_point: Point) -> Vec<PossiblePath> {
-        let point = self.maybe_translate_point_from_displayed_to_original(displayed_point);
+        let mut point = self.maybe_translate_point_from_displayed_to_original(displayed_point);
+        if cfg!(all(target_os = "macos", feature = "omw_local"))
+            && matches!(self.cell_type(point), Some(CellType::WideCharSpacer))
+        {
+            // Both halves of a wide character must use the same scan anchor and link range.
+            point.col -= 1;
+        }
         let mut hard_wrapped_paths = self.hard_wrapped_file_paths_at_point(point);
         let last_row_end_with_line_wrap = point.row > 0 && self.row_wraps(point.row - 1);
         let current_row_end_with_line_wrap =
@@ -1533,6 +1713,15 @@ impl GridHandler {
             }
         };
 
+        let can_continue_path = |line: &LogicalLine| {
+            ends_with_path_separator(&line.fragments)
+                // Codex leaves two right margin cells, plus one when a wide glyph does not fit.
+                || (cfg!(all(target_os = "macos", feature = "omw_local"))
+                    && line
+                        .end_point
+                        .is_some_and(|end| end.col + 4 >= self.columns()))
+        };
+
         let hovered_row_width = row_fragments(point.row)
             .iter()
             .map(|fragment| fragment.total_cell_width)
@@ -1553,7 +1742,7 @@ impl GridHandler {
             }
 
             let previous_line = logical_line_at(current_line.start_row - 1);
-            if !ends_with_path_separator(&previous_line.fragments) {
+            if !can_continue_path(&previous_line) {
                 break;
             }
             logical_lines.insert(0, previous_line);
@@ -1563,9 +1752,7 @@ impl GridHandler {
             let current_line = logical_lines
                 .last()
                 .expect("hard-wrapped path always has a hovered logical line");
-            if current_line.end_row + 1 >= self.total_rows()
-                || !ends_with_path_separator(&current_line.fragments)
-            {
+            if current_line.end_row + 1 >= self.total_rows() || !can_continue_path(current_line) {
                 break;
             }
 
@@ -1576,7 +1763,9 @@ impl GridHandler {
             logical_lines.push(next_line);
         }
 
-        if logical_lines.len() < 2 {
+        let is_soft_wrapped_path = cfg!(all(target_os = "macos", feature = "omw_local"))
+            && logical_lines[0].start_row < logical_lines[0].end_row;
+        if logical_lines.len() < 2 && !is_soft_wrapped_path {
             return Vec::new();
         }
 
@@ -1595,12 +1784,31 @@ impl GridHandler {
         let mut possible_paths = Vec::new();
         for start_line_index in 0..=hovered_line_index {
             for end_line_index in hovered_line_index..logical_lines.len() {
-                if start_line_index == end_line_index {
+                let first_line = &logical_lines[start_line_index];
+                let last_line = &logical_lines[end_line_index];
+                if start_line_index == end_line_index
+                    && !(cfg!(all(target_os = "macos", feature = "omw_local"))
+                        && first_line.start_row < first_line.end_row)
+                {
                     continue;
                 }
 
-                let first_line = &logical_lines[start_line_index];
-                let last_line = &logical_lines[end_line_index];
+                let uses_extended_wrap = start_line_index == end_line_index
+                    || logical_lines[start_line_index..end_line_index]
+                        .iter()
+                        .any(|line| !ends_with_path_separator(&line.fragments));
+                if uses_extended_wrap
+                    && (last_line.end_row - first_line.start_row >= HARD_WRAPPED_FILE_PATH_MAX_ROWS
+                        || logical_lines[start_line_index..=end_line_index]
+                            .iter()
+                            .flat_map(|line| &line.fragments)
+                            .map(|fragment| fragment.content.len())
+                            .sum::<usize>()
+                            > HARD_WRAPPED_FILE_PATH_MAX_BYTES)
+                {
+                    continue;
+                }
+
                 let Some(mut ending_point) = last_line.end_point else {
                     continue;
                 };
@@ -1627,6 +1835,11 @@ impl GridHandler {
                             ),
                             None => (Cow::Borrowed(possible_first_line_path.as_str()), 0),
                         };
+
+                    if uses_extended_wrap && !first_line_path.starts_with('/') {
+                        start_offset += first_fragments[start_fragment_index].total_cell_width;
+                        continue;
+                    }
 
                     let mut possible_path = first_line_path.to_string();
                     let starting_offset = start_offset + absolute_start_offset;

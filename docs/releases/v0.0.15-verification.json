@@ -1,0 +1,89 @@
+{
+  "published_release_url": "https://github.com/AndrewWayne/oh-my-warp/releases/tag/omw-local-preview-v0.0.15",
+  "published_at": "2026-10-21T15:13:10Z",
+  "release_id": 419686067,
+  "draft": false,
+  "prerelease": true,
+  "tag_source_commit": "17d56c53e4ff878ff0ab7f19a4a0402d8e1582e6",
+  "latest_stable_preserved": "omw-local-preview-v0.0.11",
+  "all_prior_0_0_14_asset_ids_sizes_and_digests_preserved": true,
+  "assets": [
+    {
+      "name": "omw-v0.0.15-build-manifest.json",
+      "bytes": 9902,
+      "sha256": "06081130bd162bbe6206f07657f5035e38b4eb03f8a84e03ac785eb0b1c2725d",
+      "anonymous_head": 200,
+      "anonymous_actual_download_sha256_matches": true
+    },
+    {
+      "name": "omw-v0.0.15-mac-source.tar.gz",
+      "bytes": 165297122,
+      "sha256": "1effad228ac6abc665ba21ea7d2a0213cd381c8f11f48a8d847d1d424693a3d4",
+      "anonymous_head": 200
+    },
+    {
+      "name": "omw-v0.0.15-SHA256SUMS.txt",
+      "bytes": 425,
+      "sha256": "cbf2faeee39ce32f371e8eb5888dc57a339cb4d9082a5fa3bb8db5b42bed8a00",
+      "anonymous_head": 200,
+      "anonymous_actual_download_sha256_matches": true
+    },
+    {
+      "name": "omw-warp-oss-v0.0.15-aarch64-apple-darwin.dmg",
+      "bytes": 283985376,
+      "sha256": "b7bc430ea3f879f0d1e06610740e36c8d3d777de18fe7736010feea439dcb19f",
+      "anonymous_head": 200,
+      "anonymous_actual_download_sha256_matches": true
+    },
+    {
+      "name": "omw-warp-oss-v0.0.15-aarch64-apple-darwin.dmg.sha256",
+      "bytes": 112,
+      "sha256": "961437f28560168796e32f2a9c8dfe171a315a600ccf97c140a510c03998f499",
+      "anonymous_head": 200,
+      "anonymous_actual_download_sha256_matches": true
+    }
+  ],
+  "platform": "aarch64-apple-darwin",
+  "runtime_baseline": "accepted 0.0.14-default-links-r2 source; normal optimized rebuild with embedded 0.0.15 version",
+  "executable_sha256": "b30e67b0698c416732861b1ab9ed353e7e88088eb3638c857d0aa3179c69cbc9",
+  "cli_sha256": "72e7937e70f4e00b22977fc3007fb5e8117a40199a40847c969797ddddab1ec9",
+  "source_archive_includes_submodule_contents": false,
+  "verification": {
+    "context_tests_passed": 7,
+    "configuration_tests_passed": 3,
+    "production_linked_sparse_soft_wrap_tests_passed": 4,
+    "production_linked_replay": {
+      "linkedLibrary": "Linking replay probe to libwarp-c5053f1489999059.rlib",
+      "captureCases": 42,
+      "correctBaseCaptures": 31,
+      "completeReferences": 101,
+      "referenceCells": 4737,
+      "syntheticCases": 456,
+      "correctBaseWithinBounds": 430,
+      "reportedChineseRelative1946Cases": 8,
+      "reportedColumns": [
+        24,
+        40,
+        80,
+        160
+      ],
+      "failures": 0
+    },
+    "mounted_package_checked": true,
+    "isolated_real_shell_startup_passed": true,
+    "fresh_0_0_15_mouse_acceptance": false,
+    "retained_r2_actual_mouse_acceptance": "docs/codex-default-session-links-acceptance-2026-10-16.md",
+    "known_limits": "RELEASE_NOTES_v0.0.15.md",
+    "native_qa_quit_confirmation_timed_out": true,
+    "isolated_qa_only_stopped_and_descendants_exited": true
+  },
+  "tag_workflow": {
+    "id": 39623647327,
+    "url": "https://github.com/AndrewWayne/oh-my-warp/actions/runs/39623647327",
+    "conclusion": "success",
+    "mac_and_windows_rebuilds_skipped": true
+  },
+  "installed_application_replaced": false,
+  "user_configuration_modified_by_release": false,
+  "windows_runtime_or_existing_assets_changed": false
+}

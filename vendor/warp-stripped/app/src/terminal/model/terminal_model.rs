@@ -2201,6 +2201,16 @@ impl TerminalModel {
     }
 
     fn send_title_event(&mut self, title: Option<String>) {
+        #[cfg(all(target_os = "macos", feature = "omw_local"))]
+        let title = title.and_then(|title| {
+            if self.custom_title.is_some() {
+                return Some(title);
+            }
+            crate::terminal::codex_file_links::session_title(&title)
+                .map_or_else(|| Some(title.clone()), |session| {
+                    (!session.display.is_empty()).then_some(session.display)
+                })
+        });
         let title = title.unwrap_or(self.shell_launch_state().display_name().into());
         let title_event = Event::Title(title);
         self.event_proxy.send_terminal_event(title_event);
@@ -2223,7 +2233,22 @@ impl TerminalModel {
     /// Returns the terminal's natural title (set by ANSI escape sequences).
     /// This does not include any custom title override.
     pub fn terminal_title(&self) -> Option<String> {
+        #[cfg(all(target_os = "macos", feature = "omw_local"))]
+        if let Some(session) = self
+            .title
+            .as_deref()
+            .and_then(crate::terminal::codex_file_links::session_title)
+        {
+            return (!session.display.is_empty()).then_some(session.display);
+        }
         self.title.clone()
+    }
+
+    #[cfg(all(target_os = "macos", feature = "omw_local"))]
+    pub fn codex_session_prefix(&self) -> Option<String> {
+        self.title.as_deref()
+            .and_then(crate::terminal::codex_file_links::session_title)
+            .map(|session| session.prefix.to_owned())
     }
 
     /// Reports user input on the terminal as potential typeahead.
@@ -2455,11 +2480,17 @@ impl ansi::Handler for TerminalModel {
         // Filter out null bytes from the title string.
         let filtered_title = title.map(|t| t.replace('\0', ""));
 
+        #[cfg(all(target_os = "macos", feature = "omw_local"))]
+        let previous_session = self.codex_session_prefix();
         self.title.clone_from(&filtered_title);
 
         // Only send this event if there was no custom title set.
         if self.custom_title.is_none() {
             self.send_title_event(filtered_title);
+        }
+        #[cfg(all(target_os = "macos", feature = "omw_local"))]
+        if self.custom_title.is_some() && previous_session != self.codex_session_prefix() {
+            self.send_title_event(self.custom_title.clone());
         }
     }
 

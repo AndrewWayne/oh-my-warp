@@ -1,0 +1,72 @@
+{
+  "product": "oh my warp",
+  "version": "0.0.14",
+  "revision": "default-links-r1",
+  "status": "background-and-wide-gui-accepted-awaiting-narrow-and-switch-gui",
+  "track": "local-preview-revision",
+  "recorded_on": "2026-10-16",
+  "platform": "aarch64-apple-darwin",
+  "source_base_commit": "48b181c",
+  "previous_release": {
+    "tag": "omw-local-preview-v0.0.14",
+    "maintenance_record": "docs/upstream/v0.0.14.json",
+    "public_assets_replaced": false
+  },
+  "codex_integration": {
+    "mechanism": "Native terminal-title thread identity and metadata-only runtime directory query through the TUI process's connected Unix socket",
+    "upstream_repository": "https://github.com/openai/codex",
+    "inspected_tag": "rust-v0.162.1",
+    "inspected_commit": "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d",
+    "upstream_code_copied": false,
+    "minimum_title_version": "0.162.1",
+    "configuration_scope": "User authorized native title setup; only tui.terminal_title was changed, with private backup and structured preservation checks",
+    "sqlite_location": "No new shared-daemon SQLite lookup; the daemon supplies its live cwd",
+    "launch_arguments_modified": false,
+    "path_adapter_installed": false,
+    "read_only_rpc_methods": [
+      "initialize",
+      "thread/loaded/list",
+      "thread/read"
+    ],
+    "rpc_timeout_ms": 250,
+    "embedded_clients": "Known title requires a matching writable rollout; fresh exact-identity state accepts canonical symlink aliases; no launch-C fallback in this branch"
+  },
+  "preservation": {
+    "feature_baseline": "Complete public 0.0.14 Mac source, retaining 0.0.11 custom behavior and selected 0.0.12/0.0.13 changes",
+    "windows_runtime_changes": false,
+    "windows_artifact_rebuilt": false,
+    "cloud_feature_enabled": false,
+    "codex_configuration_modified": true,
+    "input_editing_changes": false,
+    "production_application_replaced": false
+  },
+  "acceptance_reference": {
+    "plan": "docs/superpowers/plans/2026-10-16-codex-default-session-links.md",
+    "record": "docs/codex-default-session-links-acceptance-2026-10-16.md"
+  },
+  "limits": [
+    "Codex native title configuration must emit the session-id/app-name prefix; this user's setting is enabled, and existing clients must be launched again to read it.",
+    "Shared-daemon metadata queries require daemon 0.162 or later; older daemon compatibility is not accepted.",
+    "Unknown, missing, stale or ambiguous session context skips relative references.",
+    "Codex terminal-title customization during the running invocation can remove the identity signal.",
+    "Existing scanner bounds and operating-system compatibility limits from public 0.0.14 still apply."
+  ],
+  "source_files_sha256": {
+    "crates/omw-cli/src/commands/codex_links.rs": "ce0967ea2b2cf684042d65f3f80f7a057dc0a0dc8a698ed659321a56ba874da6",
+    "crates/omw-cli/src/commands/mod.rs": "33e0384fe0b54ef7c8adf5f75e1575925fc30744cdd1b9720bea42e2fe69f9e3",
+    "crates/omw-cli/src/lib.rs": "5d4a580746180a719298d21f8f2ae13719741992d461db8e7ce758ed1b7045dd",
+    "scripts/build-mac-dmg.sh": "6342264d746c69db0881f6c008c65eddd57b304777d1416714506edd35e74f9d",
+    "vendor/warp-stripped/app/build.rs": "2c9d5352f05ef4d83343c1fcd0227fe05f93f87bb010950de6238e5fd5be7066",
+    "vendor/warp-stripped/app/src/platform/mac/codex_socket.c": "a12f644b9ff503199a6e904d0fde020389cf43d01925a79d34e66988fe7efb11",
+    "vendor/warp-stripped/app/src/terminal/model/terminal_model.rs": "3bb3a3a033fe2e49eacefc66778062ee8ca3d121c48729ad3dab9bf4a862ecaf",
+    "vendor/warp-stripped/app/src/terminal/omw_codex_file_links.rs": "1821f7b0eeb6f3005b388c016bfe8a79bf1f4592036939e022efd0e08c79f3ce",
+    "vendor/warp-stripped/app/src/terminal/view.rs": "b9f5987a842b2e50634554cc334475b9c5097cae1cf8f6787c486fbf9c14a852",
+    "vendor/warp-stripped/app/src/terminal/view/link_detection.rs": "650eb7730496a53538aac8e2f892746ac8c79b21cd512b9c59ba534ad620cc53"
+  },
+  "build": {
+    "rust_toolchain": "1.92.0",
+    "developer_directory": "/Library/Developer/CommandLineTools",
+    "release_profile": "normal optimized omw_local; no QA profile overrides",
+    "command": "OMW_BUILD_REVISION=default-links-r1 bash scripts/build-mac-dmg.sh 0.0.14"
+  }
+}

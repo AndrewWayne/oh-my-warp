@@ -1202,7 +1202,8 @@ impl GridHandler {
                     IncludeFirstWideChar::Yes,
                 )
                 .into_iter()
-                .map(|f| f.content)
+                // Cursor-skipped cells are blank columns, including continuation indentation.
+                .map(|f| f.content.replace('\0', " "))
                 .collect();
             if self.row_wraps(row) {
                 text.trim_end_matches('\0').to_owned()

@@ -1,0 +1,74 @@
+{
+  "product": "oh my warp",
+  "version": "0.0.15",
+  "recorded_on": "2026-10-21",
+  "track": "local-preview",
+  "status": "accepted-r2-runtime-promoted-for-versioned-release-build",
+  "source_base_commit": "48b181c",
+  "previous_revision": "docs/upstream/v0.0.14-default-links-r2.json",
+  "platform": "aarch64-apple-darwin",
+  "codex_integration": {
+    "mechanism": "Native terminal-title thread identity and read-only runtime cwd query through the client connected Unix socket",
+    "inspected_repository": "https://github.com/openai/codex",
+    "inspected_tag": "rust-v0.162.1",
+    "inspected_commit": "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d",
+    "upstream_code_copied": false,
+    "minimum_shared_daemon_version": "0.162",
+    "rpc_timeout_ms": 250,
+    "native_title_configuration": "Explicit opt-in via packaged omw codex-links; private backup and preservation of unrelated settings; no automatic user configuration change on installation",
+    "launch_arguments_modified": false,
+    "path_adapter_installed": false
+  },
+  "sparse_grid_fix": {
+    "trigger": "Codex emits cursor movement over indentation and inline spaces, leaving NUL terminal cells",
+    "behavior": "Treat each NUL as a single space while reconstructing Codex wrapped file paths",
+    "red": ".tmp/codex-sparse-grid-red.log",
+    "green": ".tmp/codex-sparse-grid-r2-green.log",
+    "regression": "vendor/warp-stripped/app/tests/omw_codex_sparse_grid_test.rs",
+    "focused_tests": 4,
+    "replay_summary": ".tmp/default-links-r2-replay-summary.json",
+    "gui_acceptance": ".tmp/default-links-gui/acceptance-r2.json",
+    "scanner_bounds_changed": false
+  },
+  "preservation": {
+    "windows_runtime_changes": false,
+    "public_assets_replaced": false,
+    "production_application_replaced": false,
+    "input_editing_changes": false,
+    "cloud_feature_enabled": false,
+    "feature_baseline": "Complete public 0.0.14 Mac features plus accepted default-links-r2",
+    "windows_artifact_rebuilt": false,
+    "windows_download_tag": "omw-local-preview-v0.0.14",
+    "codex_configuration_modified_automatically": false
+  },
+  "acceptance_record": "docs/codex-default-session-links-acceptance-2026-10-16.md",
+  "source_files_sha256": {
+    "crates/omw-cli/src/commands/codex_links.rs": "ce0967ea2b2cf684042d65f3f80f7a057dc0a0dc8a698ed659321a56ba874da6",
+    "crates/omw-cli/src/commands/mod.rs": "33e0384fe0b54ef7c8adf5f75e1575925fc30744cdd1b9720bea42e2fe69f9e3",
+    "crates/omw-cli/src/lib.rs": "5d4a580746180a719298d21f8f2ae13719741992d461db8e7ce758ed1b7045dd",
+    "scripts/build-mac-dmg.sh": "6342264d746c69db0881f6c008c65eddd57b304777d1416714506edd35e74f9d",
+    "vendor/warp-stripped/app/build.rs": "2c9d5352f05ef4d83343c1fcd0227fe05f93f87bb010950de6238e5fd5be7066",
+    "vendor/warp-stripped/app/src/platform/mac/codex_socket.c": "a12f644b9ff503199a6e904d0fde020389cf43d01925a79d34e66988fe7efb11",
+    "vendor/warp-stripped/app/src/terminal/model/terminal_model.rs": "3bb3a3a033fe2e49eacefc66778062ee8ca3d121c48729ad3dab9bf4a862ecaf",
+    "vendor/warp-stripped/app/src/terminal/model/grid/grid_handler.rs": "8b605959fec25aedf18b7b76157726ea51b0c863f592de86e1110322a4bcdf72",
+    "vendor/warp-stripped/app/src/terminal/omw_codex_file_links.rs": "1821f7b0eeb6f3005b388c016bfe8a79bf1f4592036939e022efd0e08c79f3ce",
+    "vendor/warp-stripped/app/src/terminal/view.rs": "b9f5987a842b2e50634554cc334475b9c5097cae1cf8f6787c486fbf9c14a852",
+    "vendor/warp-stripped/app/src/terminal/view/link_detection.rs": "650eb7730496a53538aac8e2f892746ac8c79b21cd512b9c59ba534ad620cc53",
+    "vendor/warp-stripped/app/tests/omw_codex_sparse_grid_test.rs": "1f8ddd6bc7dc9ebfb599caae9cd499c81d642b7ee0ab5af71d483843c1dd63cc"
+  },
+  "build": {
+    "rust_toolchain": "1.92.0",
+    "developer_directory": "/Library/Developer/CommandLineTools",
+    "release_profile": "normal optimized omw_local; no QA overrides",
+    "command": "bash scripts/build-mac-dmg.sh 0.0.15"
+  },
+  "accepted_revision": "0.0.14-default-links-r2",
+  "release_limits": [
+    "Native shared-daemon metadata requires Codex daemon >=0.162 and native terminal titles; actual interactive acceptance used 0.162.1.",
+    "Unknown or ambiguous context skips relative paths; existing reconstruction bounds remain.",
+    "macOS 27 GUI acceptance; older macOS runtime not verified despite minimum 11.0 metadata.",
+    "Ad-hoc signed and not notarized; macOS may ask again for folder access after replacement.",
+    "Real provider credentials, physical phone/Tailscale and other documented acceptance boundaries remain."
+  ],
+  "inherited_feature_provenance": "docs/upstream/v0.0.14.json"
+}

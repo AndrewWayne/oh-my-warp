@@ -2541,6 +2541,8 @@ pub struct TerminalView {
 
     #[cfg_attr(not(feature = "local_fs"), allow(dead_code))]
     file_link_scanning_join_handle: Option<JoinHandle<()>>,
+    #[cfg(all(target_os = "macos", feature = "omw_local"))]
+    codex_file_link_context: Option<String>,
 
     last_focus_ts: Option<NaiveDateTime>,
     tips_completed: ModelHandle<TipsCompleted>,
@@ -4134,6 +4136,8 @@ impl TerminalView {
             inline_banners_state: Default::default(),
             bookmarked_blocks: Default::default(),
             file_link_scanning_join_handle: None,
+            #[cfg(all(target_os = "macos", feature = "omw_local"))]
+            codex_file_link_context: None,
             last_focus_ts: None,
             tips_completed: resources.tips_completed.clone(),
             privacy_settings_snapshot: privacy_settings_handle.as_ref(ctx).get_snapshot(ctx),
@@ -10132,6 +10136,19 @@ impl TerminalView {
                 ctx.notify();
             }
             ModelEvent::Title(title) => {
+                #[cfg(all(target_os = "macos", feature = "omw_local"))]
+                {
+                    let mut model = self.model.lock();
+                    let prefix = model.codex_session_prefix();
+                    if prefix != self.codex_file_link_context {
+                        self.codex_file_link_context = prefix;
+                        self.last_hover_fragment_boundary = None;
+                        if self.highlighted_link.take(&mut model).is_some() {
+                            ctx.reset_cursor();
+                            ctx.notify();
+                        }
+                    }
+                }
                 self.terminal_title = title.to_owned();
                 if self.ignore_next_set_title_event {
                     self.ignore_next_set_title_event = false;

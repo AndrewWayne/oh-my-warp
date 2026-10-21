@@ -678,6 +678,10 @@ impl super::TerminalView {
                     None
                 };
                 let max_columns = self.size_info.columns;
+                #[cfg(all(target_os = "macos", feature = "omw_local"))]
+                let session_prefix = self.model.lock().codex_session_prefix();
+                #[cfg(all(target_os = "macos", feature = "omw_local"))]
+                let worker_prefix = session_prefix.clone();
                 let shell_launch_data = self
                     .active_block_session_id()
                     .and_then(|active_session_id| self.sessions.as_ref(ctx).get(active_session_id))
@@ -690,9 +694,12 @@ impl super::TerminalView {
                     .name("Compute file paths".into())
                     .spawn(move || {
                         #[cfg(all(target_os = "macos", feature = "omw_local"))]
-                        let codex_directory = shell_pid.and_then(
-                            crate::terminal::codex_file_links::working_directory_for_shell_pid,
-                        );
+                        let codex_directory = shell_pid.and_then(|pid| {
+                            crate::terminal::codex_file_links::working_directory_for_shell_pid_and_title(
+                                pid,
+                                worker_prefix.as_deref(),
+                            )
+                        });
                         #[cfg(all(target_os = "macos", feature = "omw_local"))]
                         let working_directory = codex_directory
                             .as_ref()
@@ -729,7 +736,13 @@ impl super::TerminalView {
 
                 let _ = ctx.spawn(
                     async move { rx.await.ok().flatten() },
-                    Self::handle_file_link_completed,
+                    move |view, result, ctx| {
+                        #[cfg(all(target_os = "macos", feature = "omw_local"))]
+                        if codex && view.model.lock().codex_session_prefix() != session_prefix {
+                            return;
+                        }
+                        view.handle_file_link_completed(result, ctx);
+                    },
                 );
             }
             _ if self.highlighted_link.take(&mut self.model.lock()).is_some() => {

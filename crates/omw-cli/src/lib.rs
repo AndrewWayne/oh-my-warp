@@ -79,6 +79,8 @@ pub fn run(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) -> i
             }
             NotifySetupCommand::Uninstall => commands::notify_setup::uninstall(stdout, stderr),
         },
+        #[cfg(target_os = "macos")]
+        Command::CodexLinks(args) => commands::codex_links::enable(args, stdout),
     };
 
     match result {
@@ -119,6 +121,9 @@ enum Command {
     Remote(RemoteArgs),
     /// Wire agent completion notifications (Claude Code, Codex) into omw
     NotifySetup(NotifySetupArgs),
+    /// Enable native Codex thread titles for relative file links (one-time Mac setup)
+    #[cfg(target_os = "macos")]
+    CodexLinks(commands::codex_links::Args),
 }
 
 #[derive(clap::Args, Debug)]

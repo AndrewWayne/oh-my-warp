@@ -12,6 +12,10 @@
 set -euo pipefail
 
 VERSION="${1:-0.0.1}"
+REVISION="${OMW_BUILD_REVISION:-}"
+[[ -z "${REVISION}" || "${REVISION}" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] \
+    || { echo "ERROR: invalid OMW_BUILD_REVISION" >&2; exit 2; }
+ARTIFACT_VERSION="${VERSION}${REVISION:+-${REVISION}}"
 TARGET_TRIPLE="aarch64-apple-darwin"
 
 # Resolve repo root so the script works from anywhere.
@@ -152,20 +156,23 @@ echo "==> Auditing binary for forbidden hostnames ..."
 
 echo "==> Scaffolding .app bundle ..."
 APP_NAME="omw-warp-oss.app"
-STAGING="${DIST_DIR}/staging-v${VERSION}"
+STAGING="${DIST_DIR}/staging-v${ARTIFACT_VERSION}"
 APP_DIR="${STAGING}/${APP_NAME}"
 rm -rf "${STAGING}"
 mkdir -p "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources"
 
 cp "${BINARY}" "${APP_DIR}/Contents/MacOS/omw-warp-oss"
 chmod +x "${APP_DIR}/Contents/MacOS/omw-warp-oss"
-PROVENANCE="${REPO_ROOT}/docs/upstream/v${VERSION}.json"
+PROVENANCE="${REPO_ROOT}/docs/upstream/v${ARTIFACT_VERSION}.json"
 if [[ -f "${PROVENANCE}" ]]; then
     cp "${PROVENANCE}" "${APP_DIR}/Contents/Resources/UPSTREAM_PROVENANCE.json"
 fi
 
 # Substitute __VERSION__ and write Info.plist.
 sed "s/__VERSION__/${VERSION}/g" "${PLIST_TEMPLATE}" > "${APP_DIR}/Contents/Info.plist"
+if [[ -n "${REVISION}" ]]; then
+    /usr/libexec/PlistBuddy -c "Add :OMWLocalRevision string ${REVISION}" "${APP_DIR}/Contents/Info.plist"
+fi
 
 echo "==> Generating AppIcon.icns from ${ICON_SRC} ..."
 ICONSET="${STAGING}/AppIcon.iconset"
@@ -305,11 +312,13 @@ cp "${REPO_ROOT}/LICENSE" "${DMG_PAYLOAD}/LICENSE"
 if [[ -f "${PROVENANCE}" ]]; then
     cp "${PROVENANCE}" "${DMG_PAYLOAD}/UPSTREAM_PROVENANCE.json"
 fi
-if [[ -f "${REPO_ROOT}/RELEASE_NOTES_v${VERSION}.md" ]]; then
-    cp "${REPO_ROOT}/RELEASE_NOTES_v${VERSION}.md" "${DMG_PAYLOAD}/README.md"
+RELEASE_NOTES="${REPO_ROOT}/RELEASE_NOTES_v${ARTIFACT_VERSION}.md"
+[[ -f "${RELEASE_NOTES}" ]] || RELEASE_NOTES="${REPO_ROOT}/RELEASE_NOTES_v${VERSION}.md"
+if [[ -f "${RELEASE_NOTES}" ]]; then
+    cp "${RELEASE_NOTES}" "${DMG_PAYLOAD}/README.md"
 fi
 
-DMG_PATH="${DIST_DIR}/omw-warp-oss-v${VERSION}-${TARGET_TRIPLE}.dmg"
+DMG_PATH="${DIST_DIR}/omw-warp-oss-v${ARTIFACT_VERSION}-${TARGET_TRIPLE}.dmg"
 rm -f "${DMG_PATH}"
 
 echo "==> Creating .dmg at ${DMG_PATH} ..."

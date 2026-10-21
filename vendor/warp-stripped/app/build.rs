@@ -46,6 +46,13 @@ fn main() -> Result<()> {
             .file("src/platform/mac/objc/services.m")
             .compile("warp_objc");
 
+        if env::var_os("CARGO_FEATURE_OMW_LOCAL").is_some() {
+            println!("cargo:rerun-if-changed=src/platform/mac/codex_socket.c");
+            cc::Build::new()
+                .file("src/platform/mac/codex_socket.c")
+                .compile("omw_codex_socket");
+        }
+
         // Build the dock tile plugin
         println!("cargo:rerun-if-changed=DockTilePlugin/WarpDockTilePlugin.m");
         println!("cargo:rerun-if-changed=DockTilePlugin/WarpDockTilePlugin.h");
